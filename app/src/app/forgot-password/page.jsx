@@ -29,7 +29,7 @@ export default function ForgotPasswordPage() {
     } catch (e) {
       // Only a malformed email is surfaced — "user not found" is treated
       // identically to success, for the enumeration reason noted above.
-      if (e.code === "auth/invalid-email") {
+      if (e?.code === "validation_failed" || e?.status === 422) {
         setStatus("idle");
         setError("That doesn't look like a valid email address.");
         return;

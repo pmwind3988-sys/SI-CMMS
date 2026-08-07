@@ -38,7 +38,19 @@ function EditWorkOrderInner() {
     );
   }
   if (wo === undefined) return <div className="text-ink-soft text-[13px]">Loading…</div>;
-  if (wo === null) return null;
+
+  // Same reasoning as WorkOrderDetail: an RLS-scoped miss is normal, not an
+  // error, and must still say something rather than render an empty page.
+  if (wo === null) {
+    return (
+      <div className="max-w-md">
+        <ErrorBanner message="This work order doesn't exist, or it's outside the departments and assignments your role can see." />
+        <button onClick={() => router.push("/work-orders")} className="text-navy text-[13px] font-semibold">
+          ← Back to Work Orders
+        </button>
+      </div>
+    );
+  }
 
   if (wo.status !== "open") {
     return (

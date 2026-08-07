@@ -17,6 +17,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { listenDashboardCards, listenDashboardCharts, refreshDashboardStatsNow } from "../../lib/dashboard";
 import { ELEVATED_ROLES } from "../../lib/roles";
+import { describeError } from "../../lib/errors";
 import StatCard from "./StatCard";
 import MonthlyWorkOrdersChart from "./MonthlyWorkOrdersChart";
 import DepartmentBreakdownChart from "./DepartmentBreakdownChart";
@@ -57,7 +58,7 @@ export default function DashboardModule() {
     try {
       await refreshDashboardStatsNow();
     } catch (e) {
-      setError("Couldn't refresh right now — try again in a moment.");
+      setError(describeError(e, "Couldn't refresh right now — try again in a moment."));
     } finally {
       setRefreshing(false);
     }
@@ -71,7 +72,7 @@ export default function DashboardModule() {
         <div>
           <h1 className="text-xl font-bold text-ink mb-0.5">Dashboard</h1>
           <p className="text-[13px] text-ink-soft">
-            {cards?.updated_at?.toDate
+            {cards?.updated_at && !Number.isNaN(Date.parse(cards.updated_at))
               ? `Last updated ${new Date(cards.updated_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
               : "Loading…"}
           </p>

@@ -23,8 +23,10 @@ import Button from "../../components/ui/Button";
 
 const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon };
 
+// Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
+// Firebase Timestamp object — so test parseability, not for a .toDate method.
 function fmtFull(ts) {
-  if (!ts?.toDate) return "";
+  if (!ts || Number.isNaN(Date.parse(ts))) return "";
   return new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 

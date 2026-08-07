@@ -6,8 +6,10 @@ import { listenWorkOrderHistory } from "../../lib/workOrders";
 import { STATUS_FLOW, STATUS_LABELS } from "../../lib/constants";
 import { ErrorBanner } from "../ui/Surfaces";
 
+// Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
+// Firebase Timestamp object — so test parseability, not for a .toDate method.
 function fmtTime(ts) {
-  if (!ts?.toDate) return "just now";
+  if (!ts || Number.isNaN(Date.parse(ts))) return "just now";
   return new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 

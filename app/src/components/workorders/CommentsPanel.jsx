@@ -8,9 +8,12 @@ import { ROLE_LABELS } from "../../lib/roles";
 import Button from "../ui/Button";
 import { inputClass } from "../ui/Field";
 import { ErrorBanner, EmptyState } from "../ui/Surfaces";
+import { describeError } from "../../lib/errors";
 
+// Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
+// Firebase Timestamp object — so test parseability, not for a .toDate method.
 function fmtTime(ts) {
-  if (!ts?.toDate) return "just now";
+  if (!ts || Number.isNaN(Date.parse(ts))) return "just now";
   return new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
@@ -42,7 +45,7 @@ export default function CommentsPanel({ wo }) {
       await addComment(wo.id, { uid: user.uid, name: user.name, role: user.role }, draft.trim());
       setText("");
     } catch (e) {
-      setError("Couldn't post that comment — try again.");
+      setError(describeError(e, "Couldn't post that comment — try again."));
       // draft intentionally left in the input, not cleared
     } finally {
       setSaving(false);

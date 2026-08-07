@@ -14,6 +14,7 @@ import {
   computeSuggestion,
   equipmentById,
 } from "../../lib/constants";
+import { describeError } from "../../lib/errors";
 import Field, { inputClass } from "../ui/Field";
 import Button from "../ui/Button";
 import { Card, ErrorBanner } from "../ui/Surfaces";
@@ -129,9 +130,12 @@ export default function RaiseWorkOrderForm({ existing }) {
       router.push(`/work-orders/view?id=${woId}`);
     } catch (e) {
       setSubmitError(
-        isEdit
-          ? "Couldn't save these changes. Your edits are still here — try again."
-          : "Couldn't submit this work order. Your entries are still here — try again."
+        describeError(
+          e,
+          isEdit
+            ? "Couldn't save these changes. Your edits are still here — try again."
+            : "Couldn't submit this work order. Your entries are still here — try again."
+        )
       );
     } finally {
       setSubmitting(false);

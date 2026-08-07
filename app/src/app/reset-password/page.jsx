@@ -1,0 +1,268 @@
+"use client";
+
+/**
+ * SI — Service Inside · Authentication Module
+ * Set a new password, reached from the link in a password-recovery email.
+ *
+ * Firebase hosted this screen itself; Supabase does not — it sends the user back
+ * to the app, which is why this page has to exist. The redirect target is set in
+ * AuthContext.resetPassword (`${origin}/reset-password/`) and must also be listed
+ * under Authentication → URL Configuration → Redirect URLs, or Supabase refuses
+ * the redirect before the user ever gets here.
+ *
+ * How the session arrives:
+ *   The client uses the implicit flow, so Supabase appends the recovery tokens to
+ *   the URL *fragment* (#access_token=…&type=recovery). `detectSessionInUrl` in
+ *   lib/supabase.js consumes that fragment, establishes a session and emits
+ *   PASSWORD_RECOVERY. That happens asynchronously and may complete before this
+ *   component mounts, so waiting only for the event would race — getSession() is
+ *   checked as well, and either one is enough to proceed.
+ *
+ *   A failed link (expired, already used, tampered with) comes back as
+ *   #error=…&error_description=… instead. Those parameters are read on the very
+ *   first render, because detectSessionInUrl strips the fragment once it has
+ *   looked at it.
+ *
+ * Deliberately NOT wrapped in RequireAuth: the visitor is mid-recovery and has no
+ * ordinary session, and RequireAuth would bounce them to /login and discard the
+ * tokens in the fragment.
+ */
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Loader2, Eye, EyeOff, CheckCircle2, ShieldCheck, AlertTriangle } from "lucide-react";
+import { supabase } from "../../lib/supabase";
+import { describeError } from "../../lib/errors";
+import Field, { inputClass } from "../../components/ui/Field";
+import { ErrorBanner } from "../../components/ui/Surfaces";
+
+const MIN_LENGTH = 8;
+
+/**
+ * The fragment is captured at module-evaluation time, not in the component.
+ * detectSessionInUrl strips it as soon as it has read it, and that work starts
+ * when lib/supabase.js is imported — earlier than the first render. Reading it
+ * here, during import, is the only point that reliably still sees it.
+ */
+const INITIAL_HASH =
+  typeof window === "undefined" ? "" : window.location.hash.replace(/^#/, "");
+
+/**
+ * True only for a genuine recovery redirect.
+ *
+ * Deliberately not "a session exists": this page is reached from an emailed
+ * link, so an ordinary signed-in session must NOT unlock it. Otherwise anyone
+ * with access to an unattended browser could set a new password without
+ * knowing the current one, which is a real privilege escalation on a shared
+ * shop-floor terminal.
+ */
+const HAS_RECOVERY_TOKEN = /(^|&)type=recovery(&|$)/.test(INITIAL_HASH);
+
+/** Read the error the recovery redirect may have left in the fragment. */
+function readFragmentError() {
+  if (!INITIAL_HASH) return null;
+  const params = new URLSearchParams(INITIAL_HASH);
+  if (!params.get("error") && !params.get("error_code")) return null;
+  const code = params.get("error_code") || params.get("error");
+  const description = params.get("error_description");
+  if (code === "otp_expired" || /expired/i.test(description || "")) {
+    return "That reset link has expired. Request a new one and use it within the hour.";
+  }
+  if (description) return description.replace(/\+/g, " ");
+  return "That reset link is not valid. Request a new one.";
+}
+
+export default function ResetPasswordPage() {
+  const router = useRouter();
+
+  // Lazy initialiser: this must run before detectSessionInUrl clears the hash.
+  const [linkError, setLinkError] = useState(readFragmentError);
+
+  const [phase, setPhase] = useState("checking"); // checking | ready | saving | done | invalid
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (linkError) {
+      setPhase("invalid");
+      return;
+    }
+
+    let settled = false;
+    const ready = () => {
+      if (settled) return;
+      settled = true;
+      setPhase("ready");
+    };
+
+    const reject = () => {
+      if (settled) return;
+      settled = true;
+      setPhase("invalid");
+      setLinkError(
+        "This page needs a valid password reset link. Request a new one from the sign-in screen."
+      );
+    };
+
+    // No recovery token in the URL at all — someone navigated here directly, or
+    // is already signed in. Either way this is not a recovery, so stop now
+    // rather than offering a password change we haven't authenticated.
+    if (!HAS_RECOVERY_TOKEN) {
+      reject();
+      return;
+    }
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") ready();
+    });
+
+    // Covers the case where the fragment was consumed before this mounted: the
+    // token was present (checked above), so an existing session here is the
+    // recovery session.
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) ready();
+    });
+
+    // The token was in the URL but Supabase never established a session from it.
+    const timer = setTimeout(reject, 6000);
+
+    return () => {
+      clearTimeout(timer);
+      subscription.unsubscribe();
+    };
+  }, [linkError]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError(null);
+
+    if (password.length < MIN_LENGTH) {
+      setError(`Use at least ${MIN_LENGTH} characters.`);
+      return;
+    }
+    if (password !== confirm) {
+      setError("Those two passwords don't match.");
+      return;
+    }
+
+    setPhase("saving");
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({ password });
+      if (updateError) throw updateError;
+
+      // Sign the recovery session out so the next step is a normal sign-in with
+      // the new password — this also guarantees the next token is minted fresh
+      // through the access-token hook.
+      await supabase.auth.signOut();
+      setPhase("done");
+      setTimeout(() => router.replace("/login"), 2500);
+    } catch (e) {
+      setPhase("ready");
+      setError(describeError(e, "Couldn't set that password — try again."));
+    }
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-canvas font-sans p-6">
+      <div className="w-full max-w-sm">
+        <Link href="/login" className="flex items-center gap-1.5 text-ink-soft text-[13px] mb-5">
+          <ArrowLeft size={15} /> Back to sign in
+        </Link>
+
+        {phase === "checking" && (
+          <div className="bg-white border border-border rounded p-6 text-center">
+            <Loader2 size={24} className="animate-spin text-ink-soft mx-auto mb-3" />
+            <p className="text-[13.5px] text-ink-soft">Checking your reset link…</p>
+          </div>
+        )}
+
+        {phase === "invalid" && (
+          <div className="bg-white border border-border rounded p-6 text-center">
+            <AlertTriangle size={28} className="text-danger mx-auto mb-3" />
+            <h2 className="text-lg font-bold text-ink mb-1.5">Link not valid</h2>
+            <p className="text-[13.5px] text-ink-soft leading-relaxed mb-4">{linkError}</p>
+            <Link
+              href="/forgot-password"
+              className="inline-block py-2.5 px-4 rounded bg-ink text-white font-semibold text-[13.5px]"
+            >
+              Request a new link
+            </Link>
+          </div>
+        )}
+
+        {phase === "done" && (
+          <div className="bg-white border border-border rounded p-6 text-center">
+            <CheckCircle2 size={28} className="text-good mx-auto mb-3" />
+            <h2 className="text-lg font-bold text-ink mb-1.5">Password updated</h2>
+            <p className="text-[13.5px] text-ink-soft leading-relaxed">
+              Sign in with your new password. Taking you to the sign-in screen…
+            </p>
+          </div>
+        )}
+
+        {(phase === "ready" || phase === "saving") && (
+          <>
+            <h2 className="text-xl font-bold text-ink mb-1.5">Set a new password</h2>
+            <p className="text-[13.5px] text-ink-soft mb-5">
+              Choose something you haven't used here before — at least {MIN_LENGTH} characters.
+            </p>
+            {error && <ErrorBanner message={error} />}
+            <form onSubmit={handleSubmit}>
+              <Field label="New password" required>
+                <div className="relative">
+                  <input
+                    type={showPw ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className={inputClass}
+                    autoComplete="new-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((s) => !s)}
+                    aria-label="Toggle password visibility"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-soft"
+                  >
+                    {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </Field>
+              <Field label="Confirm new password" required>
+                <input
+                  type={showPw ? "text" : "password"}
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  placeholder="••••••••"
+                  className={inputClass}
+                  autoComplete="new-password"
+                  required
+                />
+              </Field>
+              <button
+                type="submit"
+                disabled={phase === "saving"}
+                className="w-full py-3 rounded bg-ink text-white font-semibold text-[14px] flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {phase === "saving" ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" /> Saving…
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck size={15} /> Update password
+                  </>
+                )}
+              </button>
+            </form>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

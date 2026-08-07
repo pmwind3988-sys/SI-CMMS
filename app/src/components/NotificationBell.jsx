@@ -20,8 +20,10 @@ import { listenNotifications, markNotificationRead, markAllNotificationsRead, pa
 
 const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon };
 
+// Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
+// Firebase Timestamp object — so test parseability, not for a .toDate method.
 function fmtRelative(ts) {
-  if (!ts?.toDate) return "";
+  if (!ts || Number.isNaN(Date.parse(ts))) return "";
   const diffMs = Date.now() - new Date(ts).getTime();
   const mins = Math.floor(diffMs / 60000);
   if (mins < 1) return "just now";

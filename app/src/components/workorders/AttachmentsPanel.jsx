@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Image as ImageIcon, Video } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenAttachments, addAttachment } from "../../lib/workOrders";
+import { describeError } from "../../lib/errors";
 import Button from "../ui/Button";
 import { ErrorBanner } from "../ui/Surfaces";
 
@@ -25,7 +26,10 @@ export default function AttachmentsPanel({ wo }) {
       const actor = { uid: user.uid, name: user.name, role: user.role };
       await Promise.all(Array.from(files).map((f) => addAttachment(wo.id, actor, f, fileType)));
     } catch (e) {
-      setError("Couldn't upload — try again.");
+      // Storage rejects oversize files and disallowed mime types with a specific
+      // reason (the bucket caps at 50MB — see migration 0005). Show it, or the
+      // user retries the same too-large file forever.
+      setError(describeError(e, "Couldn't upload — try again."));
     }
   }
 

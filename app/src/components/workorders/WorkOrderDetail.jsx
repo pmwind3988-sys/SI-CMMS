@@ -48,7 +48,22 @@ export default function WorkOrderDetail({ woId }) {
   }
 
   if (wo === undefined) return <div className="text-ink-soft text-[13px]">Loading…</div>;
-  if (wo === null) return null;
+
+  // No row came back. Under RLS this is the ordinary outcome of opening a link
+  // to a work order outside your scope — a Supervisor following a link to
+  // another department's job, say — and it is not an error, so listenWorkOrder
+  // reports null rather than calling onError. Rendering nothing at all left a
+  // blank page with no explanation, which read as the app being broken.
+  if (wo === null) {
+    return (
+      <div className="max-w-md">
+        <ErrorBanner message="This work order doesn't exist, or it's outside the departments and assignments your role can see." />
+        <button onClick={() => router.push("/work-orders")} className="text-navy text-[13px] font-semibold">
+          ← Back to Work Orders
+        </button>
+      </div>
+    );
+  }
 
   const createdMs = wo.created_at ? new Date(wo.created_at).getTime() : Date.now();
   const remain = wo.priority ? SLA_MATRIX[wo.priority].resolutionMs - (Date.now() - createdMs) : null;

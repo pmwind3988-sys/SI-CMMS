@@ -125,7 +125,16 @@ export function AuthProvider({ children }) {
       password,
     });
     if (signInError) throw signInError;
-    return data.user;
+    // Hand the role back with the user so the caller can redirect immediately
+    // instead of waiting for onAuthStateChange to populate `user`. Same source
+    // of truth as everywhere else: the user_role claim from the access-token
+    // hook. A null role means the hook is disabled or this account has no row
+    // in public.users — callers should treat that as its own failure, not as
+    // bad credentials.
+    return {
+      user: data.user,
+      role: claimsFromSession(data.session).user_role ?? null,
+    };
   }, []);
 
   const signOut = useCallback(async () => {

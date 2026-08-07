@@ -5,6 +5,7 @@ import { CheckCircle2, UserCheck } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { assignTechnician, reassignTechnician, listenTechnicians } from "../../lib/workOrders";
 import { canAssign } from "../../lib/constants";
+import { describeError } from "../../lib/errors";
 import Button from "../ui/Button";
 
 /**
@@ -51,8 +52,10 @@ export default function AssignPanel({ wo }) {
       }
     } catch (e) {
       setError(
-        e?.message ||
+        describeError(
+          e,
           "Couldn't assign — this work order may have just been updated. Refresh and try again."
+        )
       );
     } finally {
       setBusy(false);
@@ -125,7 +128,12 @@ export default function AssignPanel({ wo }) {
                   size="sm"
                   variant={isAssigned ? "success" : "ghost"}
                   icon={isAssigned ? CheckCircle2 : UserCheck}
-                  disabled={busy}
+                  // "Assigned" is a state, not an action. Left clickable it
+                  // reassigned the technician to themselves: the assigned ->
+                  // assigned row permits it (requires_assignee_change is false
+                  // pre-acceptance), so the database accepted a no-op that still
+                  // wrote a history row and re-notified the technician.
+                  disabled={busy || isAssigned}
                   onClick={() => handleAssign(t)}
                 >
                   {isAssigned ? "Assigned" : wo.assigned_to_id ? "Reassign" : "Assign"}

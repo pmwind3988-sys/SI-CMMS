@@ -32,6 +32,7 @@ import {
   reopenWorkOrder,
 } from "../../lib/workOrders";
 import { isAssigneeOf, isRequesterOf, isManagerOrAdmin } from "../../lib/constants";
+import { describeError } from "../../lib/errors";
 import { ROLES } from "../../lib/roles";
 import Button from "../ui/Button";
 import { inputClass } from "../ui/Field";
@@ -67,7 +68,11 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
     try {
       await fn(wo.id, actor, ...args);
     } catch (e) {
-      setError("Not saved — check your connection and try again.");
+      // The transition trigger and the column guards raise messages written for
+      // the person who hit them ("a requester may not perform \"Assign
+      // technician\"", "\"resolution_notes\" is required for \"Mark completed\"").
+      // Those are far more useful than a generic connection warning.
+      setError(describeError(e, "Not saved — try again."));
     } finally {
       setBusy(false);
     }

@@ -47,21 +47,39 @@ export default function LoginPage() {
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
 
-  function friendlyError(code) {
-    switch (code) {
-      case "auth/invalid-email":
+  /**
+   * Supabase auth errors carry a machine-readable `code` plus an HTTP `status`;
+   * they never use Firebase's `auth/*` strings.
+   *
+   * The default branch deliberately surfaces the underlying message rather than
+   * blaming the password. An unrecognised error is a bug or a misconfiguration,
+   * and reporting it as "check your email and password" sends you hunting for a
+   * credentials problem that isn't there.
+   */
+  function friendlyError(e) {
+    if (e?.name === "AuthRetryableFetchError") {
+      return "Can't reach the authentication server. Check your connection, and that NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set correctly.";
+    }
+    switch (e?.code) {
+      case "validation_failed":
         return "That doesn't look like a valid email address.";
-      case "auth/user-disabled":
+      case "user_banned":
         return "This account has been disabled. Contact your administrator.";
-      case "auth/user-not-found":
-      case "auth/wrong-password":
-      case "auth/invalid-credential":
+      case "email_not_confirmed":
+        return "Confirm your email address first — check your inbox for the verification link.";
+      case "invalid_credentials":
+      case "user_not_found":
         return "Couldn't sign in — check your email and password and try again.";
-      case "auth/too-many-requests":
+      case "over_request_rate_limit":
         return "Too many attempts. Wait a few minutes and try again.";
       default:
-        return "Couldn't sign in — check your email and password and try again.";
+        break;
     }
+    if (e?.status === 429) return "Too many attempts. Wait a few minutes and try again.";
+    if (e?.status === 400 || e?.status === 422) {
+      return "Couldn't sign in — check your email and password and try again.";
+    }
+    return e?.message || "Couldn't sign in — please try again.";
   }
 
   async function handleSubmit(e) {
@@ -75,14 +93,21 @@ export default function LoginPage() {
 
     setStatus("checking");
     try {
-      const fbUser = await signIn(email, password, rememberMe);
-      const tokenResult = await fbUser.getIdTokenResult();
-      const role = tokenResult.claims.role;
+      const { role } = await signIn(email, password, rememberMe);
+      if (!role) {
+        // Credentials were accepted, but the access-token hook returned no
+        // user_role: either the hook isn't enabled in the Supabase dashboard
+        // (Authentication -> Hooks -> Customize Access Token), or this account
+        // has no row in public.users. Say so, rather than implying a typo.
+        setStatus("idle");
+        setError("Signed in, but this account has no role assigned. Contact your administrator.");
+        return;
+      }
       setStatus("success");
       router.replace(dashboardPathForRole(role));
     } catch (e) {
       setStatus("idle");
-      setError(friendlyError(e.code));
+      setError(friendlyError(e));
     }
   }
 
