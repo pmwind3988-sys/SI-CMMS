@@ -141,7 +141,7 @@ export default function WorkOrderList() {
 
 function slaRemain(w) {
   if (!w.created_at || !w.priority) return null;
-  const createdMs = w.created_at.toMillis ? w.created_at.toMillis() : Date.now();
+  const createdMs = w.created_at ? new Date(w.created_at).getTime() : Date.now();
   return SLA_MATRIX[w.priority].resolutionMs - (Date.now() - createdMs);
 }
 

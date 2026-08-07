@@ -21,7 +21,8 @@ import { PriorityBadge } from "../ui/Badges";
 
 /**
  * Dual-mode: `existing` present -> Edit Work Order (core fields only,
- * status stays "open" — enforced both here and by firestore.rules).
+ * status stays "open" — enforced both here and by the open -> open row in
+ * wo_status_transitions).
  * `existing` absent -> Create / Raise Work Order.
  */
 export default function RaiseWorkOrderForm({ existing }) {

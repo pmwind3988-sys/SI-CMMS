@@ -27,16 +27,16 @@
  *   --url=https://...      download_url for a hosted APK
  *   --dry-run              print the document, write nothing
  *
- * Target selection is the same as every other script: emulator unless
- * SI_TARGET=live. See scripts/_firebaseAdmin.js.
+ * Writes with the service role key, which bypasses Row Level Security — the
+ * apk_builds policies only let an Administrator write from a client, and a build
+ * script has no signed-in user. See scripts/_supabaseAdmin.js.
  * ============================================================================
  */
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { execFileSync } = require("child_process");
-const { FieldValue, Timestamp } = require("firebase-admin/firestore");
-const { connect, targetLabel } = require("./_firebaseAdmin");
+const { admin, projectLabel } = require("./_supabaseAdmin");
 const { APP, BUILD_TYPES } = require("../schema/schema");
 const { validateDoc } = require("../schema/validate");
 
@@ -134,8 +134,10 @@ async function main() {
   const git = readGit();
   const minVersion = opt("min-version");
 
+  const nowIso = new Date().toISOString();
   const docId = `${BUILD_TYPE}-${gradle.version_name}-${gradle.version_code}`;
   const doc = {
+    id: docId,
     application_id: gradle.application_id,
     version_name: gradle.version_name,
     version_code: gradle.version_code,
@@ -150,9 +152,9 @@ async function main() {
     release_notes: opt("notes", null),
     released: flag("release"),
     min_supported_version_code: minVersion == null ? null : Number(minVersion),
-    built_at: apk ? Timestamp.fromDate(apk.mtime) : FieldValue.serverTimestamp(),
+    built_at: apk ? apk.mtime.toISOString() : nowIso,
     built_by: process.env.USERNAME || process.env.USER || null,
-    updated_at: FieldValue.serverTimestamp(),
+    updated_at: nowIso,
   };
 
   const { ok, errors, warnings } = validateDoc("apk_builds", { ...doc, created_at: doc.updated_at });
@@ -163,26 +165,30 @@ async function main() {
     process.exit(1);
   }
 
-  const printable = { ...doc, built_at: apk ? apk.mtime.toISOString() : "<server timestamp>", updated_at: "<server timestamp>" };
-  console.log(`\nTarget: ${targetLabel()}`);
-  console.log(`Document: apk_builds/${docId}\n`);
-  console.log(JSON.stringify(printable, null, 2));
+  console.log(`\nProject: ${projectLabel()}`);
+  console.log(`Row: apk_builds/${docId}\n`);
+  console.log(JSON.stringify(doc, null, 2));
 
   if (DRY_RUN) {
     console.log("\n--dry-run: nothing written.");
     return;
   }
 
-  const { db } = connect();
-  const ref = db.collection("apk_builds").doc(docId);
-  const existing = await ref.get();
+  const db = admin();
 
-  await ref.set(
-    existing.exists ? doc : { ...doc, created_at: FieldValue.serverTimestamp() },
-    { merge: true }
-  );
+  const { data: existing, error: readError } = await db
+    .from("apk_builds")
+    .select("id")
+    .eq("id", docId)
+    .maybeSingle();
+  if (readError) throw new Error(`read apk_builds/${docId}: ${readError.message}`);
 
-  console.log(`\n${existing.exists ? "Updated" : "Recorded"} apk_builds/${docId}.`);
+  const { error: writeError } = await db
+    .from("apk_builds")
+    .upsert(existing ? doc : { ...doc, created_at: nowIso }, { onConflict: "id" });
+  if (writeError) throw new Error(`write apk_builds/${docId}: ${writeError.message}`);
+
+  console.log(`\n${existing ? "Updated" : "Recorded"} apk_builds/${docId}.`);
   if (doc.released) {
     console.log(`Marked RELEASED — clients on version_code < ${gradle.version_code} will now see an update available.`);
   }

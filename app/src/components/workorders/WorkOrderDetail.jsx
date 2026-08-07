@@ -50,7 +50,7 @@ export default function WorkOrderDetail({ woId }) {
   if (wo === undefined) return <div className="text-ink-soft text-[13px]">Loading…</div>;
   if (wo === null) return null;
 
-  const createdMs = wo.created_at?.toMillis ? wo.created_at.toMillis() : Date.now();
+  const createdMs = wo.created_at ? new Date(wo.created_at).getTime() : Date.now();
   const remain = wo.priority ? SLA_MATRIX[wo.priority].resolutionMs - (Date.now() - createdMs) : null;
   const breached = remain != null && remain < 0 && wo.status !== "closed";
   const showEdit = wo.status === "open" && canEditWhileOpen(wo, user);

@@ -1,5 +1,4 @@
 {
-  "dependencies": {
-    "firebase": "^12.17.1"
-  }
+  "private": true,
+  "description": "SI-CMMS workspace root. The application lives in app/ — see app/package.json."
 }

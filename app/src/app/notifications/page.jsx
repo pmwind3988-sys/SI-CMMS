@@ -25,7 +25,7 @@ const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, Chec
 
 function fmtFull(ts) {
   if (!ts?.toDate) return "";
-  return ts.toDate().toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function NotificationsInner() {

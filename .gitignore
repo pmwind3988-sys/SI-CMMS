@@ -7,12 +7,12 @@ functions/node_modules/
 out/
 build/
 
-# environment — never commit real keys, tokens, or service credentials
+# environment — never commit real keys, tokens, or service credentials.
+# .env.local carries SUPABASE_SERVICE_ROLE_KEY, which bypasses Row Level
+# Security entirely.
 .env
 .env.local
 .env*.local
-serviceAccountKey.json
-*-firebase-adminsdk-*.json
 
 # MCP server config — may carry a Supabase personal access token.
 # Commit .mcp.json.example instead, with ${ENV_VAR} placeholders.

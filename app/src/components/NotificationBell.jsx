@@ -22,13 +22,13 @@ const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, Chec
 
 function fmtRelative(ts) {
   if (!ts?.toDate) return "";
-  const diffMs = Date.now() - ts.toDate().getTime();
+  const diffMs = Date.now() - new Date(ts).getTime();
   const mins = Math.floor(diffMs / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
-  return ts.toDate().toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 export default function NotificationBell() {

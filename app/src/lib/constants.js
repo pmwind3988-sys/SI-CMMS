@@ -1,6 +1,11 @@
 // SI — Service Inside · Work Order Module
-// Shared domain constants. Keep in sync with functions/index.js, where the
-// SLA thresholds and status literals are duplicated server-side.
+// Shared domain constants, display-side only.
+//
+// The SLA thresholds and status literals below are no longer the server's copy:
+// SLA targets live in the `sla` table (read by si_sla_target_minutes) and the
+// transition matrix lives in `wo_status_transitions`. What remains here is
+// presentation — labels, colours, and the client-side priority suggestion the
+// raise form uses before anything is written.
 import { ROLES } from "./roles";
 
 export const STATUS_FLOW = [
@@ -84,15 +89,11 @@ export const EQUIPMENT = [
   { id: "AST-0212", name: "Boiler Unit A", department_id: "DEPT-UTILITIES", criticality: "High" },
 ];
 
-// Technicians are owned by the User/Technician module in production; this
-// module depends on a lightweight lookup shaped to match /technicians.
-export const TECHNICIANS = [
-  { id: "tech-arun", name: "Arun Kumar", skills: ["Mechanical", "Hydraulics"], load: 2 },
-  { id: "tech-meera", name: "Meera Iyer", skills: ["Electrical", "PLC"], load: 4 },
-  { id: "tech-sanjay", name: "Sanjay Rao", skills: ["Mechanical", "CNC"], load: 1 },
-  { id: "tech-divya", name: "Divya Shah", skills: ["Utilities", "Boilers"], load: 3 },
-  { id: "tech-karan", name: "Karan Mehta", skills: ["Electrical", "Conveyors"], load: 2 },
-];
+// The TECHNICIANS placeholder array that used to live here has been removed
+// rather than updated. work_orders.assigned_to_id is a uuid foreign key onto
+// users(id) now, so its slug ids ("tech-arun") could never be assigned to
+// anything — keeping them would have been a trap. AssignPanel reads the real
+// roster via listenTechnicians() in lib/workOrders.js.
 
 const RANK = { P1: 1, P2: 2, P3: 3, P4: 4 };
 
@@ -129,9 +130,6 @@ export function equipmentById(id) {
 }
 export function departmentById(id) {
   return DEPARTMENTS.find((d) => d.id === id) || null;
-}
-export function technicianById(id) {
-  return TECHNICIANS.find((t) => t.id === id) || null;
 }
 
 export function isAssigneeOf(wo, currentUser) {

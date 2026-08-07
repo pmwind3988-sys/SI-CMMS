@@ -12,14 +12,19 @@
  */
 const { COLLECTIONS, STATUS_TRANSITIONS, STATUS_FLOW, REASSIGNABLE_STATUSES } = require("./schema");
 
-/** Timestamp-ish: an Admin SDK Timestamp, a Date, or a server-timestamp sentinel. */
+/**
+ * Timestamp-ish. Postgres timestamptz arrives over PostgREST as an ISO 8601
+ * string, which is now the primary case; a Date is accepted because that is what
+ * the scripts build locally before sending. The Firestore Timestamp and
+ * FieldValue sentinel shapes are kept only so this still validates a document
+ * read from an old export.
+ */
 function isTimestampLike(v) {
   if (v == null) return false;
   if (v instanceof Date) return true;
+  if (typeof v === "string") return !Number.isNaN(Date.parse(v));
   if (typeof v.toMillis === "function") return true;
   if (typeof v.toDate === "function") return true;
-  // FieldValue.serverTimestamp() sentinel — no public shape, so identify it
-  // structurally rather than by instanceof (which crosses a module boundary).
   const c = v.constructor && v.constructor.name;
   return c === "FieldValue" || c === "ServerTimestampTransform" || c === "Timestamp";
 }

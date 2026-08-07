@@ -72,7 +72,7 @@ export default function DashboardModule() {
           <h1 className="text-xl font-bold text-ink mb-0.5">Dashboard</h1>
           <p className="text-[13px] text-ink-soft">
             {cards?.updated_at?.toDate
-              ? `Last updated ${cards.updated_at.toDate().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
+              ? `Last updated ${new Date(cards.updated_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
               : "Loading…"}
           </p>
         </div>

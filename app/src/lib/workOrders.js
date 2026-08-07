@@ -2,30 +2,28 @@
 
 /**
  * SI — Service Inside · Work Order Module
- * Firestore data-access layer. Every exported function maps 1:1 to a
- * clause in firestore.rules — this file shapes writes, it does not
- * authorize them; the rules are the actual authorization boundary.
+ * Supabase data-access layer. Every exported function maps 1:1 to a policy in
+ * migration 0002 or a row in wo_status_transitions — this file shapes writes,
+ * it does not authorize them; RLS and the transition trigger are the actual
+ * authorization boundary.
+ *
+ * Two notes on what the database now does that this file used to:
+ *
+ *   - wo_number, the SLA due timestamps, decline_count, resolved_at and
+ *     closed_at are all set by triggers (migration 0003). Do not send them.
+ *   - The transition matrix is enforced in the database. An illegal transition
+ *     raises rather than silently no-opping, so callers get a real error.
+ *
+ * KNOWN GAP, carried over from the Firebase original: a status change and its
+ * work_order_history row are two separate statements, so a failure between them
+ * leaves the audit trail one entry short. Making each transition an RPC would
+ * close it. Flagged rather than silently changed, because it alters the shape of
+ * every workflow call.
  */
-import {
-  collection,
-  doc,
-  addDoc,
-  updateDoc,
-  onSnapshot,
-  query,
-  where,
-  orderBy,
-  limit as fbLimit,
-  serverTimestamp,
-} from "firebase/firestore";
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, app } from "./firebase";
+import { supabase, liveQuery, liveRow } from "./supabase";
 import { ROLES } from "./roles";
 
-const woCol = collection(db, "work_orders");
-const historyCol = collection(db, "work_order_history");
-const commentsCol = collection(db, "comments");
-const attachmentsCol = collection(db, "attachments");
+const WO_SELECT = "*";
 
 /* ------------------------------------------------------------------
    CREATE
@@ -46,154 +44,251 @@ export async function createWorkOrder({
   requesterName,
   requesterPhone,
 }) {
-  const docRef = await addDoc(woCol, {
-    department_id: departmentId,
-    asset_id: assetId,
-    asset_name: assetName,
-    type,
-    priority,
-    status: "open",
-    impact,
-    est_downtime_value: Number(estDowntimeValue),
-    est_downtime_unit: estDowntimeUnit,
-    description,
-    safety_risk: safetyRisk || { flag: false, severity: null },
-    environmental_risk: environmentalRisk || { flag: false },
-    permit_required: !!safetyRisk?.flag,
-    requester_id: requesterId,
-    requester_name: requesterName,
-    requester_phone: requesterPhone,
-    assigned_to_id: null,
-    assigned_to_name: null,
-    created_at: serverTimestamp(),
-    updated_at: serverTimestamp(),
-    // wo_number / sla_ack_due_at / sla_resolution_due_at / sla_breached /
-    // decline_count are all filled in server-side by onWorkOrderCreate —
-    // counters and SLA computation are never client-writable.
-  });
-  return docRef.id;
+  const { data, error } = await supabase
+    .from("work_orders")
+    .insert({
+      department_id: departmentId,
+      asset_id: assetId,
+      asset_name: assetName,
+      plant_id: "PLT001",
+      type,
+      priority,
+      status: "open",
+      impact,
+      est_downtime_value: estDowntimeValue === "" || estDowntimeValue == null ? null : Number(estDowntimeValue),
+      est_downtime_unit: estDowntimeUnit,
+      description,
+      safety_risk: safetyRisk || { flag: false, severity: null },
+      environmental_risk: environmentalRisk || { flag: false },
+      permit_required: !!safetyRisk?.flag,
+      requester_id: requesterId,
+      requester_name: requesterName,
+      requester_phone: requesterPhone,
+      assigned_to_id: null,
+      assigned_to_name: null,
+      // wo_number / sla_ack_due_at / sla_resolution_due_at / sla_breached /
+      // decline_count are all filled in by si_before_work_order_insert —
+      // counters and SLA computation are never client-writable.
+    })
+    .select("id")
+    .single();
+
+  if (error) throw error;
+  return data.id;
 }
 
 /* ------------------------------------------------------------------
    EDIT — core fields, while status is still "open" only.
 -------------------------------------------------------------------*/
 export async function updateWorkOrderFields(woId, fields) {
-  await updateDoc(doc(db, "work_orders", woId), {
-    ...fields,
-    status: "open", // rules require status to remain "open" through this path
-    updated_at: serverTimestamp(),
+  const { error } = await supabase
+    .from("work_orders")
+    .update({ ...fields, status: "open" }) // the open -> open row in the matrix
+    .eq("id", woId);
+  if (error) throw error;
+}
+
+/* ------------------------------------------------------------------
+   READS (live)
+-------------------------------------------------------------------*/
+export function listenWorkOrder(woId, cb, onError) {
+  return liveRow({
+    table: "work_orders",
+    filter: `id=eq.${woId}`,
+    run: () => supabase.from("work_orders").select(WO_SELECT).eq("id", woId).maybeSingle().then(
+      ({ data, error }) => ({ data: data ? [data] : [], error })
+    ),
+    cb,
+    onError,
+  });
+}
+
+/**
+ * Role-scoped list. RLS would scope this on its own, but the explicit filters
+ * are kept for the same reason the Firestore version had them: they let Postgres
+ * use the (requester_id, created_at) / (assigned_to_id, created_at) /
+ * (department_id, created_at) indexes instead of scanning and then discarding
+ * rows in the policy.
+ */
+export function listenWorkOrderList(currentUser, cb, onError) {
+  const base = () => supabase.from("work_orders").select(WO_SELECT).order("created_at", { ascending: false });
+
+  let run;
+  if (currentUser.role === ROLES.REQUESTER) {
+    run = () => base().eq("requester_id", currentUser.uid);
+  } else if (currentUser.role === ROLES.TECHNICIAN) {
+    run = () => base().eq("assigned_to_id", currentUser.uid);
+  } else if (currentUser.role === ROLES.SUPERVISOR) {
+    run = () => base().eq("department_id", currentUser.departmentId);
+  } else {
+    // manager / admin — system-wide.
+    run = () => base().limit(300);
+  }
+
+  return liveQuery({ table: "work_orders", run, cb, onError });
+}
+
+export function listenWorkOrderHistory(woId, cb, onError) {
+  return liveQuery({
+    table: "work_order_history",
+    filter: `work_order_id=eq.${woId}`,
+    run: () =>
+      supabase
+        .from("work_order_history")
+        .select("*")
+        .eq("work_order_id", woId)
+        .order("created_at", { ascending: true }),
+    cb,
+    onError,
+  });
+}
+
+export function listenComments(woId, cb, onError) {
+  return liveQuery({
+    table: "comments",
+    filter: `entity_id=eq.${woId}`,
+    run: () =>
+      supabase
+        .from("comments")
+        .select("*")
+        .eq("entity_type", "work_order")
+        .eq("entity_id", woId)
+        .order("created_at", { ascending: true }),
+    cb,
+    onError,
+  });
+}
+
+/**
+ * The attachments bucket is private, so a durable public URL no longer exists
+ * (see migration 0005 for why that changed). file_url is stored as the object
+ * key and swapped for a short-lived signed URL here, which keeps
+ * AttachmentsPanel's `<img src={p.file_url}>` working untouched.
+ */
+export function listenAttachments(woId, cb, onError) {
+  return liveQuery({
+    table: "attachments",
+    filter: `entity_id=eq.${woId}`,
+    run: async () => {
+      const { data, error } = await supabase
+        .from("attachments")
+        .select("*")
+        .eq("entity_type", "work_order")
+        .eq("entity_id", woId)
+        .order("uploaded_at", { ascending: false });
+
+      if (error || !data?.length) return { data, error };
+
+      const paths = data.map((a) => a.storage_path || a.file_url);
+      const { data: signed } = await supabase.storage
+        .from("attachments")
+        .createSignedUrls(paths, 3600);
+
+      const byPath = new Map((signed || []).map((s) => [s.path, s.signedUrl]));
+      return {
+        data: data.map((a) => ({
+          ...a,
+          file_url: byPath.get(a.storage_path || a.file_url) || a.file_url,
+        })),
+        error: null,
+      };
+    },
+    cb,
+    onError,
+  });
+}
+
+/** The assignment picker's roster — replaces the frozen TECHNICIANS array. */
+export function listenTechnicians(cb, onError) {
+  return liveQuery({
+    table: "technicians",
+    run: () =>
+      supabase
+        .from("technicians")
+        .select("user_id, name, skills, current_load, availability_status")
+        .order("name", { ascending: true }),
+    cb,
+    onError,
   });
 }
 
 /* ------------------------------------------------------------------
-   READS (real-time listeners)
--------------------------------------------------------------------*/
-export function listenWorkOrder(woId, cb, onError) {
-  return onSnapshot(doc(db, "work_orders", woId), (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data() } : null), onError);
-}
-
-/** Role-scoped list, mirroring exactly what the security rules allow. */
-export function listenWorkOrderList(currentUser, cb, onError) {
-  let q;
-  if (currentUser.role === ROLES.REQUESTER) {
-    q = query(woCol, where("requester_id", "==", currentUser.uid), orderBy("created_at", "desc"));
-  } else if (currentUser.role === ROLES.TECHNICIAN) {
-    q = query(woCol, where("assigned_to_id", "==", currentUser.uid), orderBy("created_at", "desc"));
-  } else if (currentUser.role === ROLES.SUPERVISOR) {
-    q = query(woCol, where("department_id", "==", currentUser.departmentId), orderBy("created_at", "desc"));
-  } else {
-    // manager / admin — system-wide.
-    q = query(woCol, orderBy("created_at", "desc"), fbLimit(300));
-  }
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
-}
-
-export function listenWorkOrderHistory(woId, cb, onError) {
-  const q = query(historyCol, where("work_order_id", "==", woId), orderBy("created_at", "asc"));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
-}
-
-export function listenComments(woId, cb, onError) {
-  const q = query(
-    commentsCol,
-    where("entity_type", "==", "work_order"),
-    where("entity_id", "==", woId),
-    orderBy("created_at", "asc")
-  );
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
-}
-
-export function listenAttachments(woId, cb, onError) {
-  const q = query(
-    attachmentsCol,
-    where("entity_type", "==", "work_order"),
-    where("entity_id", "==", woId),
-    orderBy("uploaded_at", "desc")
-  );
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
-}
-
-/* ------------------------------------------------------------------
    COMMENTS — unifies what earlier iterations called "progress notes"
-   into the single, reusable comments collection every module shares.
+   into the single, reusable comments table every module shares.
 -------------------------------------------------------------------*/
 export async function addComment(woId, actor, text) {
-  await addDoc(commentsCol, {
+  const { error } = await supabase.from("comments").insert({
     entity_type: "work_order",
     entity_id: woId,
     author_id: actor.uid,
     author_name: actor.name,
     author_role: actor.role,
     text,
-    created_at: serverTimestamp(),
     edited_at: null,
   });
+  if (error) throw error;
 }
 
 export async function editComment(commentId, newText) {
-  await updateDoc(doc(db, "comments", commentId), { text: newText, edited_at: serverTimestamp() });
+  const { error } = await supabase
+    .from("comments")
+    .update({ text: newText, edited_at: new Date().toISOString() })
+    .eq("id", commentId);
+  if (error) throw error;
 }
 
 /* ------------------------------------------------------------------
    ATTACHMENTS — Upload Photos / Upload Videos
 -------------------------------------------------------------------*/
 export async function addAttachment(woId, actor, file, fileType) {
-  const storage = getStorage(app);
-  const path = `work_orders/${woId}/attachments/${Date.now()}-${file.name}`;
-  const ref = storageRef(storage, path);
-  await uploadBytes(ref, file);
-  const fileUrl = await getDownloadURL(ref);
-  await addDoc(attachmentsCol, {
+  const safeName = file.name.replace(/[^\w.\-]/g, "_");
+  const path = `work_orders/${woId}/${Date.now()}-${safeName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("attachments")
+    .upload(path, file, { contentType: file.type, upsert: false });
+  if (uploadError) throw uploadError;
+
+  const { error } = await supabase.from("attachments").insert({
     entity_type: "work_order",
     entity_id: woId,
-    file_url: fileUrl,
+    file_url: path, // the object key; a signed URL is minted on read
+    storage_path: path,
     file_type: fileType, // "photo" | "video" | "document"
     file_size_bytes: file.size,
     uploaded_by_id: actor.uid,
     uploaded_by_role: actor.role,
-    uploaded_at: serverTimestamp(),
   });
-  return fileUrl;
+  if (error) throw error;
+
+  return path;
 }
 
 /* ------------------------------------------------------------------
    WORKFLOW TRANSITIONS (Approval Workflow + Status Tracking)
-   Every function writes exactly the field set its matching rules
-   clause expects, then appends a work_order_history entry.
+   Every function writes exactly the field set its matching row in
+   wo_status_transitions requires, then appends a history entry.
 -------------------------------------------------------------------*/
+async function transition(woId, fields) {
+  const { error } = await supabase.from("work_orders").update(fields).eq("id", woId);
+  if (error) throw error;
+}
+
 async function appendHistory(woId, entry) {
-  await addDoc(historyCol, { work_order_id: woId, ...entry, created_at: serverTimestamp() });
+  const { error } = await supabase
+    .from("work_order_history")
+    .insert({ work_order_id: woId, ...entry });
+  if (error) throw error;
 }
 
 const PRE_ACCEPTANCE_STATUSES = ["open", "assigned"];
 
-/** rules: isSupervisorLike() (dept-scoped for Supervisor) — Assign Technician */
+/** matrix: open -> assigned, roles {supervisor, manager, admin} */
 export async function assignTechnician(woId, technician, actor) {
-  await updateDoc(doc(db, "work_orders", woId), {
+  await transition(woId, {
     status: "assigned",
     assigned_to_id: technician.id,
     assigned_to_name: technician.name,
-    updated_at: serverTimestamp(),
   });
   await appendHistory(woId, {
     from_status: "open",
@@ -206,20 +301,19 @@ export async function assignTechnician(woId, technician, actor) {
 }
 
 /**
- * rules: isSupervisorLike() — reassign at any pre-Completed stage.
- * Per FSD Business Rule 6: reassigning before acceptance still routes
- * through "assigned" (fresh accept required); reassigning at accepted or
- * later preserves the current status exactly — ownership changes, the
- * flow does not restart.
+ * matrix: the status-preserving reassignment rows.
+ * Per FSD Business Rule 6: reassigning before acceptance still routes through
+ * "assigned" (fresh accept required); reassigning at accepted or later
+ * preserves the current status exactly — ownership changes, the flow does not
+ * restart.
  */
 export async function reassignTechnician(woId, fromStatus, technician, actor) {
   const preservesStatus = !PRE_ACCEPTANCE_STATUSES.includes(fromStatus);
   const newStatus = preservesStatus ? fromStatus : "assigned";
-  await updateDoc(doc(db, "work_orders", woId), {
+  await transition(woId, {
     status: newStatus,
     assigned_to_id: technician.id,
     assigned_to_name: technician.name,
-    updated_at: serverTimestamp(),
   });
   await appendHistory(woId, {
     from_status: fromStatus,
@@ -233,88 +327,85 @@ export async function reassignTechnician(woId, fromStatus, technician, actor) {
   });
 }
 
-/** rules: role technician, assigned_to_id==uid, assigned -> accepted */
+/** matrix: assigned -> accepted, technician must be the assignee */
 export async function acceptWorkOrder(woId, actor) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "accepted", updated_at: serverTimestamp() });
+  await transition(woId, { status: "accepted" });
   await appendHistory(woId, { from_status: "assigned", to_status: "accepted", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Accepted by technician" });
 }
 
-/** rules: role technician, assigned -> open, assigned_to_id cleared, decline_reason required */
+/** matrix: assigned -> open, requires decline_reason. The trigger clears the
+    assignee and increments decline_count. */
 export async function declineWorkOrder(woId, actor, reason) {
-  await updateDoc(doc(db, "work_orders", woId), {
-    status: "open",
-    assigned_to_id: null,
-    assigned_to_name: null,
-    decline_reason: reason,
-    updated_at: serverTimestamp(),
-  });
+  await transition(woId, { status: "open", decline_reason: reason });
   await appendHistory(woId, { from_status: "assigned", to_status: "open", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: `Declined by ${actor.name}: ${reason}` });
 }
 
-/** rules: role technician, accepted -> on_the_way */
+/** matrix: accepted -> on_the_way */
 export async function startTravel(woId, actor) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "on_the_way", updated_at: serverTimestamp() });
+  await transition(woId, { status: "on_the_way" });
   await appendHistory(woId, { from_status: "accepted", to_status: "on_the_way", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Technician en route" });
 }
 
-/** rules: role technician, on_the_way -> on_site */
+/** matrix: on_the_way -> on_site */
 export async function arriveOnSite(woId, actor) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "on_site", updated_at: serverTimestamp() });
+  await transition(woId, { status: "on_site" });
   await appendHistory(woId, { from_status: "on_the_way", to_status: "on_site", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Arrived on site" });
 }
 
-/** rules: role technician, on_site -> repairing */
+/** matrix: on_site -> repairing */
 export async function startRepair(woId, actor) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "repairing", updated_at: serverTimestamp() });
+  await transition(woId, { status: "repairing" });
   await appendHistory(woId, { from_status: "on_site", to_status: "repairing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Started repair" });
 }
 
-/** rules: role technician, repairing -> waiting_spare_part, spare_part_reason required */
+/** matrix: repairing -> waiting_spare_part, requires spare_part_reason */
 export async function markWaitingSparePart(woId, actor, reason) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "waiting_spare_part", spare_part_reason: reason, updated_at: serverTimestamp() });
+  await transition(woId, { status: "waiting_spare_part", spare_part_reason: reason });
   await appendHistory(woId, { from_status: "repairing", to_status: "waiting_spare_part", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: reason });
 }
 
-/** rules: role technician, waiting_spare_part -> repairing */
+/** matrix: waiting_spare_part -> repairing */
 export async function resumeRepair(woId, actor) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "repairing", updated_at: serverTimestamp() });
+  await transition(woId, { status: "repairing" });
   await appendHistory(woId, { from_status: "waiting_spare_part", to_status: "repairing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Spare part received — resumed repair" });
 }
 
-/** rules: role technician, repairing -> testing */
+/** matrix: repairing -> testing */
 export async function startTesting(woId, actor) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "testing", updated_at: serverTimestamp() });
+  await transition(woId, { status: "testing" });
   await appendHistory(woId, { from_status: "repairing", to_status: "testing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Repair complete — testing" });
 }
 
-/** rules: role technician, testing -> repairing, test_fail_reason required */
+/** matrix: testing -> repairing, requires test_fail_reason */
 export async function testFailed(woId, actor, reason) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "repairing", test_fail_reason: reason, updated_at: serverTimestamp() });
+  await transition(woId, { status: "repairing", test_fail_reason: reason });
   await appendHistory(woId, { from_status: "testing", to_status: "repairing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: `Test failed: ${reason}` });
 }
 
-/** rules: role technician, testing -> completed, resolution_notes required */
+/** matrix: testing -> completed, requires resolution_notes. The trigger stamps
+    resolved_at. */
 export async function markCompleted(woId, actor, resolutionNotes) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "completed", resolution_notes: resolutionNotes, updated_at: serverTimestamp() });
+  await transition(woId, { status: "completed", resolution_notes: resolutionNotes });
   await appendHistory(woId, { from_status: "testing", to_status: "completed", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Test passed — awaiting requester verification" });
 }
 
-/** rules: role requester, completed -> closed, verified_by==uid */
+/** matrix: completed -> closed, requires verified_by. The trigger stamps
+    closed_at, verified_at and the final sla_breached verdict. */
 export async function verifyAndClose(woId, actor) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "closed", verified_by: actor.uid, verified_at: serverTimestamp(), updated_at: serverTimestamp() });
+  await transition(woId, { status: "closed", verified_by: actor.uid });
   await appendHistory(woId, { from_status: "completed", to_status: "verified", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Confirmed fixed by requester" });
   await appendHistory(woId, { from_status: "verified", to_status: "closed", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: null });
 }
 
-/** rules: role manager or admin — Completed -> Closed override (requester unresponsive) */
+/** matrix: completed -> closed for manager/admin — requester unresponsive */
 export async function forceVerifyAndClose(woId, actor) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "closed", verified_by: actor.uid, verified_at: serverTimestamp(), updated_at: serverTimestamp() });
+  await transition(woId, { status: "closed", verified_by: actor.uid });
   await appendHistory(woId, { from_status: "completed", to_status: "verified", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: `Force-verified by ${actor.name} (requester unresponsive)` });
   await appendHistory(woId, { from_status: "verified", to_status: "closed", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: null });
 }
 
-/** rules: role requester, completed -> repairing, reopen_reason required */
+/** matrix: completed -> repairing, requires reopen_reason */
 export async function reopenWorkOrder(woId, actor, reason) {
-  await updateDoc(doc(db, "work_orders", woId), { status: "repairing", reopen_reason: reason, updated_at: serverTimestamp() });
+  await transition(woId, { status: "repairing", reopen_reason: reason });
   await appendHistory(woId, { from_status: "completed", to_status: "repairing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: `Reopened by requester: ${reason}` });
 }

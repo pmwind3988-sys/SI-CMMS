@@ -3,21 +3,18 @@
 /**
  * SI — Service Inside · Notification Module
  * In-app notifications only, per the module's scope — no email/push/SMS
- * transport here. Every notification is written server-side (see the
- * `notify()` helper and its callers in functions/index.js); this file only
- * ever reads them and marks them read, matching what firestore.rules allows
- * a client to do with this collection.
+ * transport here. Every notification is written server-side (see si_notify()
+ * and its callers in migrations 0003 and 0004); this file only ever reads them
+ * and marks them read, matching what the notifications policies allow a client
+ * to do with this table.
  */
-import { collection, doc, updateDoc, onSnapshot, query, where, orderBy, limit as fbLimit, writeBatch } from "firebase/firestore";
-import { db } from "./firebase";
-
-const notificationsCol = collection(db, "notifications");
+import { supabase, liveQuery } from "./supabase";
 
 /**
- * Every notification type this module currently triggers, with the
- * in-app display metadata (icon name is a lucide-react export name,
- * resolved by the component — kept as a string here so this file has no
- * UI-framework dependency of its own).
+ * Every notification type this module currently triggers, with the in-app
+ * display metadata (icon name is a lucide-react export name, resolved by the
+ * component — kept as a string here so this file has no UI-framework
+ * dependency of its own).
  */
 export const NOTIFICATION_META = {
   submitted: { label: "Work order submitted", icon: "FileCheck2", color: "#0F3D91" },
@@ -32,19 +29,41 @@ export const NOTIFICATION_META = {
 };
 
 export function listenNotifications(currentUser, cb, onError, max = 30) {
-  const q = query(notificationsCol, where("recipient_id", "==", currentUser.uid), orderBy("created_at", "desc"), fbLimit(max));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+  return liveQuery({
+    table: "notifications",
+    filter: `recipient_id=eq.${currentUser.uid}`,
+    run: () =>
+      supabase
+        .from("notifications")
+        .select("*")
+        .eq("recipient_id", currentUser.uid)
+        .order("created_at", { ascending: false })
+        .limit(max),
+    cb,
+    onError,
+  });
 }
 
 export async function markNotificationRead(notificationId) {
-  await updateDoc(doc(db, "notifications", notificationId), { status: "read" });
+  const { error } = await supabase
+    .from("notifications")
+    .update({ status: "read" })
+    .eq("id", notificationId);
+  if (error) throw error;
 }
 
+/**
+ * One statement rather than Firestore's writeBatch — `in` covers the whole set,
+ * and RLS still evaluates the recipient check per row, so a forged id in the
+ * list simply matches nothing.
+ */
 export async function markAllNotificationsRead(notificationIds) {
   if (notificationIds.length === 0) return;
-  const batch = writeBatch(db);
-  notificationIds.forEach((id) => batch.update(doc(db, "notifications", id), { status: "read" }));
-  await batch.commit();
+  const { error } = await supabase
+    .from("notifications")
+    .update({ status: "read" })
+    .in("id", notificationIds);
+  if (error) throw error;
 }
 
 /** Where a notification's entity should open — currently only work_order,

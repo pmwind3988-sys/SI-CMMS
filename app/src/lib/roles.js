@@ -1,8 +1,8 @@
 /**
  * SI — Service Inside · Authentication Module
- * Role constants. Values are lowercase snake_case to match the Firestore
- * custom-claims convention (request.auth.token.role) and the security
- * rules already deployed against it — see firestore.rules.
+ * Role constants. Values are lowercase snake_case to match the si_role enum in
+ * Postgres and the `user_role` JWT claim the access-token hook populates —
+ * see supabase/migrations/0002_auth_and_rls.sql.
  */
 export const ROLES = {
   REQUESTER: "requester",
