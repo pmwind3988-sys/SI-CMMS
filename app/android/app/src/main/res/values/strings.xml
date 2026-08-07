@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SI CMMS</string>
+    <string name="title_activity_main">SI CMMS</string>
+    <string name="package_name">com.serviceinside.cmms</string>
+    <string name="custom_url_scheme">com.serviceinside.cmms</string>
+</resources>

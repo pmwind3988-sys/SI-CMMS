@@ -1,0 +1,355 @@
+rules_version = '2';
+
+// ============================================================================
+// SI — Service Inside · Firestore Security Rules
+// ============================================================================
+// Role hierarchy (least to most access):
+//   requester   -> only their own work orders
+//   technician  -> only work orders currently assigned to them
+//   supervisor  -> everything within their own department
+//   manager     -> everything, system-wide ("Maintenance Manager")
+//   admin       -> full, unrestricted access ("Administrator")
+//
+// Roles and department_id are read from the caller's Auth custom claims,
+// never from a live Firestore document — a rule that reads another
+// document to check a permission adds a real read to every single
+// request evaluated against it, at scale, forever.
+// ============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* ---------------------------------------------------------------------
+       SHARED HELPERS
+    ----------------------------------------------------------------------*/
+    function signedIn()        { return request.auth != null; }
+    function uid()             { return request.auth.uid; }
+    function role()            { return request.auth.token.role; }
+    function departmentId()    { return request.auth.token.department_id; }
+    function plantIds()        { return request.auth.token.plant_ids; }
+
+    function isRequester()     { return role() == "requester"; }
+    function isTechnician()    { return role() == "technician"; }
+    function isSupervisor()    { return role() == "supervisor"; }
+    function isManager()       { return role() == "manager"; }   // Maintenance Manager
+    function isAdmin()         { return role() == "admin"; }     // Administrator
+
+    // Manager and Admin both see/manage everything system-wide; they differ
+    // only in that Admin additionally bypasses the work-order transition
+    // matrix and the "never delete" convention (see Section on work_orders).
+    function isManagerOrAdmin() { return isManager() || isAdmin(); }
+
+    function inSameDepartment(deptId) {
+      return isSupervisor() && deptId == departmentId();
+    }
+
+    /* =======================================================================
+       WORK ORDERS — the core access pattern specified for this ruleset
+    ========================================================================*/
+    match /work_orders/{workOrderId} {
+
+      // READ
+      // requester  -> own work orders only
+      // technician -> only work orders assigned to them
+      // supervisor -> only work orders in their own department
+      // manager    -> every work order, every department
+      // admin      -> every work order, every department
+      allow read: if signedIn() && (
+        isAdmin() ||
+        isManager() ||
+        inSameDepartment(resource.data.department_id) ||
+        (isTechnician() && resource.data.assigned_to_id == uid()) ||
+        (isRequester() && resource.data.requester_id == uid())
+      );
+
+      // CREATE
+      // Any signed-in role may raise a work order under their own identity.
+      // Supervisor may only raise one scoped to their own department;
+      // Manager/Admin may raise one for any department, on behalf of anyone.
+      allow create: if signedIn() &&
+        request.resource.data.status == "open" &&
+        request.resource.data.assigned_to_id == null &&
+        (
+          isAdmin() ||
+          isManager() ||
+          (isSupervisor() && request.resource.data.department_id == departmentId()) ||
+          request.resource.data.requester_id == uid()
+        );
+
+      // UPDATE
+      // Admin has full, unrestricted write access — including the ability
+      // to correct a record outside the normal transition matrix. This is
+      // a deliberate, narrow exception to the matrix below, granted only
+      // to this one role, and should be used sparingly by policy even
+      // though the rule itself does not (and cannot) enforce restraint.
+      allow update: if signedIn() && isAdmin();
+
+      // Manager: same operational rights as every other role combined,
+      // system-wide rather than department-scoped, but still constrained
+      // to the same valid (fromStatus -> toStatus) transitions — a Manager
+      // can act on any work order anywhere, but cannot invent a transition
+      // that isn't otherwise valid for whoever is performing it.
+      allow update: if signedIn() && isManager() && (
+        assignmentTransition() ||
+        technicianWorkflowTransition(true) ||
+        requesterVerificationTransition(true)
+      );
+
+      // Supervisor: assignment rights, scoped to their own department only.
+      allow update: if signedIn() && isSupervisor() &&
+        inSameDepartment(resource.data.department_id) &&
+        assignmentTransition();
+
+      // Technician: full field-service workflow, only on work orders
+      // currently assigned to them.
+      allow update: if signedIn() && isTechnician() &&
+        technicianWorkflowTransition(false);
+
+      // Requester: verification/reopen rights, only on their own work order.
+      allow update: if signedIn() && isRequester() &&
+        requesterVerificationTransition(false);
+
+      // EDIT (new) — core fields (department, priority, impact, description,
+      // downtime estimate, risk flags) may be corrected only while the work
+      // order is still Open — i.e., before a technician is assigned and the
+      // field-service flow has actually begun. Status itself must not change
+      // via this path; that's what the transition clauses above are for.
+      // Permitted: the requester on their own work order, a Supervisor within
+      // their own department, or Manager/Admin anywhere.
+      allow update: if signedIn() &&
+        resource.data.status == "open" &&
+        request.resource.data.status == "open" &&
+        (
+          (isRequester() && resource.data.requester_id == uid()) ||
+          inSameDepartment(resource.data.department_id) ||
+          isManagerOrAdmin()
+        );
+
+      // DELETE — never, for every role except Admin. Closing is a status,
+      // not a deletion; Admin's ability to delete is granted because the
+      // instruction is "full access," but this remains a break-glass
+      // capability, not a normal operating path.
+      allow delete: if signedIn() && isAdmin();
+
+      /* ---- transition helper functions (scoped to this match block) ---- */
+
+      function assignmentTransition() {
+        return
+          (resource.data.status in ["open", "assigned"] &&
+            request.resource.data.status == "assigned" &&
+            request.resource.data.assigned_to_id != null)
+          ||
+          (resource.data.status in [
+            "accepted", "on_the_way", "on_site", "repairing", "waiting_spare_part", "testing"
+          ] &&
+            request.resource.data.status == resource.data.status &&
+            request.resource.data.assigned_to_id != null &&
+            request.resource.data.assigned_to_id != resource.data.assigned_to_id);
+      }
+
+      function technicianWorkflowTransition(bypassAssigneeCheck) {
+        let isAssignee = bypassAssigneeCheck || resource.data.assigned_to_id == uid();
+        return isAssignee && (
+          (resource.data.status == "assigned" && request.resource.data.status == "accepted")
+
+          || (resource.data.status == "assigned" &&
+              request.resource.data.status == "open" &&
+              request.resource.data.assigned_to_id == null &&
+              request.resource.data.decline_reason is string &&
+              request.resource.data.decline_reason.size() > 0)
+
+          || (resource.data.status == "accepted" && request.resource.data.status == "on_the_way")
+          || (resource.data.status == "on_the_way" && request.resource.data.status == "on_site")
+          || (resource.data.status == "on_site" && request.resource.data.status == "repairing")
+
+          || (resource.data.status == "repairing" &&
+              request.resource.data.status == "waiting_spare_part" &&
+              request.resource.data.spare_part_reason is string &&
+              request.resource.data.spare_part_reason.size() > 0)
+          || (resource.data.status == "waiting_spare_part" && request.resource.data.status == "repairing")
+
+          || (resource.data.status == "repairing" && request.resource.data.status == "testing")
+
+          || (resource.data.status == "testing" &&
+              request.resource.data.status == "repairing" &&
+              request.resource.data.test_fail_reason is string &&
+              request.resource.data.test_fail_reason.size() > 0)
+
+          || (resource.data.status == "testing" &&
+              request.resource.data.status == "completed" &&
+              request.resource.data.resolution_notes is string &&
+              request.resource.data.resolution_notes.size() > 0)
+        );
+      }
+
+      function requesterVerificationTransition(bypassOwnerCheck) {
+        let isOwner = bypassOwnerCheck || resource.data.requester_id == uid();
+        return isOwner && resource.data.status == "completed" && (
+          (request.resource.data.status == "closed" &&
+            request.resource.data.verified_by == uid())
+          ||
+          (request.resource.data.status == "repairing" &&
+            request.resource.data.reopen_reason is string &&
+            request.resource.data.reopen_reason.size() > 0)
+        );
+      }
+    }
+
+    /* =======================================================================
+       WORK ORDER HISTORY — read scope mirrors the parent work order exactly;
+       written only alongside the work order update itself, never edited.
+    ========================================================================*/
+    match /work_order_history/{historyId} {
+      allow read: if signedIn() && (
+        isManagerOrAdmin() ||
+        inSameDepartment(get(/databases/$(database)/documents/work_orders/$(resource.data.work_order_id)).data.department_id) ||
+        get(/databases/$(database)/documents/work_orders/$(resource.data.work_order_id)).data.assigned_to_id == uid() ||
+        get(/databases/$(database)/documents/work_orders/$(resource.data.work_order_id)).data.requester_id == uid()
+      );
+      allow create: if signedIn(); // written by whoever just performed the parent transition
+      allow update, delete: if false; // immutable audit trail, even for Admin
+    }
+
+    /* =======================================================================
+       TECHNICIANS
+    ========================================================================*/
+    match /technicians/{technicianId} {
+      allow read: if signedIn(); // needed system-wide for assignment UI
+      allow create: if signedIn() && isAdmin();
+      allow update: if signedIn() && (
+        isAdmin() ||
+        isManager() ||
+        isSupervisor() ||
+        (isTechnician() && uid() == technicianId &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(["availability_status", "updated_at"]))
+      );
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    /* =======================================================================
+       ASSETS
+    ========================================================================*/
+    match /assets/{assetId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && (isManagerOrAdmin() || isSupervisor());
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    /* =======================================================================
+       DEPARTMENTS
+    ========================================================================*/
+    match /departments/{departmentId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && isManagerOrAdmin();
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    /* =======================================================================
+       USERS
+    ========================================================================*/
+    match /users/{userId} {
+      allow read: if signedIn() && (
+        isManagerOrAdmin() || isSupervisor() || uid() == userId
+      );
+      allow create: if signedIn() && isAdmin();
+      allow update: if signedIn() && (
+        isAdmin() ||
+        (uid() == userId &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(["name", "phone", "photo_url", "updated_at"]))
+      );
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    /* =======================================================================
+       NOTIFICATIONS — always recipient-scoped, regardless of role
+    ========================================================================*/
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && (resource.data.recipient_id == uid() || isAdmin());
+      allow create: if signedIn() && isAdmin(); // normally system-triggered only
+      allow update: if signedIn() &&
+        resource.data.recipient_id == uid() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status"]) &&
+        request.resource.data.status == "read";
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    /* =======================================================================
+       ATTACHMENTS & COMMENTS — polymorphic (entity_type + entity_id)
+    ========================================================================*/
+    match /attachments/{attachmentId} {
+      allow read: if signedIn();
+      allow create: if signedIn(); // scope enforced at the application layer per entity_type
+      allow update: if false;
+      allow delete: if signedIn() && isManagerOrAdmin();
+    }
+
+    match /comments/{commentId} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn() &&
+        (resource.data.author_id == uid() || isAdmin()) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["text", "edited_at"]);
+      allow delete: if signedIn() && (resource.data.author_id == uid() || isManagerOrAdmin());
+    }
+
+    /* =======================================================================
+       CONFIGURATION — priorities, SLA, plants: Admin/Manager configure,
+       everyone signed in may read (needed to render priority/SLA everywhere).
+    ========================================================================*/
+    match /priorities/{priorityId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isAdmin();
+      allow delete: if false; // referenced by historical work orders — see architecture doc
+    }
+
+    match /sla/{slaId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isAdmin();
+      allow delete: if false; // same historical-integrity reasoning as priorities
+    }
+
+    match /plants/{plantId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isAdmin();
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    /* =======================================================================
+       STATS — Dashboard module. Precomputed by Cloud Functions only;
+       every signed-in user may read (the UI itself decides which cards/
+       charts to surface per role), nobody writes from the client.
+    ========================================================================*/
+    match /stats/{statId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    /* =======================================================================
+       COUNTERS — no client access in either direction, at any role,
+       including Admin. Sequence integrity depends on this being
+       transaction-only, server-side.
+    ========================================================================*/
+    match /counters/{counterId} {
+      allow read, write: if false;
+    }
+
+    /* =======================================================================
+       APK BUILDS — the release registry the installed Android app reads to
+       answer "is there a newer build, and am I below the forced-update
+       floor?". Every signed-in client reads it; nobody writes it from a
+       client. Writes come from scripts/recordApkBuild.js via the Admin SDK
+       (which bypasses rules entirely), so the Admin clause here exists only
+       for the manual correction case — flipping `released`, adding a
+       download_url, or raising min_supported_version_code after the fact.
+
+       Deliberately readable by every role including requester: an outdated
+       APK is a problem for whoever is holding the phone, not just for staff
+       with elevated permissions.
+    ========================================================================*/
+    match /apk_builds/{buildId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && isAdmin();
+      allow delete: if signedIn() && isAdmin();
+    }
+  }
+}

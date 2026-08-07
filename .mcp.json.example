@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Copy this file to .mcp.json (which is gitignored) and replace YOUR_PROJECT_REF.",
+    "The project ref is the ID in your Supabase dashboard URL:",
+    "  https://supabase.com/dashboard/project/<THIS_PART>",
+    "",
+    "Never inline the access token here. ${SUPABASE_ACCESS_TOKEN} is expanded from",
+    "your environment, so the secret stays out of the repo. Set it once with:",
+    "  setx SUPABASE_ACCESS_TOKEN \"sbp_your_token\"",
+    "then restart Claude Code.",
+    "",
+    "On Windows the 'cmd /c' wrapper is required — a bare 'npx' command fails."
+  ],
+  "mcpServers": {
+    "supabase": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@supabase/mcp-server-supabase@latest",
+        "--project-ref=YOUR_PROJECT_REF"
+      ],
+      "env": {
+        "SUPABASE_ACCESS_TOKEN": "${SUPABASE_ACCESS_TOKEN}"
+      }
+    }
+  }
+}

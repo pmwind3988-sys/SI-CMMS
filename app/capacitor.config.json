@@ -1,0 +1,12 @@
+{
+  "appId": "com.serviceinside.cmms",
+  "appName": "SI CMMS",
+  "webDir": "out",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https",
+    "hostname": "localhost"
+  }
+}

@@ -1,0 +1,28 @@
+rules_version = '2';
+
+// SI — Service Inside · Work Order Module
+// Mirrors firestore.rules' attachments logic: only the requester or the
+// current assignee of a work order may upload evidence for it; anyone
+// signed in may view (matching the Firestore attachments doc's read rule).
+// Path matches exactly what addAttachment() in src/lib/workOrders.js writes to.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /work_orders/{workOrderId}/attachments/{fileName} {
+
+      allow read: if request.auth != null;
+
+      allow write: if request.auth != null && (
+        firestore.get(/databases/(default)/documents/work_orders/$(workOrderId)).data.requester_id == request.auth.uid ||
+        firestore.get(/databases/(default)/documents/work_orders/$(workOrderId)).data.assigned_to_id == request.auth.uid
+      ) &&
+      // 25MB cap per file, images/video only — matches the Upload Photo /
+      // Upload Video fields' accept="image/*" / accept="video/*" on the client.
+      request.resource.size < 25 * 1024 * 1024 &&
+      request.resource.contentType.matches("image/.*|video/.*");
+
+      // Deletion happens only via the Firestore attachments document's own
+      // delete rule (Manager/Admin) — never a direct client Storage delete.
+      allow delete: if false;
+    }
+  }
+}

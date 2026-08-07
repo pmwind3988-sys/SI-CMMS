@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SI — Work Order Module — Clickable Prototype</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+  :root{
+    --navy:#0F3D91; --navy-deep:#0B2F70; --navy-mid:#1E4FA0; --navy-line:#2C5AA8;
+    --canvas:#F6F8FB; --card:#FFFFFF; --ink:#101828; --ink-soft:#64748B;
+    --amber:#F59E0B; --amber-soft:#FDE7C4; --good:#22C55E; --red:#EF4444; --p3:#FBBF24;
+    --border:#E5E9F0; --shadow:0 1px 2px rgba(15,23,42,.04), 0 4px 12px rgba(15,23,42,.05);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:#DDE3EC;font-family:'Inter',sans-serif;color:var(--ink);}
+  button,input,select,textarea{font-family:inherit;}
+
+  /* ---------- Prototype chrome (outside the "device") ---------- */
+  .proto-topbar{
+    background:var(--navy-deep); color:#fff; padding:10px 20px;
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
+    position:sticky; top:0; z-index:200;
+  }
+  .proto-topbar .brand{display:flex;align-items:center;gap:8px;font-weight:800;font-size:14px;letter-spacing:.02em;}
+  .proto-topbar .brand small{color:#9FB6E0;font-weight:600;font-size:10px;letter-spacing:.06em;margin-left:4px;}
+  .device-toggle{display:flex;gap:2px;background:rgba(255,255,255,.08);border-radius:8px;padding:3px;}
+  .device-toggle button{
+    border:none;background:transparent;color:#B9C9E8;font-size:12.5px;font-weight:600;
+    padding:6px 14px;border-radius:6px;cursor:pointer;
+  }
+  .device-toggle button.active{background:var(--amber);color:var(--navy-deep);}
+
+  .proto-body{display:flex;min-height:calc(100vh - 45px);}
+
+  .proto-nav{
+    width:230px;flex-shrink:0;background:#0E1A33;color:#B9C9E8;padding:16px 12px;
+    overflow-y:auto;
+  }
+  .proto-nav h4{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#5B76AE;margin:14px 8px 6px;font-weight:700;}
+  .proto-nav h4:first-child{margin-top:2px;}
+  .proto-nav .item{
+    display:block;width:100%;text-align:left;background:none;border:none;color:#B9C9E8;
+    font-size:13px;padding:8px 10px;border-radius:8px;cursor:pointer;margin-bottom:1px;
+  }
+  .proto-nav .item:hover{background:rgba(255,255,255,.06);}
+  .proto-nav .item.active{background:var(--navy-mid);color:#fff;font-weight:600;}
+  .proto-nav .item .num{font-family:monospace;color:#5B76AE;margin-right:6px;font-size:11px;}
+  .proto-nav .item.active .num{color:#DCE6F5;}
+
+  .stage{flex:1;display:flex;justify-content:center;align-items:flex-start;padding:28px;overflow:auto;}
+
+  /* ---------- Desktop device frame ---------- */
+  .frame-desktop{
+    width:1180px;max-width:100%;background:var(--canvas);border-radius:14px;overflow:hidden;
+    box-shadow:0 20px 60px rgba(0,0,0,.25);
+  }
+  /* ---------- Mobile device frame ---------- */
+  .frame-mobile{
+    width:390px;background:var(--canvas);border-radius:34px;overflow:hidden;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); border:8px solid #14181f; position:relative;
+  }
+  .frame-mobile::before{
+    content:"";position:absolute;top:8px;left:50%;transform:translateX(-50%);
+    width:110px;height:20px;background:#14181f;border-radius:0 0 14px 14px;z-index:5;
+  }
+
+  /* ================= APP SHELL — DESKTOP ================= */
+  .app-desktop{display:flex;min-height:720px;}
+  .side{width:216px;background:var(--navy);padding:20px 14px;flex-shrink:0;display:flex;flex-direction:column;}
+  .side .logo{display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:24px;}
+  .side .logo .mark{width:30px;height:30px;border-radius:9px;background:#fff;display:flex;align-items:center;justify-content:center;color:var(--navy);font-weight:800;font-size:14px;}
+  .side .logo .word{color:#fff;font-weight:800;font-size:15.5px;line-height:1;}
+  .side .logo .tag{color:#9FB6E0;font-size:9px;letter-spacing:.04em;margin-top:2px;}
+  .side .navitem{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;color:#9FB6E0;font-size:13.5px;font-weight:500;}
+  .side .navitem.active{background:var(--navy-mid);color:#fff;font-weight:600;}
+  .side .spacer{margin-top:auto;padding-top:12px;border-top:1px solid var(--navy-line);}
+  .side .who{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+  .side .who .av{width:30px;height:30px;border-radius:15px;background:var(--amber);color:var(--navy);font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;}
+  .side .who .nm{color:#fff;font-size:12.5px;font-weight:600;}
+  .side .who .rl{color:#9FB6E0;font-size:10.5px;}
+  .side .signout{color:#9FB6E0;font-size:12px;}
+
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;}
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;background:#fff;border-bottom:1px solid var(--border);}
+  .searchbox{display:flex;align-items:center;gap:8px;background:var(--canvas);border-radius:9px;padding:8px 12px;width:300px;color:var(--ink-soft);font-size:13px;}
+  .topbar-right{display:flex;align-items:center;gap:16px;}
+  .bell{position:relative;color:var(--ink-soft);}
+  .bell .dot{position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:4px;background:var(--red);}
+  .rolepill{display:inline-flex;align-items:center;gap:6px;border-radius:20px;font-size:11px;font-weight:700;padding:4px 10px;}
+  .content{padding:24px;overflow-y:auto;}
+
+  /* ================= APP SHELL — MOBILE ================= */
+  .app-mobile{display:flex;flex-direction:column;min-height:720px;}
+  .m-appbar{display:flex;align-items:center;gap:10px;padding:16px 16px 10px;background:#fff;border-bottom:1px solid var(--border);}
+  .m-appbar .back{color:var(--ink-soft);font-weight:700;font-size:15px;}
+  .m-appbar .title{font-weight:700;font-size:15px;}
+  .m-content{flex:1;padding:14px 14px 90px;overflow-y:auto;}
+  .m-tabbar{
+    position:sticky;bottom:0;background:#fff;border-top:1px solid var(--border);
+    display:flex;justify-content:space-around;padding:9px 4px 14px;
+  }
+  .m-tabbar .t{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--ink-soft);font-size:10px;font-weight:600;}
+  .m-tabbar .t.active{color:var(--navy);}
+  .m-tabbar .dot16{width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;}
+
+  /* ---------- shared bits ---------- */
+  h1.pt{font-size:20px;font-weight:700;margin:0 0 2px;}
+  .sub{font-size:13px;color:var(--ink-soft);margin:0;}
+  .card{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);}
+  .btn{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:9px;font-weight:600;cursor:pointer;font-size:13px;padding:9px 15px;}
+  .btn.amber{background:var(--amber);color:var(--navy-deep);}
+  .btn.primary{background:var(--ink);color:#fff;}
+  .btn.ghost{background:transparent;border:1.5px solid #D8DEE4;color:var(--ink);}
+  .btn.danger{background:#FCE9E9;color:var(--red);}
+  .btn.success{background:#E7F5EE;color:var(--good);}
+  .btn.sm{font-size:12px;padding:6px 11px;}
+  .btn:disabled{opacity:.45;cursor:default;}
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:12px;font-weight:600;margin-bottom:5px;}
+  .field label .req{color:var(--red);}
+  .input,.select,textarea{width:100%;padding:9px 11px;border-radius:9px;border:1.5px solid #D8DEE4;font-size:13px;color:var(--ink);background:#fff;}
+  textarea{resize:vertical;font-family:inherit;}
+  .badge-p{font-family:monospace;font-weight:700;border-radius:5px;padding:2px 7px;font-size:11.5px;border:1px solid;}
+  .badge-s{font-size:12px;font-weight:600;}
+  .row{display:flex;gap:16px;flex-wrap:wrap;}
+  .col{flex:1;min-width:0;}
+  .hint{font-size:11px;color:var(--ink-soft);margin-top:3px;}
+  .divider{height:1px;background:#F1F3F5;}
+  .info{background:var(--canvas);border-radius:10px;padding:12px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:12px;}
+  .clk{cursor:pointer;}
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:14px 0 16px;overflow-x:auto;}
+  .tabs button{background:none;border:none;padding:9px 14px;font-size:13px;font-weight:600;color:var(--ink-soft);border-bottom:2.5px solid transparent;white-space:nowrap;cursor:pointer;}
+  .tabs button.active{color:var(--ink);border-bottom-color:var(--amber);}
+  .statuschip{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;}
+  .statuschip button{font-size:10.5px;padding:5px 9px;border-radius:7px;border:1px solid #D8DEE4;background:#fff;color:var(--ink-soft);cursor:pointer;}
+  .statuschip button.active{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--navy-deep);color:#fff;padding:11px 16px;border-radius:10px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:999;display:none;}
+
+  [data-screen]{display:none;}
+  [data-screen].shown{display:block;}
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+
+<div class="proto-topbar">
+  <div class="brand">SI <small>SERVICE INSIDE · WORK ORDER PROTOTYPE</small></div>
+  <div class="device-toggle">
+    <button id="btnDesktop" class="active" onclick="setDevice('desktop')">Desktop</button>
+    <button id="btnMobile" onclick="setDevice('mobile')">Mobile</button>
+  </div>
+</div>
+
+<div class="proto-body">
+  <!-- ============ PROTOTYPE NAVIGATOR ============ -->
+  <div class="proto-nav">
+    <h4>Work Order Screens</h4>
+    <button class="item" data-nav="list" onclick="goto('list')"><span class="num">1</span>Work Order List</button>
+    <button class="item" data-nav="new" onclick="goto('new')"><span class="num">2</span>Raise New Work Order</button>
+    <button class="item" data-nav="detail-overview" onclick="gotoDetail('overview')"><span class="num">3</span>Work Order Details</button>
+    <button class="item" data-nav="detail-assignment" onclick="gotoDetail('assignment')"><span class="num">4</span>Assign Technician</button>
+    <button class="item" data-nav="detail-workflow-tech" onclick="gotoDetail('workflow','Repairing')"><span class="num">5</span>Technician Job Screen</button>
+    <button class="item" data-nav="detail-progress" onclick="gotoDetail('progress')"><span class="num">6</span>Progress Update</button>
+    <button class="item" data-nav="detail-workflow-testing" onclick="gotoDetail('workflow','Testing')"><span class="num">7</span>Complete Work Order</button>
+    <button class="item" data-nav="detail-workflow-completed" onclick="gotoDetail('workflow','Completed')"><span class="num">8</span>Requester Verification</button>
+    <button class="item" data-nav="detail-timeline" onclick="gotoDetail('timeline')"><span class="num">9</span>Work Order History</button>
+    <h4>Notes</h4>
+    <div style="font-size:11.5px;line-height:1.5;color:#7C93C4;padding:0 8px 10px;">
+      Screens 4–9 are tabs inside Work Order Details on desktop, and become full-screen views on mobile — matching the shipped module exactly. Use the Workflow tab's status chips to preview screens 5–8 at different stages.
+    </div>
+  </div>
+
+  <!-- ============ STAGE ============ -->
+  <div class="stage">
+    <div id="frame" class="frame-desktop">
+
+      <!-- ================= DESKTOP APP ================= -->
+      <div id="appDesktop" class="app-desktop">
+        <div class="side">
+          <div class="logo">
+            <div class="mark">SI</div>
+            <div><div class="word">SI</div><div class="tag">SERVICE INSIDE</div></div>
+          </div>
+          <div class="navitem active" style="background:var(--navy-mid);color:#fff;font-weight:600;">📋&nbsp; Work Orders</div>
+          <div class="spacer">
+            <div class="who"><div class="av">PN</div><div><div class="nm">Priya Nair</div><div class="rl" id="roleLabelD">Supervisor</div></div></div>
+            <div class="signout">⎋ Sign out</div>
+          </div>
+        </div>
+        <div class="main">
+          <div class="topbar">
+            <div class="searchbox">🔍&nbsp; Search work orders…</div>
+            <div class="topbar-right">
+              <div class="bell">🔔<span class="dot"></span></div>
+              <span class="rolepill" id="rolePillD" style="background:#22C55E12;color:#22C55E;border:1px solid #22C55E45;">👥 Supervisor</span>
+            </div>
+          </div>
+          <div class="content" id="contentDesktop"></div>
+        </div>
+      </div>
+
+      <!-- ================= MOBILE APP ================= -->
+      <div id="appMobile" class="app-mobile hidden">
+        <div class="m-appbar">
+          <span class="back clk" onclick="mobileBack()">←</span>
+          <span class="title" id="mobileTitle">Work Orders</span>
+        </div>
+        <div class="m-content" id="contentMobile"></div>
+        <div class="m-tabbar">
+          <div class="t active"><div class="dot16" style="background:var(--navy-mid);color:#fff;">📋</div>Tasks</div>
+          <div class="t">🔎 Scan</div>
+          <div class="t">🔔 Alerts</div>
+          <div class="t">👤 Profile</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ======================================================================
+   STATIC DEMO DATA — one example work order, reused across every screen.
+   This is a click-through prototype: no persistence, no backend, no
+   validation logic executes — every interaction here is purely visual
+   navigation between screens, exactly as requested ("no code" = no
+   application logic, only markup needed to make it clickable).
+====================================================================== */
+const WO = {
+  woNumber: "WO-2026-000004",
+  equipment: "Hydraulic Press 3",
+  department: "Press Shop",
+  priority: "P2",
+  status: "Repairing",
+  requester: "Operator Team",
+  phone: "98450 33445",
+  complaint: "Press cycling slower than normal, hydraulic pressure gauge reading unstable under load.",
+  assignedTo: "Arun Kumar",
+};
+
+const STATUS_COLORS = {
+  "Open":"#0F3D91","Assigned":"#0F3D91","Accepted":"#F59E0B","On The Way":"#F59E0B",
+  "On Site":"#F59E0B","Repairing":"#F59E0B","Waiting Spare Part":"#64748B","Testing":"#F59E0B",
+  "Completed":"#F59E0B","Verified":"#22C55E","Closed":"#22C55E"
+};
+const PRIORITY_COLORS = {P1:"#EF4444",P2:"#F59E0B",P3:"#FBBF24",P4:"#0F3D91"};
+const STATUS_FLOW = ["Open","Assigned","Accepted","On The Way","On Site","Repairing","Waiting Spare Part","Testing","Completed","Verified","Closed"];
+
+function statusBadge(s){return `<span class="badge-s" style="color:${STATUS_COLORS[s]}">● ${s}</span>`;}
+function priorityBadge(p,sm){return `<span class="badge-p" style="color:${PRIORITY_COLORS[p]};background:${PRIORITY_COLORS[p]}1A;border-color:${PRIORITY_COLORS[p]}55;">${p}</span>`;}
+
+let device = "desktop";
+let currentScreen = "list";
+let detailTab = "overview";
+let workflowPreviewStatus = "Repairing";
+
+function setDevice(d){
+  device = d;
+  document.getElementById('btnDesktop').classList.toggle('active', d==='desktop');
+  document.getElementById('btnMobile').classList.toggle('active', d==='mobile');
+  document.getElementById('frame').className = d==='desktop' ? 'frame-desktop' : 'frame-mobile';
+  document.getElementById('appDesktop').classList.toggle('hidden', d!=='desktop');
+  document.getElementById('appMobile').classList.toggle('hidden', d!=='mobile');
+  render();
+}
+
+function setActiveNav(key){
+  document.querySelectorAll('.proto-nav .item').forEach(b=>b.classList.remove('active'));
+  const el = document.querySelector(`[data-nav="${key}"]`);
+  if(el) el.classList.add('active');
+}
+
+function goto(screen){
+  currentScreen = screen;
+  setActiveNav(screen);
+  render();
+}
+function gotoDetail(tab, previewStatus){
+  currentScreen = 'detail';
+  detailTab = tab;
+  if(previewStatus) workflowPreviewStatus = previewStatus;
+  const navKey = tab==='workflow' ? (
+    workflowPreviewStatus==='Testing' ? 'detail-workflow-testing' :
+    workflowPreviewStatus==='Completed' ? 'detail-workflow-completed' : 'detail-workflow-tech'
+  ) : 'detail-'+tab;
+  setActiveNav(navKey);
+  render();
+}
+function mobileBack(){
+  if(currentScreen==='new' || currentScreen==='detail') goto('list');
+}
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display='block';
+  setTimeout(()=>t.style.display='none', 2200);
+}
+
+/* ------------------------------------------------------------------
+   SCREEN 1 — Work Order List
+------------------------------------------------------------------*/
+function screenList(mobile){
+  const banner = `<div style="display:flex;align-items:center;gap:8px;background:#FDE7C4;border:1px solid #F59E0B55;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#8A5A0A;">⚠️ <strong>3</strong> work orders need a technician assigned.</div>`;
+  const rows = [
+    {wo:"WO-2026-000004", eq:"Hydraulic Press 3", dept:"Press Shop", p:"P2", s:"Repairing", who:"Arun Kumar", sla:"5h 40m left"},
+    {wo:"WO-2026-000005", eq:"CNC Lathe #04", dept:"Machining", p:"P1", s:"Open", who:"Unassigned", sla:"3h 55m left"},
+    {wo:"WO-2026-000006", eq:"Conveyor B-2", dept:"Assembly", p:"P3", s:"Testing", who:"Karan Mehta", sla:"18h left"},
+    {wo:"WO-2026-000001", eq:"CNC Lathe #04", dept:"Machining", p:"P2", s:"Closed", who:"Technician A", sla:"—"},
+  ];
+  if(mobile){
+    return `
+      <h1 class="pt">Work Orders</h1><p class="sub">4 of 4 work orders</p>
+      ${banner}
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <div class="input" style="flex:1;">🔍 Search…</div>
+      </div>
+      ${rows.map(r=>`
+        <div class="card clk" style="padding:13px;margin-bottom:8px;" onclick="${r.wo===WO.woNumber?`gotoDetail('overview')`:''}">
+          <div style="display:flex;justify-content:space-between;">
+            <div>
+              <div style="font-family:monospace;font-size:10.5px;color:var(--ink-soft);">${r.wo}</div>
+              <div style="font-size:14px;font-weight:600;margin-top:2px;">${r.eq}</div>
+              <div style="font-size:11.5px;color:var(--ink-soft);margin-top:2px;">${r.dept}</div>
+            </div>
+            <div style="text-align:right;">${priorityBadge(r.p,true)}<div style="margin-top:6px;">${statusBadge(r.s)}</div></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid #F1F3F5;font-size:11.5px;">
+            <span style="color:var(--ink-soft);">${r.who}</span>
+            <span style="font-family:monospace;color:${r.sla==='—'?'#64748B':'#64748B'};">${r.sla}</span>
+          </div>
+        </div>`).join('')}
+    `;
+  }
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div><h1 class="pt">Work Orders</h1><p class="sub">4 of 4 work orders</p></div>
+      <button class="btn amber" onclick="goto('new')">+ Raise Work Order</button>
+    </div>
+    ${banner}
+    <div style="display:flex;gap:10px;margin-bottom:14px;">
+      <div class="input" style="width:260px;">🔍 Search WO# or equipment…</div>
+      <select class="select" style="width:140px;"><option>All Priority</option></select>
+      <select class="select" style="width:180px;"><option>All Status</option></select>
+      <button class="btn ghost sm">⭳ Export</button>
+    </div>
+    <div class="card" style="overflow:hidden;">
+      <div style="display:flex;padding:10px 18px;background:var(--canvas);font-size:11px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.03em;">
+        <div style="flex:2;">Work Order</div><div style="flex:1.3;">Department</div><div style="width:60px;">Priority</div>
+        <div style="flex:1.3;">Status</div><div style="flex:1.2;">Assigned</div><div style="width:110px;text-align:right;">SLA</div>
+      </div>
+      ${rows.map((r,i)=>`
+        <div class="clk" style="display:flex;align-items:center;padding:13px 18px;${i>0?'border-top:1px solid #F1F3F5;':''}" onclick="${r.wo===WO.woNumber?`gotoDetail('overview')`:''}">
+          <div style="flex:2;"><div style="font-family:monospace;font-size:11.5px;color:var(--ink-soft);">${r.wo}</div><div style="font-size:13.5px;font-weight:500;">${r.eq}</div></div>
+          <div style="flex:1.3;font-size:13px;color:var(--ink-soft);">${r.dept}</div>
+          <div style="width:60px;">${priorityBadge(r.p,true)}</div>
+          <div style="flex:1.3;">${statusBadge(r.s)}</div>
+          <div style="flex:1.2;font-size:13px;">${r.who}</div>
+          <div style="width:110px;text-align:right;font-family:monospace;font-size:11.5px;color:var(--ink-soft);">${r.sla}</div>
+        </div>`).join('')}
+    </div>
+  `;
+}
+
+/* ------------------------------------------------------------------
+   SCREEN 2 — Raise New Work Order
+------------------------------------------------------------------*/
+function screenNew(mobile){
+  const form = `
+    <div class="field"><label>Department <span class="req">*</span></label><select class="select"><option>Press Shop</option></select></div>
+    <div class="field"><label>Equipment <span class="req">*</span></label><select class="select"><option>Hydraulic Press 3 · AST-0157</option></select></div>
+    <div class="info" style="background:var(--canvas);">🏭 Criticality: <strong>High</strong> · Asset ID: <span style="font-family:monospace;">AST-0157</span></div>
+    <div class="field"><label>Work order type</label>
+      <div style="display:flex;gap:8px;">
+        <button class="btn primary sm">Breakdown</button><button class="btn ghost sm">Inspection</button><button class="btn ghost sm">Project</button>
+      </div>
+    </div>
+    <div class="field"><label>Complaint <span class="req">*</span></label><textarea rows="3" placeholder="What happened?">Press cycling slower than normal, pressure gauge unstable.</textarea></div>
+    <div class="field"><label>Priority <span class="req">*</span></label>
+      <div style="display:flex;gap:6px;">
+        ${['P1','P2','P3','P4'].map(p=>`<button class="btn sm" style="flex:1;justify-content:center;border:1.5px solid ${p==='P2'?PRIORITY_COLORS[p]:'#D8DEE4'};background:${p==='P2'?PRIORITY_COLORS[p]+'1A':'#fff'};color:${p==='P2'?PRIORITY_COLORS[p]:'#64748B'};">${p}</button>`).join('')}
+      </div>
+    </div>
+    <div class="info" style="background:#F59E0B0D;border:1px solid #F59E0B55;">✨ <strong>Auto Priority Suggestion:</strong> Based on reduced capacity impact, the system recommends <strong style="color:#F59E0B;">P2</strong>.</div>
+    <div class="field"><label>Production impact <span class="req">*</span></label>
+      <label style="display:flex;justify-content:space-between;padding:10px 12px;border:1.5px solid var(--amber);background:#FDE7C4;border-radius:10px;">
+        <span><input type="radio" checked> Running at reduced capacity</span>${priorityBadge('P2',true)}
+      </label>
+    </div>
+    <div class="row" style="margin-bottom:14px;">
+      <div class="col"><div style="font-size:12px;font-weight:600;margin-bottom:6px;">Upload Photo</div><div class="input" style="text-align:center;border:1.5px dashed #D8DEE4;background:var(--canvas);color:var(--ink-soft);">🖼️ Upload photo</div></div>
+      <div class="col"><div style="font-size:12px;font-weight:600;margin-bottom:6px;">Upload Video</div><div class="input" style="text-align:center;border:1.5px dashed #D8DEE4;background:var(--canvas);color:var(--ink-soft);">🎬 Upload video</div></div>
+    </div>
+    <div class="field"><label>Estimated downtime <span class="req">*</span></label><div style="display:flex;gap:8px;"><input class="input" style="flex:1;" value="3"><select class="select" style="width:110px;"><option>Hours</option></select></div></div>
+    <div class="field"><label>Safety risk</label><div style="display:flex;gap:8px;"><button class="btn sm ghost">No</button><button class="btn sm danger">Yes</button></div></div>
+    <div class="field"><label>Environmental risk</label><div style="display:flex;gap:8px;"><button class="btn sm ghost">No</button><button class="btn sm ghost" style="opacity:.5;">Yes</button></div></div>
+    <div class="row"><div class="col field"><label>Requester <span class="req">*</span></label><input class="input" value="Operator Team"></div><div class="col field"><label>Phone number <span class="req">*</span></label><input class="input" value="98450 33445"></div></div>
+  `;
+  const sla = `
+    <div style="background:var(--navy);border-radius:12px;padding:18px;color:#fff;">
+      <div style="font-weight:700;font-size:14px;margin-bottom:12px;">⏱ SLA preview</div>
+      <div style="margin-bottom:12px;">${priorityBadge('P2',false)} <span style="font-size:12px;color:#B9C9E8;">Auto-suggested</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;"><span style="color:#B9C9E8;">Acknowledge by</span><strong>15 min</strong></div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;"><span style="color:#B9C9E8;">Response by</span><strong>1 hr</strong></div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;"><span style="color:#B9C9E8;">Resolution by</span><strong>8 hrs</strong></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button class="btn amber" style="flex:1;justify-content:center;" onclick="goto('list');showToast('Work order WO-2026-000007 created — Supervisor notified.')">Submit</button>
+      <button class="btn ghost" onclick="goto('list')">Cancel</button>
+    </div>
+  `;
+  if(mobile) return `<h1 class="pt">Raise Work Order</h1><p class="sub" style="margin-bottom:16px;">Priority escalates for safety/environmental risk.</p>${form}${sla}`;
+  return `
+    <button class="btn ghost sm" style="margin-bottom:14px;" onclick="goto('list')">← Back to Work Orders</button>
+    <h1 class="pt">Raise Work Order</h1><p class="sub" style="margin-bottom:20px;">Priority is suggested automatically and escalates for safety or environmental risk.</p>
+    <div class="row" style="align-items:flex-start;">
+      <div class="col card" style="flex:2;padding:22px;min-width:380px;">${form}</div>
+      <div class="col" style="flex:1;min-width:280px;">${sla}</div>
+    </div>
+  `;
+}
+
+/* ------------------------------------------------------------------
+   SCREEN 3 — Work Order Details shell (tabs = screens 4–9)
+------------------------------------------------------------------*/
+function detailHeader(){
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-family:monospace;font-size:13px;color:var(--ink-soft);">${WO.woNumber}</span>
+          ${priorityBadge(WO.priority,false)} ${statusBadge(workflowPreviewStatus)}
+        </div>
+        <h1 class="pt" style="margin-top:6px;">${WO.equipment}</h1>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--canvas);border-radius:10px;padding:10px 14px;">
+        ⏱ <div><div style="font-size:11px;color:var(--ink-soft);">Resolution SLA</div><div style="font-family:monospace;font-weight:700;font-size:13px;">5h 40m left</div></div>
+      </div>
+    </div>
+  `;
+}
+function detailTabs(mobile){
+  const tabs = [["overview","Overview"],["assignment","Assignment"],["progress","Progress Log"],["attachments","Attachments"],["timeline","Status Timeline"],["workflow","Workflow"]];
+  return `<div class="tabs">${tabs.map(([k,l])=>`<button class="${detailTab===k?'active':''}" onclick="gotoDetail('${k}')">${l}</button>`).join('')}</div>`;
+}
+function tabOverview(){
+  const rows = [["Equipment",WO.equipment],["Department",WO.department],["Type","Breakdown"],["Production impact","Running at reduced capacity"],
+    ["Estimated downtime","3 Hours"],["Requested by",WO.requester],["Requester phone",WO.phone],["Safety risk","No"],["Environmental risk","No"],["Permit / LOTO required","No"]];
+  return `<div class="row">
+    <div class="col">${rows.map(([l,v])=>`<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F1F3F5;font-size:13.5px;"><span style="color:var(--ink-soft);">${l}</span><strong>${v}</strong></div>`).join('')}</div>
+    <div class="col">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">Complaint</div>
+      <p style="font-size:13.5px;line-height:1.6;margin-top:0;">${WO.complaint}</p>
+      <div class="info" style="margin-top:16px;">
+        <div style="font-weight:700;color:var(--ink);margin-bottom:8px;">SLA targets (P2)</div>
+        <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>Acknowledge</span><strong style="font-family:monospace;">15 min</strong></div>
+        <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>Response</span><strong style="font-family:monospace;">1 hr</strong></div>
+        <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>Resolution</span><strong style="font-family:monospace;">8 hrs</strong></div>
+      </div>
+    </div>
+  </div>`;
+}
+function tabAssignment(){
+  const techs = [
+    {n:"Arun Kumar", s:"Mechanical · Hydraulics", load:2, best:true, assigned:true},
+    {n:"Meera Iyer", s:"Electrical · PLC", load:4, best:false, assigned:false},
+    {n:"Sanjay Rao", s:"Mechanical · CNC", load:1, best:false, assigned:false},
+    {n:"Divya Shah", s:"Utilities · Boilers", load:3, best:false, assigned:false},
+    {n:"Karan Mehta", s:"Electrical · Conveyors", load:2, best:false, assigned:false},
+  ];
+  return `
+    <div style="font-size:13px;color:var(--ink-soft);margin-bottom:14px;">Currently assigned: <strong>${WO.assignedTo}</strong></div>
+    ${techs.map(t=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-radius:10px;border:1.5px solid ${t.assigned?'var(--amber)':'var(--border)'};background:${t.assigned?'#FDE7C4':'#fff'};margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="width:32px;height:32px;border-radius:16px;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;">${t.n.split(' ').map(x=>x[0]).join('')}</div>
+          <div><div style="font-size:13.5px;font-weight:500;">${t.n} ${t.best?'<span style="background:#E7F5EE;color:var(--good);font-size:10px;border-radius:4px;padding:1px 6px;margin-left:5px;font-weight:700;">Best match</span>':''}</div><div style="font-size:11.5px;color:var(--ink-soft);">${t.s} — ${t.load} open jobs</div></div>
+        </div>
+        <button class="btn sm ${t.assigned?'success':'ghost'}" onclick="showToast('${t.assigned?'Already assigned':t.n+' notified — awaiting acceptance.'}')">${t.assigned?'✓ Assigned':'Assign'}</button>
+      </div>
+    `).join('')}
+  `;
+}
+function tabProgress(){
+  const log = [
+    {n:"Checked pressure switch — reads erratic, likely faulty.", who:"Arun Kumar", t:"10:12 AM"},
+    {n:"Ordered replacement switch from stores, ETA 30 min.", who:"Arun Kumar", t:"10:41 AM"},
+  ];
+  return `
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <input class="input" style="flex:1;" placeholder="Log a progress update…">
+      <button class="btn amber" onclick="showToast('Progress logged.')">+ Log</button>
+    </div>
+    ${log.map(l=>`<div style="background:var(--canvas);border-radius:10px;padding:11px 14px;margin-bottom:10px;"><div style="font-size:13px;">${l.n}</div><div style="font-size:11.5px;color:var(--ink-soft);margin-top:4px;">${l.who} · ${l.t}</div></div>`).join('')}
+  `;
+}
+function tabAttachments(){
+  return `
+    <div class="row">
+      <div class="col">
+        <div style="display:flex;justify-content:space-between;margin-bottom:10px;"><strong style="font-size:13.5px;">Photos (2)</strong><button class="btn sm ghost" onclick="showToast('Photo uploaded.')">🖼️ Upload</button></div>
+        <div style="display:flex;gap:8px;">
+          <div style="width:64px;height:64px;border-radius:10px;background:linear-gradient(135deg,#0F3D91,#1E4FA0);"></div>
+          <div style="width:64px;height:64px;border-radius:10px;background:linear-gradient(135deg,#F59E0B,#FBBF24);"></div>
+        </div>
+      </div>
+      <div class="col">
+        <div style="display:flex;justify-content:space-between;margin-bottom:10px;"><strong style="font-size:13.5px;">Videos (0)</strong><button class="btn sm ghost" onclick="showToast('Video uploaded.')">🎬 Upload</button></div>
+        <div style="font-size:12.5px;color:var(--ink-soft);">No videos uploaded yet.</div>
+      </div>
+    </div>
+  `;
+}
+function tabTimeline(){
+  const idx = STATUS_FLOW.indexOf(workflowPreviewStatus);
+  const events = {
+    "Open":"8:15 AM · Operator Team", "Assigned":"8:40 AM · Priya Nair — Assigned to Arun Kumar",
+    "Accepted":"8:52 AM · Arun Kumar", "On The Way":"8:53 AM · Arun Kumar",
+    "On Site":"9:05 AM · Arun Kumar", "Repairing":"9:07 AM · Arun Kumar — Started repair",
+  };
+  return STATUS_FLOW.map((s,i)=>{
+    const done = i<=idx, current = s===workflowPreviewStatus;
+    return `
+      <div style="display:flex;gap:14px;">
+        <div style="display:flex;flex-direction:column;align-items:center;">
+          <div style="width:22px;height:22px;border-radius:11px;display:flex;align-items:center;justify-content:center;background:${done?(current?'var(--amber)':'var(--good)'):'#E7EAEE'};${current?'border:2px solid var(--amber);':''}">
+            ${done && !current ? '<span style="color:#fff;font-size:11px;">✓</span>' : ''}
+          </div>
+          ${i<STATUS_FLOW.length-1?`<div style="width:2px;flex:1;min-height:26px;background:${i<idx?'var(--good)':'#E7EAEE'};"></div>`:''}
+        </div>
+        <div style="padding-bottom:20px;">
+          <div style="font-size:13.5px;font-weight:${current?700:500};color:${done?'var(--ink)':'var(--ink-soft)'};">${s}</div>
+          <div style="font-size:12px;color:var(--ink-soft);margin-top:2px;">${done ? (events[s]||'Recorded') : 'Pending'}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+function tabWorkflow(){
+  const statuses = STATUS_FLOW.filter(s=>s!=="Verified");
+  const chips = `<div class="statuschip">${statuses.map(s=>`<button class="${s===workflowPreviewStatus?'active':''}" onclick="gotoDetail('workflow','${s}')">${s}</button>`).join('')}</div>
+    <div class="hint" style="margin-bottom:14px;">↑ Preview how the Workflow tab looks at each stage — this is exactly what changes for screens 5–8 (Technician Job Screen, Progress Update, Complete Work Order, Requester Verification).</div>`;
+
+  let body = "";
+  switch(workflowPreviewStatus){
+    case "Open":
+      body = `<div class="info">This work order needs a technician. Go to the Assignment tab to assign one.</div><button class="btn amber" onclick="gotoDetail('assignment')">Assign a technician</button>`;
+      break;
+    case "Assigned":
+      body = `<div class="info">You've been assigned this work order. Accept it to start, or decline with a reason so the Supervisor can reassign.</div>
+        <div style="display:flex;gap:8px;"><button class="btn success" onclick="gotoDetail('workflow','Accepted');showToast('Accepted.')">✓ Accept</button><button class="btn danger" onclick="showToast('Decline reason field would appear here.')">✕ Decline</button></div>`;
+      break;
+    case "Accepted":
+      body = `<div class="info">Accepted. Head to the equipment when you're ready.</div><button class="btn amber" onclick="gotoDetail('workflow','On The Way');showToast('Status: On The Way')">🚚 On The Way</button>`;
+      break;
+    case "On The Way":
+      body = `<div class="info">En route. Mark arrival once you're at the equipment.</div><button class="btn amber" onclick="gotoDetail('workflow','On Site');showToast('Status: On Site')">📍 Arrived — On Site</button>`;
+      break;
+    case "On Site":
+      body = `<div class="info">On site. Start repair when you've assessed the issue.</div><button class="btn amber" onclick="gotoDetail('workflow','Repairing');showToast('Status: Repairing')">🔧 Start Repair</button>`;
+      break;
+    case "Repairing":
+      body = `<div class="info">Log progress updates as you work. If you need a part, mark it — otherwise move to testing once you believe it's fixed.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn ghost" onclick="gotoDetail('workflow','Waiting Spare Part');showToast('Status: Waiting Spare Part')">📦 Waiting Spare Part</button><button class="btn amber" onclick="gotoDetail('workflow','Testing');showToast('Status: Testing')">🧪 Start Testing</button></div>`;
+      break;
+    case "Waiting Spare Part":
+      body = `<div class="info">Paused — waiting on a spare part.</div><button class="btn amber" onclick="gotoDetail('workflow','Repairing');showToast('Resumed repair.')">▶ Part Received — Resume Repair</button>`;
+      break;
+    case "Testing":
+      body = `<div class="info">Testing the fix. If it holds, mark completed; if not, send it back to repair.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"><button class="btn danger" onclick="gotoDetail('workflow','Repairing');showToast('Sent back to repair.')">↺ Test Failed</button><button class="btn success" id="mcBtn" onclick="document.getElementById('completeNotes').classList.toggle('hidden')">✓ Mark Completed</button></div>
+        <div id="completeNotes" class="hidden"><textarea rows="3" placeholder="What did you do to fix it? (visible to requester)" style="margin-bottom:8px;"></textarea><button class="btn success" onclick="gotoDetail('workflow','Completed');showToast('Submitted for verification — requester notified.')">➤ Submit for verification</button></div>`;
+      break;
+    case "Completed":
+      body = `<div class="info">The technician marked this completed. Please verify the fix before it's closed.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"><button class="btn success" onclick="gotoDetail('workflow','Closed');showToast('Verified and closed.')">👍 Confirm fixed — Close</button><button class="btn danger" id="rfBtn" onclick="document.getElementById('reopenBox').classList.toggle('hidden')">↺ Not fixed</button></div>
+        <div id="reopenBox" class="hidden"><div style="display:flex;gap:8px;"><input class="input" placeholder="What's still wrong?" style="flex:1;"><button class="btn danger" onclick="gotoDetail('workflow','Repairing');showToast('Reopened — technician notified.')">Reopen</button></div></div>
+        <div class="hint" style="margin-top:12px;">HOD-only override also appears here if the requester hasn't responded: <em>Force verify &amp; close</em>.</div>`;
+      break;
+    case "Closed":
+      body = `<div class="info">This work order is closed. Verified and archived — cost and history have been finalized.</div>`;
+      break;
+  }
+  return chips + body;
+}
+function screenDetail(mobile){
+  let body;
+  switch(detailTab){
+    case "overview": body = tabOverview(); break;
+    case "assignment": body = tabAssignment(); break;
+    case "progress": body = tabProgress(); break;
+    case "attachments": body = tabAttachments(); break;
+    case "timeline": body = tabTimeline(); break;
+    case "workflow": body = tabWorkflow(); break;
+  }
+  if(mobile){
+    return `${detailHeader()}${detailTabs(true)}<div class="card" style="padding:18px;margin-top:4px;">${body}</div>`;
+  }
+  return `
+    <button class="btn ghost sm" style="margin-bottom:14px;" onclick="goto('list')">← Back to Work Orders</button>
+    ${detailHeader()}
+    ${detailTabs(false)}
+    <div class="card" style="padding:24px;">${body}</div>
+  `;
+}
+
+/* ------------------------------------------------------------------
+   RENDER
+------------------------------------------------------------------*/
+function render(){
+  const mobile = device==='mobile';
+  let html = "";
+  let title = "Work Orders";
+  if(currentScreen==='list'){ html = screenList(mobile); title="Work Orders"; }
+  else if(currentScreen==='new'){ html = screenNew(mobile); title="Raise Work Order"; }
+  else if(currentScreen==='detail'){ html = screenDetail(mobile); title = WO.woNumber; }
+
+  if(mobile){
+    document.getElementById('contentMobile').innerHTML = html;
+    document.getElementById('mobileTitle').textContent = title;
+  } else {
+    document.getElementById('contentDesktop').innerHTML = html;
+  }
+}
+
+render();
+</script>
+</body>
+</html>
