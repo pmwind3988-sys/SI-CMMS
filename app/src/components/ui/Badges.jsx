@@ -1,11 +1,14 @@
 "use client";
 
 import { User, HardHat, Users, Briefcase, ShieldCheck } from "lucide-react";
-import { PRIORITY_COLORS, STATUS_COLORS, STATUS_LABELS } from "../../lib/constants";
+import { useReferenceData } from "../../lib/referenceData";
 import { ROLE_LABELS } from "../../lib/roles";
 
+// Colours and labels come from the priorities and wo_statuses tables, so an
+// Administrator recolouring a status in Settings changes every badge in the app.
 export function PriorityBadge({ p, size = "md" }) {
-  const c = PRIORITY_COLORS[p] || "#64748B";
+  const { priorityColor } = useReferenceData();
+  const c = priorityColor(p);
   const pad = size === "sm" ? "1px 6px" : "2px 8px";
   const fs = size === "sm" ? 11 : 12;
   return (
@@ -19,10 +22,11 @@ export function PriorityBadge({ p, size = "md" }) {
 }
 
 export function StatusBadge({ s }) {
-  const c = STATUS_COLORS[s] || "#64748B";
+  const { statusColor, statusLabel } = useReferenceData();
+  const c = statusColor(s);
   return (
     <span className="text-[12.5px] font-semibold whitespace-nowrap" style={{ color: c }}>
-      ● {STATUS_LABELS[s] || s}
+      ● {statusLabel(s)}
     </span>
   );
 }

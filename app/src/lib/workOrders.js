@@ -14,11 +14,13 @@
  *   - The transition matrix is enforced in the database. An illegal transition
  *     raises rather than silently no-opping, so callers get a real error.
  *
- * KNOWN GAP, carried over from the Firebase original: a status change and its
- * work_order_history row are two separate statements, so a failure between them
- * leaves the audit trail one entry short. Making each transition an RPC would
- * close it. Flagged rather than silently changed, because it alters the shape of
- * every workflow call.
+ * Transitions go through si_transition_work_order() (migration 0010) rather than
+ * an UPDATE followed by an INSERT. That closes the audit-trail gap the Firebase
+ * original had — a failure between the two statements used to leave the work
+ * order advanced with no record of who advanced it — and it means the history's
+ * actor is read from auth.uid() server-side instead of being whatever the client
+ * claimed. The `actor` argument these functions still accept is used only for
+ * building remark text; it no longer establishes identity.
  */
 import { supabase, liveQuery, liveRow } from "./supabase";
 import { ROLES } from "./roles";
@@ -269,33 +271,29 @@ export async function addAttachment(woId, actor, file, fileType) {
    Every function writes exactly the field set its matching row in
    wo_status_transitions requires, then appends a history entry.
 -------------------------------------------------------------------*/
-async function transition(woId, fields) {
-  const { error } = await supabase.from("work_orders").update(fields).eq("id", woId);
-  if (error) throw error;
-}
-
-async function appendHistory(woId, entry) {
-  const { error } = await supabase
-    .from("work_order_history")
-    .insert({ work_order_id: woId, ...entry });
+/**
+ * One round trip, one transaction. `fields` is whitelisted server-side, so only
+ * columns a transition may legitimately carry are applied. `viaStatus` records an
+ * intermediate step in the history without the work order ever sitting there —
+ * used by verify-and-close.
+ */
+async function transition(woId, toStatus, { fields = {}, remarks = null, viaStatus = null } = {}) {
+  const { error } = await supabase.rpc("si_transition_work_order", {
+    p_wo_id: woId,
+    p_to_status: toStatus,
+    p_fields: fields,
+    p_remarks: remarks,
+    p_via_status: viaStatus,
+  });
   if (error) throw error;
 }
 
 const PRE_ACCEPTANCE_STATUSES = ["open", "assigned"];
 
 /** matrix: open -> assigned, roles {supervisor, manager, admin} */
-export async function assignTechnician(woId, technician, actor) {
-  await transition(woId, {
-    status: "assigned",
-    assigned_to_id: technician.id,
-    assigned_to_name: technician.name,
-  });
-  await appendHistory(woId, {
-    from_status: "open",
-    to_status: "assigned",
-    actor_id: actor.uid,
-    actor_name: actor.name,
-    actor_role: actor.role,
+export async function assignTechnician(woId, technician) {
+  await transition(woId, "assigned", {
+    fields: { assigned_to_id: technician.id, assigned_to_name: technician.name },
     remarks: `Assigned to ${technician.name}`,
   });
 }
@@ -307,20 +305,11 @@ export async function assignTechnician(woId, technician, actor) {
  * preserves the current status exactly — ownership changes, the flow does not
  * restart.
  */
-export async function reassignTechnician(woId, fromStatus, technician, actor) {
+export async function reassignTechnician(woId, fromStatus, technician) {
   const preservesStatus = !PRE_ACCEPTANCE_STATUSES.includes(fromStatus);
   const newStatus = preservesStatus ? fromStatus : "assigned";
-  await transition(woId, {
-    status: newStatus,
-    assigned_to_id: technician.id,
-    assigned_to_name: technician.name,
-  });
-  await appendHistory(woId, {
-    from_status: fromStatus,
-    to_status: newStatus,
-    actor_id: actor.uid,
-    actor_name: actor.name,
-    actor_role: actor.role,
+  await transition(woId, newStatus, {
+    fields: { assigned_to_id: technician.id, assigned_to_name: technician.name },
     remarks: preservesStatus
       ? `Reassigned to ${technician.name} — status unchanged (${fromStatus})`
       : `Reassigned to ${technician.name}`,
@@ -328,84 +317,95 @@ export async function reassignTechnician(woId, fromStatus, technician, actor) {
 }
 
 /** matrix: assigned -> accepted, technician must be the assignee */
-export async function acceptWorkOrder(woId, actor) {
-  await transition(woId, { status: "accepted" });
-  await appendHistory(woId, { from_status: "assigned", to_status: "accepted", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Accepted by technician" });
+export async function acceptWorkOrder(woId) {
+  await transition(woId, "accepted", { remarks: "Accepted by technician" });
 }
 
 /** matrix: assigned -> open, requires decline_reason. The trigger clears the
     assignee and increments decline_count. */
 export async function declineWorkOrder(woId, actor, reason) {
-  await transition(woId, { status: "open", decline_reason: reason });
-  await appendHistory(woId, { from_status: "assigned", to_status: "open", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: `Declined by ${actor.name}: ${reason}` });
+  // The remark is just the reason: who declined is already the history row's
+  // actor_name, which the server fills in from the session.
+  await transition(woId, "open", {
+    fields: { decline_reason: reason },
+    remarks: `Declined: ${reason}`,
+  });
 }
 
 /** matrix: accepted -> on_the_way */
-export async function startTravel(woId, actor) {
-  await transition(woId, { status: "on_the_way" });
-  await appendHistory(woId, { from_status: "accepted", to_status: "on_the_way", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Technician en route" });
+export async function startTravel(woId) {
+  await transition(woId, "on_the_way", { remarks: "Technician en route" });
 }
 
 /** matrix: on_the_way -> on_site */
-export async function arriveOnSite(woId, actor) {
-  await transition(woId, { status: "on_site" });
-  await appendHistory(woId, { from_status: "on_the_way", to_status: "on_site", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Arrived on site" });
+export async function arriveOnSite(woId) {
+  await transition(woId, "on_site", { remarks: "Arrived on site" });
 }
 
 /** matrix: on_site -> repairing */
-export async function startRepair(woId, actor) {
-  await transition(woId, { status: "repairing" });
-  await appendHistory(woId, { from_status: "on_site", to_status: "repairing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Started repair" });
+export async function startRepair(woId) {
+  await transition(woId, "repairing", { remarks: "Started repair" });
 }
 
 /** matrix: repairing -> waiting_spare_part, requires spare_part_reason */
 export async function markWaitingSparePart(woId, actor, reason) {
-  await transition(woId, { status: "waiting_spare_part", spare_part_reason: reason });
-  await appendHistory(woId, { from_status: "repairing", to_status: "waiting_spare_part", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: reason });
+  await transition(woId, "waiting_spare_part", {
+    fields: { spare_part_reason: reason },
+    remarks: reason,
+  });
 }
 
 /** matrix: waiting_spare_part -> repairing */
-export async function resumeRepair(woId, actor) {
-  await transition(woId, { status: "repairing" });
-  await appendHistory(woId, { from_status: "waiting_spare_part", to_status: "repairing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Spare part received — resumed repair" });
+export async function resumeRepair(woId) {
+  await transition(woId, "repairing", { remarks: "Spare part received — resumed repair" });
 }
 
 /** matrix: repairing -> testing */
-export async function startTesting(woId, actor) {
-  await transition(woId, { status: "testing" });
-  await appendHistory(woId, { from_status: "repairing", to_status: "testing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Repair complete — testing" });
+export async function startTesting(woId) {
+  await transition(woId, "testing", { remarks: "Repair complete — testing" });
 }
 
 /** matrix: testing -> repairing, requires test_fail_reason */
 export async function testFailed(woId, actor, reason) {
-  await transition(woId, { status: "repairing", test_fail_reason: reason });
-  await appendHistory(woId, { from_status: "testing", to_status: "repairing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: `Test failed: ${reason}` });
+  await transition(woId, "repairing", {
+    fields: { test_fail_reason: reason },
+    remarks: `Test failed: ${reason}`,
+  });
 }
 
 /** matrix: testing -> completed, requires resolution_notes. The trigger stamps
     resolved_at. */
 export async function markCompleted(woId, actor, resolutionNotes) {
-  await transition(woId, { status: "completed", resolution_notes: resolutionNotes });
-  await appendHistory(woId, { from_status: "testing", to_status: "completed", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Test passed — awaiting requester verification" });
+  await transition(woId, "completed", {
+    fields: { resolution_notes: resolutionNotes },
+    remarks: "Test passed — awaiting requester verification",
+  });
 }
 
 /** matrix: completed -> closed, requires verified_by. The trigger stamps
-    closed_at, verified_at and the final sla_breached verdict. */
+    closed_at, verified_at and the final sla_breached verdict. The status goes
+    straight to closed; viaStatus records the verification step in the trail. */
 export async function verifyAndClose(woId, actor) {
-  await transition(woId, { status: "closed", verified_by: actor.uid });
-  await appendHistory(woId, { from_status: "completed", to_status: "verified", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: "Confirmed fixed by requester" });
-  await appendHistory(woId, { from_status: "verified", to_status: "closed", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: null });
+  await transition(woId, "closed", {
+    fields: { verified_by: actor.uid },
+    remarks: "Confirmed fixed by requester",
+    viaStatus: "verified",
+  });
 }
 
 /** matrix: completed -> closed for manager/admin — requester unresponsive */
 export async function forceVerifyAndClose(woId, actor) {
-  await transition(woId, { status: "closed", verified_by: actor.uid });
-  await appendHistory(woId, { from_status: "completed", to_status: "verified", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: `Force-verified by ${actor.name} (requester unresponsive)` });
-  await appendHistory(woId, { from_status: "verified", to_status: "closed", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: null });
+  await transition(woId, "closed", {
+    fields: { verified_by: actor.uid },
+    remarks: "Force-verified — requester unresponsive",
+    viaStatus: "verified",
+  });
 }
 
 /** matrix: completed -> repairing, requires reopen_reason */
 export async function reopenWorkOrder(woId, actor, reason) {
-  await transition(woId, { status: "repairing", reopen_reason: reason });
-  await appendHistory(woId, { from_status: "completed", to_status: "repairing", actor_id: actor.uid, actor_name: actor.name, actor_role: actor.role, remarks: `Reopened by requester: ${reason}` });
+  await transition(woId, "repairing", {
+    fields: { reopen_reason: reason },
+    remarks: `Reopened: ${reason}`,
+  });
 }

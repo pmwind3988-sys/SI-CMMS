@@ -1,487 +1,231 @@
 # SI — Service Inside · Go Live, A to Z
 
-A single linear path from nothing to a working APK on a phone, talking to a real
-Firebase project. Follow it in order — several steps depend on earlier ones in
-ways that are not obvious.
+Everything between a fresh clone and a working system, in order.
 
-For background and troubleshooting depth, see **BUILD_AND_DEPLOY.md**. This file
-is the checklist; that one is the explanation.
+The backend is Supabase, hosting is Vercel. Firebase was removed on 2026-08-07.
+
+> **Account setup** — creating the GitHub repo, signing into Supabase and Vercel
+> with GitHub, and importing the project — lives in `../SETUP_SUPABASE_VERCEL.md`.
+> This file picks up from "the project exists" and covers the operational steps.
 
 ---
 
-## Read this first — the one thing that trips everyone up
+## Read this first — the two things that trip everyone up
 
-**This is an Android app whose Firebase config comes from a *Web* app
-registration.** That sounds wrong. Here is why it is correct.
+**1. Vercel's Root Directory must be `app`.**
+The Next app is in `app/`, not at the repo root. Leave Root Directory empty and
+the build fails with "no Next.js version detected".
 
-The APK is a [Capacitor](https://capacitorjs.com) shell: an Android WebView that
-loads a Next.js static export from inside the APK. Every Firebase call is made
-by the **Firebase JavaScript SDK** running in that WebView:
+**2. The access-token hook must be enabled, or every policy silently denies.**
+Supabase reserves the `role` JWT claim for the Postgres role PostgREST assumes,
+so this app ships its application role as **`user_role`**, injected by
+`public.custom_access_token_hook`. Enable it at
+**Authentication → Hooks → Customize Access Token**. Without it, users sign in
+successfully and then see nothing, because `si_role()` returns null and every RLS
+policy evaluates false.
+
+---
+
+## Part A — Local configuration
+
+### A1. Fill in `app/.env.local`
 
 ```
-src/lib/firebase.js      → firebase/app, firebase/auth, firebase/firestore
-src/lib/workOrders.js    → firebase/firestore, firebase/storage
-src/lib/dashboard.js     → firebase/functions
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<publishable key>
+SUPABASE_SERVICE_ROLE_KEY=<service_role key>
+NEXT_PUBLIC_COMPANY_EMAIL_DOMAIN=
 ```
 
-There is no native Firebase SDK in this project. `android/capacitor.settings.gradle`
-lists exactly one plugin (`capacitor-android`), and `AndroidManifest.xml` requests
-exactly one permission (`INTERNET`).
+All four come from **Project Settings → API**. Leave the domain blank to allow
+any email address.
 
-Consequences:
+> `SUPABASE_SERVICE_ROLE_KEY` **bypasses Row Level Security entirely.** It has no
+> `NEXT_PUBLIC_` prefix on purpose — that prefix is what puts a value into the
+> browser bundle. It is read only by the scripts in `scripts/`, which run on your
+> machine. Never commit it and never set it in Vercel.
 
-| | |
+### A2. Confirm it can't leak
+
+```bash
+git check-ignore -v app/.env.local .mcp.json
+```
+
+Both must print a matching rule. If either prints nothing, **stop**.
+
+### A3. Install and build
+
+```bash
+cd app && npm install && npm run build
+```
+
+---
+
+## Part B — Database
+
+Migrations in `supabase/migrations/` are applied in filename order:
+
+| File | What it creates |
 |---|---|
-| Register in Firebase Console | **Web app** (`</>`) |
-| Config format you need | the six `NEXT_PUBLIC_FIREBASE_*` values |
-| `google-services.json` | **not needed, and ignored if present** — it configures the native SDK, which this app does not use |
-| Package name `com.serviceinside.cmms` | matters to Android and the Play Store, not to Firebase |
+| `0001_schema.sql` | 16 tables, 14 enums, indexes |
+| `0002_auth_and_rls.sql` | the access-token hook, 46 RLS policies, column guards |
+| `0003_work_order_triggers.sql` | WO numbering, SLA computation, the transition matrix |
+| `0004_sweeps_stats_cron.sql` | SLA sweeps, dashboard stats, 3 pg_cron jobs |
+| `0005_storage_and_realtime.sql` | the private `attachments` bucket, Realtime publication |
+| `0006_seed_reference_data.sql` | plant, departments, assets, priorities, SLA |
+| `0007_harden_function_grants.sql` | revokes EXECUTE from anon on trigger functions |
+| `0008_revoke_anon_rpc.sql` | revokes the two admin RPCs from anon |
+| `0009_reference_tables.sql` | statuses, impact levels, WO types, safety severities |
+| `0010_atomic_transition_rpc.sql` | `si_transition_work_order()` |
 
-If you register an Android app in Firebase instead of a Web app, you get a
-`google-services.json` and none of the six values, and nothing will connect.
+Apply them:
 
-> Register an Android app **later** only if you add native features — FCM push
-> notifications, Crashlytics, or App Distribution. The app's current
-> notifications are Firestore documents, not push, so you do not need it now.
-> `android/app/build.gradle` already applies the google-services plugin
-> conditionally, so dropping the file in later works without edits.
+```bash
+cd app && npx supabase db push
+```
+
+(Needs Docker. On this machine they were applied through the Supabase MCP server
+instead, which talks to the hosted project directly.)
+
+Then deploy the Edge Function that lets an Administrator set passwords:
+
+```bash
+cd app && npx supabase functions deploy admin-users
+```
+
+### Verify the hook actually fires
+
+This is worth doing explicitly, because a disabled hook looks like a permissions
+bug rather than a configuration one. Sign in over the API and decode the token:
+
+```bash
+curl -s -X POST "https://<ref>.supabase.co/auth/v1/token?grant_type=password" -H "apikey: <anon key>" -H "Content-Type: application/json" -d '{"email":"admin@example.com","password":"<password>"}'
+```
+
+The decoded `access_token` payload must contain `"user_role": "admin"` alongside
+`"role": "authenticated"`. If `user_role` is missing, the hook is not enabled.
 
 ---
 
-## Prerequisites — already satisfied on this machine
-
-| | Required | You have |
-|---|---|---|
-| JDK | **17** (Gradle 8.2.1 cannot run on 21) | 17.0.20 ✅ |
-| Android SDK | platform 34 | android-34 ✅ |
-| Node | ≥ 18.18 | v24.18.1 ✅ |
-| A phone | USB debugging on, or any Android emulator | — |
-
-**Do not install JDK 21 to fix the Firebase emulator.** It breaks the APK build
-(`Unsupported class file major version 65`). You do not need the emulator for
-any step below.
-
----
-
-# PART A — Firebase Console
-
-Only you can do these; they need your Google account in a browser. About 10
-minutes.
-
-### A1. Create the project
-
-<https://console.firebase.google.com> → **Add project** → name it (e.g.
-`si-cmms`) → Continue. Google Analytics is optional; the app does not use it.
-
-Note the **Project ID** it assigns (e.g. `si-cmms-4a1b7`) — not the display name.
-You need it in step C2.
-
-### A2. Register a **Web** app — not Android
-
-**Project Settings** (gear icon) **→ General → Your apps → Add app → Web (`</>`)**
-
-- App nickname: anything, e.g. `SI CMMS`
-- **Do not** tick "Also set up Firebase Hosting" — this repo already configures it
-
-It then shows a `firebaseConfig` snippet. **Leave this page open**, you need it
-in step B1.
-
-> Re-read the section at the top if this feels wrong. Web is correct for a
-> Capacitor app using the JS SDK.
-
-### A3. Enable Authentication
-
-**Authentication → Get started → Sign-in method → Email/Password → Enable → Save.**
-
-Enable only Email/Password. The app has no social sign-in.
-
-### A4. Check authorized domains — Android-specific
-
-**Authentication → Settings → Authorized domains.**
-
-Confirm **`localhost`** is in the list. It is there by default. Do not remove it:
-Capacitor serves the bundle from `https://localhost` inside the WebView
-(`capacitor.config.json` sets `androidScheme: "https"`, `hostname: "localhost"`),
-so **Firebase Auth on the phone breaks without it.** This is the single most
-common cause of "works in the browser, fails in the APK".
-
-### A5. Create the Firestore database
-
-**Firestore Database → Create database → Production mode** → pick a region close
-to your users.
-
-Production mode denies all access until you deploy rules, which is step D.
-Region cannot be changed later — choose deliberately.
-
-### A6. Admin credentials for the scripts
-
-`bootstrap:users`, `seed:db`, and `apk:record` use the Admin SDK, which needs
-credentials that outrank the security rules. Two routes — **pick one.**
-
-#### A6a (preferred) — gcloud user credentials, no key file
-
-Use this if key creation is blocked. Google Workspace organizations now enforce
-`iam.disableServiceAccountKeyCreation` by default, so
-**Generate new private key** fails with:
-
-> Key creation is not allowed on this service account. Please check if service
-> account key creation is restricted by organization policies.
-
-That policy is doing its job — downloadable keys are the largest single source
-of leaked cloud credentials. You do not need one. Install the
-[Google Cloud CLI](https://cloud.google.com/sdk/docs/install), then:
-
-```
-gcloud auth application-default login
-gcloud auth application-default set-quota-project si-cmms
-```
-
-The first command opens a browser, you sign in as yourself, and it writes
-`%APPDATA%\gcloud\application_default_credentials.json`. The Admin SDK reads
-that file automatically. Then, in every shell that runs a live script:
-
-```
-$env:SI_TARGET="live"; $env:GOOGLE_CLOUD_PROJECT="si-cmms"
-```
-
-`GOOGLE_CLOUD_PROJECT` is **required** here — user credentials, unlike a key
-file, do not name a project, so without it the scripts stop rather than guess.
-
-These credentials carry *your own* IAM permissions, so you need **Owner** or
-**Editor** on `si-cmms` (whoever created the project has Owner). They expire and
-refresh normally, and revoking your account revokes them — neither is true of a
-key file.
-
-#### A6b — service account key, if your org still permits it
-
-**Project Settings → Service Accounts → Generate new private key → Generate key.**
-Save the downloaded JSON as exactly `app/serviceAccountKey.json`, then use
-`$env:GOOGLE_APPLICATION_CREDENTIALS="./serviceAccountKey.json"` instead of
-`GOOGLE_CLOUD_PROJECT`.
-
-> This grants **full admin access** to your project — it bypasses every security
-> rule, never expires, and is not tied to any person. It is already in
-> `.gitignore`. Never commit it, never paste its contents into a chat or an
-> issue, never email it.
-
-#### If you specifically need A6b and it is blocked
-
-Lifting the policy is a real option, not a trick, but it is a company decision:
-someone with **Organization Policy Administrator** (`roles/orgpolicy.policyAdmin`)
-must edit `iam.disableServiceAccountKeyCreation` in the Google Cloud console
-under **IAM & Admin → Organization Policies**, adding a project-level exception
-for `si-cmms`. If that is not you, it is a request to your Workspace admin — and
-they will reasonably ask why A6a doesn't work, since for this project it does.
-
-### A7. Decide: Spark or Blaze
-
-| Feature | Spark (free) | Notes |
-|---|---|---|
-| Firestore, Auth, Hosting | ✅ | everything below works |
-| **Cloud Functions** | ❌ Blaze | see the warning |
-| **Cloud Storage** (photos/videos) | ❌ Blaze | attachment uploads fail; nothing else does |
-
-**Without Cloud Functions the app runs but its automation is inert:** work orders
-get no `wo_number`, SLA timers never populate, no notifications are created, and
-the Manager/Admin dashboards read stat documents that nothing writes — so they
-show zeros.
-
-You can start on Spark and upgrade later; nothing below changes. If you upgrade,
-**set a budget alert first** (Google Cloud Console → Billing → Budgets & alerts).
-
----
-
-# PART B — Put the config into the project
-
-### B1. Fill in `.env.local`
-
-Open `app/.env.local`. The keys exist and are empty. Paste the six values from
-the snippet in step A2:
-
-```
-NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSy…
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=si-cmms-4a1b7.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=si-cmms-4a1b7
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=si-cmms-4a1b7.firebasestorage.app
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789012
-NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789012:web:abc123def456
-```
-
-No quotes, no spaces around `=`, no trailing comma.
-
-Also set, in the same file:
-
-```
-NEXT_PUBLIC_USE_FIREBASE_EMULATORS=false
-```
-
-> These six are **not secrets** — they ship in every web bundle and inside the
-> APK by design. What protects your data is the security rules in Part D, which
-> is why deploying them is not optional.
-
-### B2. Verify they loaded
+## Part C — Accounts
 
 ```bash
-cd app; node -e "require('dotenv')" 2>$null; node -e "const s=require('fs').readFileSync('.env.local','utf8');const m=Object.fromEntries(s.split(/\r?\n/).filter(l=>l.includes('=')&&!l.startsWith('#')).map(l=>[l.slice(0,l.indexOf('=')),l.slice(l.indexOf('=')+1)]));['NEXT_PUBLIC_FIREBASE_API_KEY','NEXT_PUBLIC_FIREBASE_PROJECT_ID','NEXT_PUBLIC_FIREBASE_APP_ID'].forEach(k=>console.log((m[k]?'OK   ':'EMPTY').padEnd(6),k,m[k]?'('+m[k].slice(0,12)+'…)':''))"
+cd app && npm run bootstrap:users
 ```
 
-All three must say `OK`. If any says `EMPTY`, the APK will be built
-unconfigured — exactly the state the current `app-debug.apk` is in.
+Creates six accounts, one per role, all in `DEPT-MACHINING` / `PLT001`:
 
----
-
-# PART C — Link the CLI to your project
-
-### C1. Log in
-
-```bash
-cd app; npx firebase login
-```
-
-Opens a browser. Approve with the same Google account that owns the project.
-
-### C2. Select the project
-
-```bash
-cd app; npx firebase use --add
-```
-
-Pick your project from the list, then give it the alias **`default`**. This
-writes `app/.firebaserc`, which does not exist yet.
-
-Verify:
-
-```bash
-cd app; npx firebase projects:list
-```
-
----
-
-# PART D — Deploy the security rules and indexes
-
-```bash
-cd app; npm run deploy:rules
-```
-
-This pushes `firestore.rules` (the full 5-role transition matrix across all 15
-collections) and all 16 composite indexes from `firestore.indexes.json`.
-
-**Composite indexes take several minutes to build.** Until they finish, list and
-dashboard queries return `FAILED_PRECONDITION`. Watch progress at **Firestore
-Database → Indexes**; wait for every row to read *Enabled* before Part I.
-
-Sanity-check the rules are what you think before deploying:
-
-```bash
-cd app; npm run schema:check
-```
-
----
-
-# PART E — Create the initial users
-
-Nobody can sign in until users exist **with role custom claims**. The app has no
-"create the first admin" screen — deliberately, since that would be a
-privilege-escalation hole.
-
-### E1. Point the shell at the live project
-
-Run this in the **same PowerShell window** you will use for Parts E and F.
-
-If you took **A6a** (gcloud, no key file):
-
-```bash
-cd app; $env:SI_TARGET="live"; $env:GOOGLE_CLOUD_PROJECT="si-cmms"
-```
-
-If you took **A6b** (service account key):
-
-```bash
-cd app; $env:SI_TARGET="live"; $env:GOOGLE_APPLICATION_CREDENTIALS="./serviceAccountKey.json"
-```
-
-Either way the scripts print a `Target:` line before doing anything — read it.
-It must say `LIVE project "si-cmms"`.
-
-`SI_TARGET=live` is required and deliberate: every script in `scripts/` targets
-the emulator by default, so nothing can reach your real project by accident. The
-connector also refuses to run if `FIRESTORE_EMULATOR_HOST` is still set.
-
-### E2. Create them
-
-```bash
-cd app; npm run bootstrap:users
-```
-
-First line of output must name your real project, not `EMULATOR`. It creates six
-users, one per role, each with `role` / `department_id` / `plant_ids` custom
-claims and a matching `/users/{uid}` profile.
-
-Default credentials are in `scripts/bootstrapUsers.js` — all six use password
-`ChangeMe123!`.
-
-> **Change those passwords before anyone uses this for real**, and edit
-> `DEPARTMENT_ID` / `PLANT_ID` in that file to match your real data first if you
-> already know them.
-
-### E3. Verify
-
-**Authentication → Users** should list six accounts. **Firestore → users**
-should hold six documents keyed by Auth UID.
-
----
-
-# PART F — Seed the database
-
-Run this **after** Part E, so technician documents get real Auth UIDs instead of
-the placeholder slugs from `constants.js`.
-
-### F1. Dry run first
-
-```bash
-cd app; npm run seed:db -- --dry-run
-```
-
-Prints the 28 documents it would write across 6 collections, and writes nothing.
-Confirm the target line says your live project.
-
-### F2. Seed
-
-```bash
-cd app; npm run seed:db
-```
-
-Writes `/plants` (1), `/departments` (7), `/assets` (7), `/priorities` (4),
-`/sla` (4), `/technicians` (5). Idempotent — safe to re-run. It never touches
-`work_orders`, `work_order_history`, `notifications` or `counters`.
-
-### F3. Optionally add a demo work order
-
-```bash
-cd app; npm run seed:demo
-```
-
-One closed work order with a full 10-entry history trail, for checking the list
-and detail screens have something to render.
-
-### F4. Verify
-
-**Firestore Database → Data** should now show the collections above. Or ask me —
-`si_database_status` reports the count in every collection at once.
-
----
-
-# PART G — Deploy Cloud Functions (Blaze only)
-
-Skip if you stayed on Spark. Re-read the warning in A7 about what stops working.
-
-```bash
-cd app/functions; npm install
-```
-
-```bash
-cd app; npm run deploy:functions
-```
-
-First deploy takes several minutes and enables Cloud Build and Artifact Registry
-on the project.
-
----
-
-# PART H — Build the APK
-
-**Only now.** The six config values are inlined at **build** time, so an APK
-built before Part B cannot reach Firebase no matter what you do afterwards.
-
-```bash
-cd app; npm run apk
-```
-
-Three chained steps: `next build` → `cap sync android` → Gradle `assembleDebug`.
-Output:
-
-```
-app/android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-Confirm the config actually made it in — this must print **nothing**:
-
-```bash
-cd app; findstr /C:"NEXT_PUBLIC_FIREBASE_API_KEY" out\_next\static\chunks\*.js
-```
-
-A match means the value was still unset at build time and the bundle kept the
-unresolved `process.env` reference. Go back to B2.
-
----
-
-# PART I — Install and verify
-
-### I1. Install
-
-With USB debugging on:
-
-```bash
-adb install -r app/android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-Or copy the `.apk` to the phone and tap it (needs "install unknown apps" allowed
-for your file manager).
-
-### I2. Sign in
-
-Open **SI CMMS** → sign in as `admin@example.com` / `ChangeMe123!`.
-
-### I3. What you should see
-
-| Screen | Expected |
+| Email | Role |
 |---|---|
-| Login | succeeds, redirects to the Admin dashboard |
-| Admin dashboard | 10 stat cards — **zeros unless you deployed Functions** (Part G) |
-| Work orders list | the demo work order, if you ran F3 |
-| New work order | Department and Equipment dropdowns populated from the seeded collections |
+| `requester@example.com` | Requester |
+| `tech.arun@example.com` | Technician |
+| `tech.meera@example.com` | Technician |
+| `supervisor@example.com` | Supervisor |
+| `manager@example.com` | Maintenance Manager |
+| `admin@example.com` | Administrator |
 
-If sign-in fails inside the APK but works in a desktop browser, the cause is
-almost always the authorized-domains setting in **A4**.
+All share the password `ChangeMe123!`.
 
----
+**Change them before anyone real uses this.** Sign in as `admin@example.com` and
+use **Users → Password** on each account. That screen is the supported way; it
+calls the `admin-users` Edge Function, which is the only thing holding a
+service-role key.
 
-# PART J — Record the build
+Optionally seed a demo work order that walks the real transition path:
 
 ```bash
-cd app; npm run apk:record
+cd app && npm run seed:demo
 ```
 
-Reads `build.gradle`, the built APK (size + SHA-256), `.next/BUILD_ID` and git,
-and writes one document to `/apk_builds`. Add `--release` once you are actually
-distributing it, and `--min-version=N` to set the forced-update floor.
+---
+
+## Part D — Deploy the web app
+
+Push to `main`. Vercel builds automatically.
+
+Set exactly two environment variables in Vercel — `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`. Because this is a static export, those values are
+**baked into the bundle at build time**, so changing one later needs a redeploy.
 
 ---
 
-# PART K — Release APK (later, for real distribution)
+## Part E — Auth URLs
 
-`npm run apk` produces a **debug** APK signed with Android's public throwaway
-key. Fine for sideloading and internal pilots; not acceptable for the Play Store
-or long-term distribution.
+Once you have the deployment URL, set it in Supabase under
+**Authentication → URL Configuration**:
 
-See **BUILD_AND_DEPLOY.md § 4 "Debug vs release"** for the keystore steps.
-**Back the keystore up** — lose it and you can never update the app under the
-same identity again.
+- **Site URL**: `https://<your-app>.vercel.app`
+- **Redirect URLs**:
+  ```
+  https://<your-app>.vercel.app/**
+  https://*-<your-app>.vercel.app/**
+  http://localhost:3000/**
+  ```
+
+The wildcard line covers Vercel's per-branch preview deployments, which each get
+a unique hostname. The `localhost` line keeps `npm run dev` working.
+
+**This is what makes password reset work.** The recovery email links back to
+`/reset-password/` in your app; if that URL isn't listed, Supabase refuses the
+redirect and the link dies.
 
 ---
 
-# Troubleshooting
+## Part F — Verify, in this order
 
-| Symptom | Cause | Fix |
+1. **Sign in** as `admin@example.com`. Landing on `/admin/dashboard/` means the
+   hook is working and role-based routing is correct.
+2. **Raise a work order** as `requester@example.com`. It should get a
+   `WO-YYYY-NNNNNN` number and an SLA countdown immediately — both come from
+   triggers, so this proves the database automation is live.
+3. **Assign it** as `supervisor@example.com`. The technician roster loads from the
+   `technicians` table.
+4. **Accept and advance it** as the assigned technician. Try an illegal jump; the
+   database should refuse it with a readable message.
+5. **Upload a photo.** It should render from a signed URL, proving the private
+   bucket and on-read signing work.
+6. **Check `/notifications`** — the triggers fan out notifications on each
+   transition.
+7. **Reset a password** through **Users → Password** as admin.
+
+---
+
+## Part G — Android
+
+```bash
+cd app && npm run apk
+```
+
+See `BUILD_AND_DEPLOY.md` §5 for install, signing and the release keystore. The
+APK embeds a snapshot of the web build, so **rebuild it after any web change** —
+a Vercel deploy does not update the app on a phone.
+
+---
+
+## What runs on its own
+
+Three `pg_cron` jobs, installed by migration 0004:
+
+| Job | Schedule | What it does |
 |---|---|---|
-| `auth/invalid-api-key` in the APK | `.env.local` empty at build time | B1 → B2 → rebuild (H) |
-| Sign-in works in browser, fails in APK | `localhost` missing from authorized domains | A4 |
-| `permission-denied` on every read | rules not deployed | D |
-| `FAILED_PRECONDITION … requires an index` | composite indexes still building | wait; Firestore → Indexes |
-| Dashboards show all zeros | Cloud Functions not deployed | G, or accept it on Spark |
-| Work orders have no `WO-…` number | same — `onWorkOrderCreate` never ran | G |
-| Scripts say `EMULATOR` when you meant live | `SI_TARGET` not set in *this* shell | E1 |
-| `SI_TARGET=live but FIRESTORE_EMULATOR_HOST is still set` | leftover env var | `Remove-Item Env:FIRESTORE_EMULATOR_HOST` |
-| Gradle: `Unsupported class file major version 65` | `JAVA_HOME` points at JDK 21 | point it back at 17 |
-| Attachment upload fails | Cloud Storage needs Blaze | A7 |
-| Technician docs keyed `tech-arun` not a UID | ran `seed:db` before `bootstrap:users` | re-run E then F |
+| SLA breach sweep | every 5 min | flags overdue work orders, notifies supervisors |
+| SLA warning sweep | every 5 min | warns at 25% of the window remaining |
+| Dashboard stats | every 15 min | recomputes the Manager/Admin dashboard rows |
+
+Managers and Admins can also force a stats refresh from the dashboard, which
+calls `si_refresh_dashboard_stats()`.
+
+---
+
+## If something is wrong
+
+| Symptom | Cause |
+|---|---|
+| Signs in, then every list is empty | The access-token hook isn't enabled. See the top of this file. |
+| "Signed in, but this account has no role assigned" | No row in `public.users` for that auth user. |
+| Vercel build: "no Next.js version detected" | Root Directory isn't `app`. |
+| Password reset link 404s or is rejected | `/reset-password/` isn't in the Redirect URLs. |
+| Work orders have no number or SLA | Migration 0003 wasn't applied. |
+| Attachments fail to upload | Migration 0005 wasn't applied, or the file exceeds 50MB / isn't an allowed mime type. |
+| Dev server returns 500 for every chunk | `npm run build` ran while `npm run dev` was live. Stop it, `rm -rf .next`, restart. |
+| APK build: "SDK location not found", though `ANDROID_HOME` is set | `sdk.dir` in `android/local.properties` names a path the Gradle daemon can't see. `BUILD_AND_DEPLOY.md` §6 explains why `%LOCALAPPDATA%\Android\Sdk` isn't real on this machine. |

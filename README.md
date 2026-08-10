@@ -5,43 +5,51 @@ This folder is the full export of the project. Start here.
 
 ```
 SI-CMMS/
-├── app/            The runnable application — Next.js 14 + React + Firebase
+├── app/            The runnable application — Next.js 14 + React + Supabase
 ├── docs/           Current specifications (FSD, DB architecture, UI/UX, design system)
 ├── prototypes/     Clickable previews you can open without any setup
 └── archive/        Superseded earlier iterations, kept for history only
 ```
+
+The backend was migrated from Firebase to **Supabase** on 2026-08-07, and hosting
+from Firebase Hosting to **Vercel**. Firebase is entirely gone from the codebase.
+The design documents in `docs/` still describe the data model in Firestore terms —
+see "Documentation guide" below for what that means in practice.
 
 ---
 
 ## Quick start
 
 ### Just want to look at it?
-Open **`prototypes/SI_WorkOrder_Clickable_Prototype.html`** in any browser. No install, no server, no Firebase — it's a self-contained click-through of all 9 work order screens in both desktop and mobile layouts.
+Open **`prototypes/SI_WorkOrder_Clickable_Prototype.html`** in any browser. No
+install, no server, no backend — it's a self-contained click-through of all 9 work
+order screens in both desktop and mobile layouts.
 
 ### Want to run the real application?
 
 ```bash
 cd app
 npm install
-cp .env.local.example .env.local     # then fill in your Firebase web config
+cp .env.local.example .env.local     # then fill in your Supabase URL + keys
 npm run dev
 ```
 
-Full setup instructions — including the Firebase Emulator Suite path, deploying rules/indexes/functions, and seeding demo users and data — are in **`app/README.md`**. Read that before deploying anything.
+Full instructions — the four environment values, applying migrations, enabling the
+access-token hook, and seeding the six role users — are in **`app/GO_LIVE.md`**.
+Read that before deploying anything.
 
 ### Want the Android app, or a live site?
 
 ```bash
 cd app
-npm run apk              # → android/app/build/outputs/apk/debug/app-debug.apk
-npm run deploy:hosting   # → https://<your-project>.web.app
+npm run apk    # → android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Both need a Firebase project wired up first. **`app/BUILD_AND_DEPLOY.md`** covers
-that end to end: creating the project, the six config values, rules/indexes,
-bootstrapping the role users, signing a release APK, and which features need the
-Blaze plan. The app is now a Next.js **static export**, so the same `out/` folder
-is what Hosting serves and what the APK embeds.
+The web app deploys itself: push to `main` and Vercel builds it.
+**`app/BUILD_AND_DEPLOY.md`** covers both targets, including why the app is a
+static export, signing a release APK, and the three machine-specific Gradle
+problems on this PC. **`SETUP_SUPABASE_VERCEL.md`** covers creating the GitHub
+repo and connecting Supabase and Vercel.
 
 ---
 
@@ -49,71 +57,84 @@ is what Hosting serves and what the APK embeds.
 
 | Module | State |
 |---|---|
-| **Authentication** | Complete — email/password, Remember Me, forgot password, session management, protected routes, 5-role RBAC with per-role dashboard redirect |
+| **Authentication** | Complete — email/password, Remember Me, forgot password, password reset, session management, protected routes, 5-role RBAC with per-role dashboard redirect |
 | **Work Order** | Complete — create, edit, assign, photos, videos, comments, timeline, SLA timer, 11-state status tracking, approval workflow, auto WO numbering |
-| **Dashboard** | Complete for Manager/Admin — 10 metric cards + 4 charts, responsive, backed by precomputed stats (not live collection scans) |
+| **Dashboard** | Complete for all five roles — Manager/Admin get 10 metric cards + 4 charts from precomputed stats; Requester/Technician/Supervisor get a live, RLS-scoped "what needs me" view |
 | **Notification** | Complete — in-app, all 5 trigger categories, all 4 recipient roles, notification bell + full notification centre |
-| **Firestore security rules** | Complete — full 5-role transition matrix across all 15 collections |
-| **Cloud Functions** | Complete — auto-numbering, SLA computation, notification fan-out, SLA warning + breach sweeps, dashboard stat rollups, role claim provisioning |
-| **Database tooling** | Complete — machine-readable schema, idempotent seeder, drift check, APK build registry, Claude Code skill + MCP server (see below) |
+| **Row Level Security** | Complete — 46 policies plus 4 column guards, covering all 16 tables |
+| **Server-side automation** | Complete — Postgres triggers for numbering, SLA computation, notification fan-out and the transition matrix; 3 pg_cron jobs for SLA sweeps and dashboard rollups |
+| **Administration** | Complete — user creation, role changes, activate/deactivate, password setting, and editable reference data (statuses, priorities, SLA, impacts, types, severities, departments, equipment) |
 
 ### Known open items (stated plainly)
 
-1. **Supervisor has no dashboard.** Manager and Admin have a working one. The stats documents are global, and giving Supervisor a system-wide dashboard would contradict their department-scoped access everywhere else. The fix is department-scoped stat documents (`stats/dashboard_cards_{department_id}`) — designed for, not yet built.
-2. **Nothing has been deployed or run against real Firebase.** Every file is syntax-verified (`node --check` for JS, Babel for JSX, brace/paren balance for `.rules`, JSON validation for configs), but this project has never executed against a live Firebase project. Expect the ordinary first-run friction of a real deployment: index build waits, claim-refresh timing, emulator config.
-3. **Asset, Department, and Technician records are still read from local lookups by the UI.** The collections themselves now exist and are seeded (`npm run seed:db` writes `/assets`, `/departments`, `/technicians`, `/priorities`, `/plants`, `/sla` from `app/schema/schema.js`). What remains is the UI half: components still import the hardcoded arrays from `app/src/lib/constants.js` rather than subscribing with `onSnapshot`. That migration is now a contained per-component change, but it is not done.
-4. **`priorities` and `sla` are seeded as collections, but the app still reads the SLA matrix from constants.** Both collections are populated with the exact values from `constants.js` and `functions/index.js`, so the data is no longer the blocker — switching the readers over is. Note those numbers currently live in **three** places (constants.js, functions/index.js, and now `/sla`); the collection is meant to become the only one.
-5. **No status transition ever sets `verified`.** `verified` is the tenth of the eleven documented statuses and `seedDemoWorkOrder.js` writes a history entry for it, but `firestore.rules` goes `completed → closed` directly (with `verified_by` set) and has no clause producing `verified`. So no role can put a work order into that state. Either the rules need a `completed → verified → closed` pair, or `verified` should be dropped from the flow and treated as what it actually is — the `verified_by`/`verified_at` fields on a closed order.
+1. **Editing a work order writes no audit entry.** Status *transitions* are fully
+   audited and atomic (`si_transition_work_order`, migration 0010, one
+   transaction). Editing core fields while a work order is still Open goes through
+   a plain UPDATE and leaves no history row.
+2. **`verified` is a history state, not a resting state.** The flow documents
+   eleven statuses, but no transition parks a work order at `verified`:
+   `completed → closed` happens in one move, with `verified_by`/`verified_at`
+   stamped and a `verified` entry written to the timeline. This was a genuine
+   ambiguity in the original design and it is resolved in favour of the second
+   reading — `verified` describes an event, not a state a job sits in.
+3. **Single plant.** `plant_id` is threaded through every table and the SLA lookup
+   already prefers a plant-specific row over the global default, but everything
+   seeds to `PLT001` and no UI exposes plant selection.
+4. **`@capacitor/cli` pulls a `tar` version with a critical advisory.** Fixing it
+   needs a Capacitor 6 → 8 major upgrade.
+5. **The six seeded accounts share one password** (`ChangeMe123!`) until you change
+   them. Sign in as `admin@example.com` and use **Users → Password**.
 
 ---
 
-## The database, and the tooling around it
+## The database
 
-`app/schema/schema.js` is the machine-readable description of all 15
-collections — fields, types, enums, references, and who may write what. It was
-derived from `firestore.rules`, `firestore.indexes.json`, `src/lib/constants.js`
-and `functions/index.js`, not hand-authored, and `npm run schema:check` fails if
-those files drift apart from it.
+Migrations in `app/supabase/migrations/` are the source of truth — ten files,
+applied in filename order, covering schema, RLS, triggers, cron, storage, seed
+data and two rounds of grant hardening. `app/GO_LIVE.md` Part B lists what each
+one creates.
 
-Everything defaults to the **Firebase Emulator**. Reaching a live project takes
-a deliberate `SI_TARGET=live` plus a service-account key, and the connector
-refuses to start if you set that while an emulator host is still exported.
+`app/schema/schema.js` survives as **reference documentation only**. It described
+and validated the Firestore collections; Postgres now enforces what it used to
+describe, so the drift checker that went with it was removed rather than left to
+rot.
 
 ```bash
 cd app
-npm run emulators        # Firestore + Auth + Functions  (needs JDK 21+)
-npm run bootstrap:users  # 6 seed Auth users + custom claims
-npm run seed:db          # seed all reference collections — idempotent
-npm run schema:check     # fail on schema drift; no database needed
-npm run apk:record       # record the built APK into /apk_builds
+npm run db:push          # apply pending migrations (needs Docker)
+npm run db:diff          # diff live schema against the migrations
+npm run db:types         # regenerate TypeScript types from the live schema
+npm run bootstrap:users  # create the 6 role users
+npm run seed:demo        # one demo work order, walked through the real workflow
+npm run apk:record       # record the built APK into apk_builds
 ```
 
-Run `bootstrap:users` before `seed:db` so technician documents get real Auth
-UIDs rather than the placeholder slugs from `constants.js`.
+The service-role key those last three need lives in `app/.env.local` only. It
+bypasses Row Level Security completely — never commit it, and never set it in
+Vercel.
+
+### Two things that will cost you an afternoon if you don't know them
+
+**`role` is a reserved JWT claim.** Supabase uses it for the Postgres role
+PostgREST switches into. The application role therefore travels as **`user_role`**,
+injected by `public.custom_access_token_hook`. That hook must be enabled at
+Authentication → Hooks → Customize Access Token, or every policy silently denies
+and users sign in to an empty app.
+
+**A new function in `public` is an anon-callable RPC by default.** Postgres grants
+EXECUTE to PUBLIC and PostgREST publishes anything executable. That briefly made
+`si_notify()` — a SECURITY DEFINER insert into a table no client may write —
+forgeable by anonymous callers. Migrations 0007 and 0008 revoke it. Run the
+security advisor after any migration that adds a function.
 
 ### APK build registry
 
-`apk_builds` holds one document per built APK, so the installed app can ask "is
-there a newer build, and am I below the forced-update floor?" in a single read.
+`apk_builds` holds one row per built APK, so the installed app can ask "is there a
+newer build, and am I below the forced-update floor?" in a single read.
 `scripts/recordApkBuild.js` reads `build.gradle`, the built `.apk` (size and
 SHA-256), `.next/BUILD_ID` and git — it does not accept hand-typed versions.
 `version_code` is the ordering key; `released: false` means recorded but not
 offered to clients.
-
-### Claude Code integration
-
-`.claude/skills/si-firestore/` and `.mcp.json` wire the schema into Claude Code
-automatically — no install step. The skill triggers on any Firestore work in
-this repo; the MCP server exposes ten tools (`si_schema_overview`,
-`si_describe_collection`, `si_check_transition`, `si_validate_document`,
-`si_query`, `si_count`, `si_database_status`, `si_latest_apk_build`,
-`si_divergences`, `si_get_document`). It is **read-only** — writes go through
-the seeding scripts, which validate and print first.
-
-`si_check_transition` is the useful one: it answers whether a given status
-change is legal for a given role and which companion fields the rules demand on
-that same update, which is otherwise only discoverable by triggering an opaque
-`permission-denied`.
 
 ---
 
@@ -121,15 +142,25 @@ that same update, which is otherwise only discoverable by triggering an opaque
 
 Read in this order if you're new to the project:
 
-1. **`docs/SI_WorkOrder_FSD.md`** (v1.1) — the authoritative functional spec. 15 sections covering purpose, roles, workflow, business rules, approval flow, SLA, priority, notifications, status flow, validation, DB fields, permissions, error handling, audit trail, UI behaviour. **Where this and the code disagree, this document is correct.**
-2. **`docs/SI_Enterprise_Firestore_Architecture.md`** — the system-wide database design: 11 main collections, fields, data types, relationships, composite indexes, security-rule matrix, naming conventions, ID strategy, scalability practices.
-3. **`docs/SI_WorkOrder_Firestore_Design_v3.md`** — the Work Order module's own narrower DB view, reflecting the current 11-state flow.
+1. **`docs/SI_WorkOrder_FSD.md`** (v1.1) — the authoritative functional spec. 15 sections covering purpose, roles, workflow, business rules, approval flow, SLA, priority, notifications, status flow, validation, DB fields, permissions, error handling, audit trail, UI behaviour. **Where this and the code disagree on behaviour, this document is correct.**
+2. **`docs/SI_Enterprise_Firestore_Architecture.md`** — the system-wide data design: collections, fields, types, relationships, indexes, the security-rule matrix, naming conventions, ID strategy.
+3. **`docs/SI_WorkOrder_Firestore_Design_v3.md`** — the Work Order module's own narrower DB view, reflecting the 11-state flow.
 4. **`docs/SI_Design_System.md`** — colours, typography, components, status colours.
 5. **`docs/SI_WorkOrder_Screens_UIUX.md`** — all 9 screens, field by field, desktop + mobile, with empty/error state copy.
 6. **`docs/CMMS_SRS.md`** and **`docs/CMMS_UIUX_Wireframe_Spec.md`** — the original broad requirements covering the whole product, including modules not yet built (Assets, PM, Inventory, Procurement, Reports).
 7. **`docs/SI_Role_Based_UI_Prototype.md`** — role access matrix and per-role UI walkthrough.
 
-`archive/` contains three superseded Firestore design iterations and two early monolithic JSX builds. Nothing in there should be used as a reference — it's kept only so the design history is visible.
+> **On documents 2 and 3:** they describe the data model as Firestore collections
+> and security rules. The *model* — entities, fields, relationships, who may write
+> what — carried over to Postgres essentially unchanged, and they remain the best
+> explanation of why the schema looks the way it does. The *mechanisms* did not:
+> collections are tables, security rules are RLS policies plus triggers, and
+> composite indexes are ordinary Postgres indexes. Treat them as design intent, and
+> `app/supabase/migrations/` as the implementation.
+
+`archive/` contains three superseded Firestore design iterations and two early
+monolithic JSX builds. Nothing in there should be used as a reference — it's kept
+only so the design history is visible.
 
 ---
 
@@ -140,7 +171,18 @@ open → assigned → accepted → on_the_way → on_site → repairing
      → waiting_spare_part ⇄ repairing → testing → completed → verified → closed
 ```
 
-Plus three permitted loops: `assigned → open` (technician declines), `testing → repairing` (test fails), `completed → repairing` (requester says not fixed). No status may be skipped by any role, including Admin.
+Plus three permitted loops: `assigned → open` (technician declines),
+`testing → repairing` (test fails), `completed → repairing` (requester says not
+fixed). No status may be skipped.
+
+This is **data, not code**: 22 rows in `wo_status_transitions`, each recording
+which roles may perform the move, which fields it requires, and whether it demands
+a different assignee. A BEFORE UPDATE trigger consults that table, which is why
+the matrix lives in the database rather than in a policy — an RLS policy cannot
+compare OLD to NEW.
+
+Admin is the one exception: `si_guard_work_order_transition()` returns early for
+`admin`, deliberately and narrowly, so a stuck record can be corrected.
 
 ---
 
@@ -148,4 +190,7 @@ Plus three permitted loops: `assigned → open` (technician declines), `testing 
 
 `requester` · `technician` · `supervisor` · `manager` (Maintenance Manager) · `admin` (Administrator)
 
-Lowercase snake_case throughout — these are the literal values in Firebase Auth custom claims and in every security rule. Supervisor is scoped to their own `department_id`; Manager and Admin are system-wide.
+Lowercase snake_case throughout — these are the literal values of the `si_role`
+enum, the `user_role` JWT claim, and every RLS policy. Supervisor is scoped to
+their own `department_id`; Manager and Admin are system-wide. Administration
+screens (users, settings) are Admin-only, including for Managers.

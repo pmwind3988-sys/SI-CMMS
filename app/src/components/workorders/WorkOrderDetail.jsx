@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Timer, PencilLine } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrder } from "../../lib/workOrders";
-import { SLA_MATRIX, IMPACT_OPTIONS, fmtDue, departmentById, canEditWhileOpen } from "../../lib/constants";
+import { fmtDue, canEditWhileOpen } from "../../lib/constants";
+import { useReferenceData } from "../../lib/referenceData";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner } from "../ui/Surfaces";
 import Button from "../ui/Button";
@@ -26,6 +27,7 @@ const TABS = [
 
 export default function WorkOrderDetail({ woId }) {
   const { user } = useAuth();
+  const { slaForPriority } = useReferenceData();
   const router = useRouter();
   const [wo, setWo] = useState(undefined); // undefined = loading, null = not found
   const [error, setError] = useState(null);
@@ -66,7 +68,10 @@ export default function WorkOrderDetail({ woId }) {
   }
 
   const createdMs = wo.created_at ? new Date(wo.created_at).getTime() : Date.now();
-  const remain = wo.priority ? SLA_MATRIX[wo.priority].resolutionMs - (Date.now() - createdMs) : null;
+  const slaRow = wo.priority ? slaForPriority(wo.priority) : null;
+  const remain = slaRow?.resolution_target_minutes
+    ? slaRow.resolution_target_minutes * 60000 - (Date.now() - createdMs)
+    : null;
   const breached = remain != null && remain < 0 && wo.status !== "closed";
   const showEdit = wo.status === "open" && canEditWhileOpen(wo, user);
 
@@ -129,11 +134,13 @@ export default function WorkOrderDetail({ woId }) {
 }
 
 function OverviewTab({ wo }) {
+  const { departmentName, impactLabel, typeLabel, slaForPriority } = useReferenceData();
+  const sla = wo.priority ? slaForPriority(wo.priority) : null;
   const rows = [
     ["Equipment", wo.asset_name],
-    ["Department", departmentById(wo.department_id)?.name || wo.department_id],
-    ["Type", wo.type],
-    ["Production impact", IMPACT_OPTIONS.find((i) => i.value === wo.impact)?.label || "—"],
+    ["Department", departmentName(wo.department_id)],
+    ["Type", typeLabel(wo.type)],
+    ["Production impact", impactLabel(wo.impact)],
     ["Estimated downtime", `${wo.est_downtime_value} ${wo.est_downtime_unit}`],
     ["Requested by", wo.requester_name],
     ["Requester phone", wo.requester_phone || "—"],
@@ -156,11 +163,11 @@ function OverviewTab({ wo }) {
         <p className="text-[13.5px] text-ink leading-relaxed mb-5">{wo.description}</p>
         <div className="bg-canvas rounded p-3.5">
           <div className="text-[12px] font-bold text-ink mb-2.5">SLA targets ({wo.priority})</div>
-          {wo.priority &&
+          {sla &&
             [
-              ["Acknowledge", SLA_MATRIX[wo.priority].ack],
-              ["Response", SLA_MATRIX[wo.priority].response],
-              ["Resolution", SLA_MATRIX[wo.priority].resolution],
+              ["Acknowledge", sla.ack_target_label],
+              ["Response", sla.response_target_label],
+              ["Resolution", sla.resolution_target_label],
             ].map(([l, v]) => (
               <div key={l} className="flex justify-between text-[12.5px] py-1">
                 <span className="text-ink-soft">{l}</span>

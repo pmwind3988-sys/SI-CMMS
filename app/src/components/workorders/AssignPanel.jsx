@@ -43,12 +43,13 @@ export default function AssignPanel({ wo }) {
     setBusy(true);
     setError(null);
     try {
-      const actor = { uid: user.uid, name: user.name, role: user.role };
+      // No actor argument: si_transition_work_order derives the acting user from
+      // the session, so the history row can't disagree with who is signed in.
       const technician = { id: t.user_id, name: t.name };
       if (wo.assigned_to_id) {
-        await reassignTechnician(wo.id, wo.status, technician, actor);
+        await reassignTechnician(wo.id, wo.status, technician);
       } else {
-        await assignTechnician(wo.id, technician, actor);
+        await assignTechnician(wo.id, technician);
       }
     } catch (e) {
       setError(

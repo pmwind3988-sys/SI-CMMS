@@ -5,15 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Factory, Image as ImageIcon, Video, X, Sparkles, AlertTriangle, Send, Save } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { createWorkOrder, updateWorkOrderFields, addAttachment } from "../../lib/workOrders";
-import {
-  DEPARTMENTS,
-  EQUIPMENT,
-  IMPACT_OPTIONS,
-  SLA_MATRIX,
-  PRIORITY_COLORS,
-  computeSuggestion,
-  equipmentById,
-} from "../../lib/constants";
+import { useReferenceData } from "../../lib/referenceData";
 import { describeError } from "../../lib/errors";
 import Field, { inputClass } from "../ui/Field";
 import Button from "../ui/Button";
@@ -28,6 +20,20 @@ import { PriorityBadge } from "../ui/Badges";
  */
 export default function RaiseWorkOrderForm({ existing }) {
   const { user } = useAuth();
+  const {
+    ready,
+    departments,
+    assets,
+    priorities,
+    impacts,
+    types,
+    severities,
+    assetById,
+    assetsForDepartment,
+    priorityColor,
+    slaForPriority,
+    suggestPriority,
+  } = useReferenceData();
   const router = useRouter();
   const isEdit = !!existing;
 
@@ -54,16 +60,30 @@ export default function RaiseWorkOrderForm({ existing }) {
   const photoInput = useRef(null);
   const videoInput = useRef(null);
 
-  const asset = equipmentById(assetId);
+  const asset = assetById(assetId);
   const safety = { flag: safetyFlag, severity: safetySeverity };
   const env = { flag: envFlag };
-  const suggestion = computeSuggestion(impact, safety, env);
+  const suggestion = suggestPriority(impact, safety, env);
   const effectivePriority = priorityTouched ? priority : suggestion;
+
+  // Once a department is chosen, only its equipment is offered — with the asset
+  // list coming from the table this can be a real filter rather than a full dump.
+  const assetChoices = assetsForDepartment(departmentId);
 
   function handleAssetChange(id) {
     setAssetId(id);
-    const a = equipmentById(id);
+    const a = assetById(id);
     if (a && !departmentId) setDepartmentId(a.department_id);
+  }
+
+  function handleDepartmentChange(id) {
+    setDepartmentId(id);
+    // Drop a selection that no longer belongs to the chosen department, rather
+    // than silently submitting a mismatched asset/department pair.
+    if (assetId) {
+      const a = assetById(assetId);
+      if (a && a.department_id !== id) setAssetId("");
+    }
   }
 
   function validate() {
@@ -160,9 +180,9 @@ export default function RaiseWorkOrderForm({ existing }) {
         <div className="flex-[2] min-w-[380px]">
           <Card className="p-5">
             <Field label="Department" required hint={errors.department}>
-              <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className={inputClass}>
-                <option value="">Select department…</option>
-                {DEPARTMENTS.map((d) => (
+              <select value={departmentId} onChange={(e) => handleDepartmentChange(e.target.value)} className={inputClass}>
+                <option value="">{ready ? "Select department…" : "Loading…"}</option>
+                {departments.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
                   </option>
@@ -172,10 +192,16 @@ export default function RaiseWorkOrderForm({ existing }) {
 
             <Field label="Equipment" required hint={errors.asset}>
               <select value={assetId} onChange={(e) => handleAssetChange(e.target.value)} className={inputClass}>
-                <option value="">Select equipment…</option>
-                {EQUIPMENT.map((m) => (
+                <option value="">
+                  {!ready
+                    ? "Loading…"
+                    : assetChoices.length === 0
+                      ? "No equipment registered for this department"
+                      : "Select equipment…"}
+                </option>
+                {assetChoices.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.name} · {m.id}
+                    {m.name} · {m.asset_code || m.id}
                   </option>
                 ))}
               </select>
@@ -183,23 +209,21 @@ export default function RaiseWorkOrderForm({ existing }) {
             {asset && (
               <div className="flex items-center gap-2 bg-canvas rounded px-3 py-2 mb-4 text-[12.5px] text-ink-soft">
                 <Factory size={14} /> Criticality: <strong className="text-ink">{asset.criticality}</strong>
-                <span className="mx-1">·</span> Asset ID: <span className="font-mono">{asset.id}</span>
+                <span className="mx-1">·</span> Asset ID: <span className="font-mono">{asset.asset_code || asset.id}</span>
               </div>
             )}
 
             <Field label="Work order type">
               <div className="flex gap-2">
-                {[
-                  ["breakdown", "Breakdown"],
-                  ["inspection", "Inspection"],
-                  ["project", "Project"],
-                ].map(([val, label]) => (
+                {types.map((t) => (
                   <button
-                    key={val}
-                    onClick={() => setType(val)}
-                    className={`px-3.5 py-2 rounded text-[13px] font-medium border ${type === val ? "bg-ink text-white border-ink" : "bg-white text-ink border-[#D8DEE4]"}`}
+                    key={t.code}
+                    type="button"
+                    onClick={() => setType(t.code)}
+                    title={t.description || undefined}
+                    className={`px-3.5 py-2 rounded text-[13px] font-medium border ${type === t.code ? "bg-ink text-white border-ink" : "bg-white text-ink border-[#D8DEE4]"}`}
                   >
-                    {label}
+                    {t.label}
                   </button>
                 ))}
               </div>
@@ -211,18 +235,20 @@ export default function RaiseWorkOrderForm({ existing }) {
 
             <Field label="Priority" required>
               <div className="flex gap-2">
-                {["P1", "P2", "P3", "P4"].map((p) => (
+                {priorities.map(({ id: p, label }) => (
                   <button
                     key={p}
+                    type="button"
                     onClick={() => {
                       setPriority(p);
                       setPriorityTouched(true);
                     }}
+                    title={label}
                     className="flex-1 py-2 rounded text-[13px] font-bold border"
                     style={{
-                      borderColor: effectivePriority === p ? PRIORITY_COLORS[p] : "#D8DEE4",
-                      background: effectivePriority === p ? `${PRIORITY_COLORS[p]}1A` : "#fff",
-                      color: effectivePriority === p ? PRIORITY_COLORS[p] : "#64748B",
+                      borderColor: effectivePriority === p ? priorityColor(p) : "#D8DEE4",
+                      background: effectivePriority === p ? `${priorityColor(p)}1A` : "#fff",
+                      color: effectivePriority === p ? priorityColor(p) : "#64748B",
                     }}
                   >
                     {p}
@@ -233,7 +259,7 @@ export default function RaiseWorkOrderForm({ existing }) {
 
             <div
               className="rounded px-3.5 py-3 mb-4 border"
-              style={{ background: suggestion ? `${PRIORITY_COLORS[suggestion]}0D` : "#F6F8FB", borderColor: suggestion ? `${PRIORITY_COLORS[suggestion]}55` : "#E5E9F0" }}
+              style={{ background: suggestion ? `${priorityColor(suggestion)}0D` : "#F6F8FB", borderColor: suggestion ? `${priorityColor(suggestion)}55` : "#E5E9F0" }}
             >
               <div className="flex items-center gap-2 mb-1.5">
                 <Sparkles size={14} className="text-accent" />
@@ -243,7 +269,7 @@ export default function RaiseWorkOrderForm({ existing }) {
                 <div className="flex items-center justify-between">
                   <span className="text-[12.5px] text-ink-soft">
                     Based on production impact{safetyFlag ? " + safety risk" : ""}
-                    {envFlag ? " + environmental risk" : ""}, the system recommends <strong style={{ color: PRIORITY_COLORS[suggestion] }}>{suggestion}</strong>.
+                    {envFlag ? " + environmental risk" : ""}, the system recommends <strong style={{ color: priorityColor(suggestion) }}>{suggestion}</strong>.
                   </span>
                   {priorityTouched && priority !== suggestion && (
                     <button
@@ -264,17 +290,18 @@ export default function RaiseWorkOrderForm({ existing }) {
 
             <Field label="Production impact" required hint={errors.impact}>
               <div className="flex flex-col gap-2">
-                {IMPACT_OPTIONS.map((opt) => (
+                {impacts.map((opt) => (
                   <label
-                    key={opt.value}
+                    key={opt.code}
+                    title={opt.description || undefined}
                     className="flex items-center justify-between px-3 py-2.5 rounded border cursor-pointer"
-                    style={{ borderColor: impact === opt.value ? "#F59E0B" : "#E2E6EA", background: impact === opt.value ? "#FDE7C4" : "#fff" }}
+                    style={{ borderColor: impact === opt.code ? "#F59E0B" : "#E2E6EA", background: impact === opt.code ? "#FDE7C4" : "#fff" }}
                   >
                     <span className="flex items-center gap-2 text-[13.5px] text-ink">
-                      <input type="radio" checked={impact === opt.value} onChange={() => setImpact(opt.value)} className="accent-accent" />
+                      <input type="radio" checked={impact === opt.code} onChange={() => setImpact(opt.code)} className="accent-accent" />
                       {opt.label}
                     </span>
-                    <PriorityBadge p={opt.suggests} size="sm" />
+                    <PriorityBadge p={opt.suggests_priority} size="sm" />
                   </label>
                 ))}
               </div>
@@ -317,14 +344,16 @@ export default function RaiseWorkOrderForm({ existing }) {
               </div>
               {safetyFlag && (
                 <div className="flex gap-2">
-                  {["Low", "Medium", "High"].map((s) => (
+                  {severities.map((s) => (
                     <button
-                      key={s}
-                      onClick={() => setSafetySeverity(s)}
+                      key={s.code}
+                      type="button"
+                      onClick={() => setSafetySeverity(s.code)}
+                      title={`${s.label} — caps the suggestion at ${s.escalates_to_priority}`}
                       className="flex-1 py-1.5 rounded text-[12px] font-semibold border"
-                      style={{ borderColor: safetySeverity === s ? "#EF4444" : "#D8DEE4", background: safetySeverity === s ? "#FCE9E9" : "#fff", color: safetySeverity === s ? "#EF4444" : "#64748B" }}
+                      style={{ borderColor: safetySeverity === s.code ? "#EF4444" : "#D8DEE4", background: safetySeverity === s.code ? "#FCE9E9" : "#fff", color: safetySeverity === s.code ? "#EF4444" : "#64748B" }}
                     >
-                      {s}
+                      {s.code}
                     </button>
                   ))}
                 </div>
@@ -375,13 +404,13 @@ export default function RaiseWorkOrderForm({ existing }) {
                 </div>
                 <div className="flex flex-col gap-2.5">
                   {[
-                    ["Acknowledge by", SLA_MATRIX[effectivePriority].ack],
-                    ["Response by", SLA_MATRIX[effectivePriority].response],
-                    ["Resolution by", SLA_MATRIX[effectivePriority].resolution],
+                    ["Acknowledge by", slaForPriority(effectivePriority)?.ack_target_label],
+                    ["Response by", slaForPriority(effectivePriority)?.response_target_label],
+                    ["Resolution by", slaForPriority(effectivePriority)?.resolution_target_label],
                   ].map(([label, val]) => (
                     <div key={label} className="flex items-center justify-between text-[12.5px]">
                       <span className="text-[#B9C9E8]">{label}</span>
-                      <span className="font-mono font-semibold">{val}</span>
+                      <span className="font-mono font-semibold">{val ?? "—"}</span>
                     </div>
                   ))}
                 </div>

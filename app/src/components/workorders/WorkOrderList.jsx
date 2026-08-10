@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { Plus, Search, Download, AlertTriangle } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrderList } from "../../lib/workOrders";
-import { STATUS_FLOW, STATUS_LABELS, SLA_MATRIX, fmtDue, departmentById } from "../../lib/constants";
+import { fmtDue } from "../../lib/constants";
+import { useReferenceData } from "../../lib/referenceData";
 import { ROLES } from "../../lib/roles";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import Button from "../ui/Button";
@@ -30,6 +31,7 @@ const EMPTY_MESSAGES = {
 
 export default function WorkOrderList() {
   const { user } = useAuth();
+  const { priorities, statuses } = useReferenceData();
   const router = useRouter();
   const [workOrders, setWorkOrders] = useState(null);
   const [error, setError] = useState(null);
@@ -96,16 +98,17 @@ export default function WorkOrderList() {
         </div>
         <select value={fPriority} onChange={(e) => setFPriority(e.target.value)} className={`${inputClass} w-36`}>
           <option>All</option>
-          <option>P1</option>
-          <option>P2</option>
-          <option>P3</option>
-          <option>P4</option>
+          {priorities.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.id} — {p.label}
+            </option>
+          ))}
         </select>
         <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={`${inputClass} w-52`}>
           <option value="All">All</option>
-          {STATUS_FLOW.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_LABELS[s]}
+          {statuses.map((s) => (
+            <option key={s.code} value={s.code}>
+              {s.label}
             </option>
           ))}
         </select>
@@ -139,21 +142,26 @@ export default function WorkOrderList() {
   );
 }
 
-function slaRemain(w) {
+// Resolution target comes from the sla table now, in minutes, so an admin
+// changing P2's target changes every countdown in the app.
+function slaRemain(w, slaForPriority) {
   if (!w.created_at || !w.priority) return null;
-  const createdMs = w.created_at ? new Date(w.created_at).getTime() : Date.now();
-  return SLA_MATRIX[w.priority].resolutionMs - (Date.now() - createdMs);
+  const sla = slaForPriority(w.priority);
+  if (!sla?.resolution_target_minutes) return null;
+  const createdMs = new Date(w.created_at).getTime();
+  return sla.resolution_target_minutes * 60000 - (Date.now() - createdMs);
 }
 
 function WorkOrderRow({ w, first, onClick }) {
-  const remain = slaRemain(w);
+  const { slaForPriority, departmentName } = useReferenceData();
+  const remain = slaRemain(w, slaForPriority);
   return (
     <div onClick={onClick} className={`flex items-center px-4 py-3 cursor-pointer hover:bg-canvas ${first ? "" : "border-t border-[#F1F3F5]"}`}>
       <div className="flex-[2] min-w-0">
         <div className="font-mono text-[11.5px] text-ink-soft">{w.wo_number || "Pending…"}</div>
         <div className="text-[13.5px] text-ink font-medium">{w.asset_name}</div>
       </div>
-      <div className="flex-[1.4] text-[13px] text-ink-soft">{departmentById(w.department_id)?.name || w.department_id}</div>
+      <div className="flex-[1.4] text-[13px] text-ink-soft">{departmentName(w.department_id)}</div>
       <div className="w-16">
         <PriorityBadge p={w.priority} size="sm" />
       </div>
@@ -169,14 +177,15 @@ function WorkOrderRow({ w, first, onClick }) {
 }
 
 function WorkOrderCard({ w, onClick }) {
-  const remain = slaRemain(w);
+  const { slaForPriority, departmentName } = useReferenceData();
+  const remain = slaRemain(w, slaForPriority);
   return (
     <Card className="p-3.5" onClick={onClick}>
       <div className="flex items-start justify-between">
         <div>
           <div className="font-mono text-[11px] text-ink-soft">{w.wo_number || "Pending…"}</div>
           <div className="text-[14px] text-ink font-semibold mt-0.5">{w.asset_name}</div>
-          <div className="text-[12px] text-ink-soft mt-0.5">{departmentById(w.department_id)?.name || w.department_id}</div>
+          <div className="text-[12px] text-ink-soft mt-0.5">{departmentName(w.department_id)}</div>
         </div>
         <div className="flex flex-col items-end gap-1">
           <PriorityBadge p={w.priority} size="sm" />

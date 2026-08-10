@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, ClipboardList, Bell, Search, LogOut } from "lucide-react";
+import { LayoutDashboard, ClipboardList, Bell, Search, LogOut, Users, Settings } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { RoleBadge } from "./ui/Badges";
-import { ROLE_LABELS, dashboardPathForRole } from "../lib/roles";
+import { ROLES, ROLE_LABELS, dashboardPathForRole } from "../lib/roles";
 import NotificationBell from "./NotificationBell";
 
 function Logo({ size = 30, variant = "light" }) {
@@ -33,6 +33,14 @@ export default function AppShell({ children }) {
     { href: dashboardPathForRole(user.role), label: "Dashboard", icon: LayoutDashboard },
     { href: "/work-orders", label: "Work Orders", icon: ClipboardList },
     { href: "/notifications", label: "Notifications", icon: Bell },
+    // Administration is Admin-only, matching RequireRole on those pages — a
+    // Manager following the link would only be redirected back.
+    ...(user.role === ROLES.ADMIN
+      ? [
+          { href: "/admin/users", label: "Users", icon: Users },
+          { href: "/admin/settings", label: "Settings", icon: Settings },
+        ]
+      : []),
   ];
 
   return (

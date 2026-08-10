@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, PauseCircle } from "lucide-react";
 import { listenWorkOrderHistory } from "../../lib/workOrders";
-import { STATUS_FLOW, STATUS_LABELS } from "../../lib/constants";
+import { useReferenceData } from "../../lib/referenceData";
 import { ErrorBanner } from "../ui/Surfaces";
 
 // Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
@@ -14,6 +14,7 @@ function fmtTime(ts) {
 }
 
 export default function StatusTimeline({ wo }) {
+  const { statusFlow, statusLabel } = useReferenceData();
   const [history, setHistory] = useState(null);
   const [error, setError] = useState(null);
 
@@ -22,6 +23,9 @@ export default function StatusTimeline({ wo }) {
     return unsub;
   }, [wo.id]);
 
+  // Order comes from wo_statuses.sort_order, so an admin reordering the ladder in
+  // Settings reorders this timeline too.
+  const STATUS_FLOW = statusFlow;
   const flowIndex = STATUS_FLOW.indexOf(wo.status);
   const lastEvent = history && history.length ? history[history.length - 1] : null;
 
@@ -45,7 +49,7 @@ export default function StatusTimeline({ wo }) {
             </div>
             <div className="pb-5.5">
               <div className="text-[13.5px]" style={{ fontWeight: isCurrent ? 700 : 500, color: done ? "#101828" : "#64748B" }}>
-                {STATUS_LABELS[s]}
+                {statusLabel(s)}
               </div>
               {event ? (
                 <div className="text-[12px] text-ink-soft mt-0.5">

@@ -1,23 +1,27 @@
 # SI — Service Inside · Build & Deploy
 
-How this app becomes an Android APK and a live Firebase Hosting site. Read
-`README.md` first for what the app *is*; this file is only about shipping it.
+How this app becomes a live site on Vercel and an Android APK. Read `README.md`
+first for what the app *is*; this file is only about shipping it.
+
+The backend is Supabase (project `iclphobvhjwdinxnqexw`). Firebase was removed
+entirely on 2026-08-07 — if you find a Firebase reference anywhere outside a
+historical note, it's stale.
 
 ---
 
 ## 1. What is installed on this machine
 
-Everything below was installed as part of setting this up. Nothing needs
-reinstalling unless you move to a different machine.
+Nothing here needs reinstalling unless you move to a different machine.
 
 | Tool | Version | Location |
 |---|---|---|
 | Node.js | 24.18.1 | `C:\Program Files\nodejs` |
 | Eclipse Temurin JDK | 17.0.20 | `C:\Users\Ahmad Amirul\toolchain\jdk17` |
-| Android SDK | cmdline-tools 11.0, platform-tools, platform `android-34`, build-tools `34.0.0` | `%LOCALAPPDATA%\Android\Sdk` |
+| Android SDK | cmdline-tools 11.0, platform-tools, platform `android-34`, build-tools `34.0.0` | `…\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\Android\Sdk` — **not** `%LOCALAPPDATA%\Android\Sdk`, see §6 |
 | Capacitor | 6.x (`core`, `android`, `cli`) | project `node_modules` |
-| Firebase CLI | 15.25.1 | project `node_modules` — call it as `npx firebase` |
-| firebase-admin | latest | project `node_modules` — used by the setup scripts |
+| GitHub CLI | 2.97.0 | system |
+| `@supabase/supabase-js` | ^2.112.2 | project `node_modules` |
+| `supabase` CLI | ^2.111.0 | project `node_modules` — call it as `npx supabase` |
 
 Environment variables set at **User** scope (so they persist across reboots):
 
@@ -30,178 +34,114 @@ PATH             += %JAVA_HOME%\bin, %ANDROID_HOME%\platform-tools, %ANDROID_HOM
 ```
 
 `JAVA_TOOL_OPTIONS` is not a tuning setting — without it **no Gradle build runs at
-all on this machine**. See §7. It makes every JVM print one
+all on this machine**. See §6. It makes every JVM print one
 `Picked up JAVA_TOOL_OPTIONS: …` line to stderr, which is expected and harmless.
 
 `JAVA_HOME` deliberately uses the 8.3 short path. The real folder sits under
 `C:\Users\Ahmad Amirul\`, and the space in that name breaks both `sdkmanager.bat`
 and Gradle's JVM detection. Don't "tidy" it to the long path.
 
+`ANDROID_HOME` above is **wrong for Gradle and does nothing** — the SDK is not
+really at that path. `android/local.properties` carries the real one. See §6.
+
 Android Studio was **not** installed — only the command-line SDK, which is all a
-Gradle APK build needs. Install Studio separately if you want the GUI/emulator.
+Gradle APK build needs.
 
 ---
 
-## 2. How the web app became APK-able
+## 2. Why the app is a static export
 
-The app was a Next.js app with no static export. Three changes made it packageable:
+`next.config.js` sets `output: "export"` and `trailingSlash: true`. Three things
+follow from that, and all three are load-bearing:
 
-1. **`next.config.js` → `output: "export"`.** Every page in this app is already
-   `"use client"` and talks to Firebase straight from the browser, so there was
-   no server logic to lose. `next build` now emits a plain static site into
-   `out/`. That one folder is both what Hosting serves and what the APK embeds,
-   so web and Android ship identical UI.
+1. **One build serves both targets.** Every page is `"use client"` and talks to
+   Supabase straight from the browser, so there is no server logic to lose.
+   `next build` emits a plain static site into `out/` — that folder is both what
+   Vercel serves and what the APK embeds, so web and Android ship identical UI.
 
-2. **`/work-orders/[id]` → `/work-orders/view?id=…`** (and `[id]/edit` →
-   `/work-orders/edit?id=…`). A static export must know every route at build
-   time; work order ids are created at runtime, so the dynamic segment could
-   never be prerendered. The id moved into a query param. All 9 call sites were
-   updated, including notification deep links (`lib/notifications.js`) and the
-   post-login return path (`components/RequireAuth.jsx`, which now preserves the
-   query string so an expired session returns you to the right work order).
+2. **No dynamic route segments.** A static export must know every route at build
+   time, and work order ids are created at runtime. So it's
+   `/work-orders/view?id=…`, not `/work-orders/[id]`. This is why
+   `components/RequireAuth.jsx` preserves the query string when it bounces you to
+   `/login` — otherwise an expired session would return you to a detail page with
+   nothing selected.
 
-3. **`trailingSlash: true`.** Emits `out/work-orders/view/index.html` instead of
-   `view.html`. Capacitor's WebView server resolves directory paths to
-   `index.html`, so this is what makes deep links work inside the APK.
+3. **`trailingSlash` emits `view/index.html`** rather than `view.html`.
+   Capacitor's WebView resolves directory paths to `index.html`, so this is what
+   makes deep links work inside the APK.
 
-Also: `src/lib/firebase.js` now falls back to placeholder config values when the
-`NEXT_PUBLIC_FIREBASE_*` vars are empty. Without that, `getAuth()` runs at module
-scope during the export prerender and throws `auth/invalid-api-key`, failing the
-whole build on a fresh clone. Missing config is instead reported as a loud
-`console.error` in the browser, where it's actionable.
+Two consequences worth knowing:
 
----
-
-## 3. Firebase project setup — steps only you can do
-
-Creating a project and `firebase login` both need your Google account in a
-browser, so these are yours to run. Takes about ten minutes.
-
-### 3a. Create the project and get the web config
-
-1. Go to <https://console.firebase.google.com> → **Add project**.
-2. Once created: **Project Settings → General → Your apps → Add app → Web** (`</>`).
-   Register it (nickname anything, e.g. "SI CMMS Web"). Skip Hosting setup there —
-   this repo already has it configured.
-3. Copy the six values from the `firebaseConfig` snippet it shows you into
-   **`app/.env.local`** (the file already exists with the keys, just empty):
-
-```
-NEXT_PUBLIC_FIREBASE_API_KEY=AIza…
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=1234567890
-NEXT_PUBLIC_FIREBASE_APP_ID=1:1234567890:web:abcdef
-```
-
-These are inlined at **build** time. Any change here means a rebuild
-(`npm run build` for web, `npm run apk` for Android).
-
-> These six values are not secrets — they ship in every web bundle by design.
-> What protects your data is the Firestore security rules in step 3d, which is
-> why deploying them is not optional.
-
-### 3b. Turn on Authentication
-
-**Authentication → Get started → Email/Password → Enable.** (Only
-email/password; the app has no social sign-in.)
-
-Under **Authentication → Settings → Authorized domains**, confirm `localhost` is
-listed. It is there by default, and the APK needs it — Capacitor serves the
-bundle from `https://localhost` inside the WebView.
-
-### 3c. Create the Firestore database
-
-**Firestore Database → Create database → Production mode**, then pick a region
-close to your users. Production mode denies everything until you deploy rules,
-which is the next step.
-
-### 3d. Deploy rules and indexes
-
-```bash
-cd app && npx firebase login
-```
-
-```bash
-cd app && npx firebase use --add
-```
-
-Pick your project and give it the alias `default`. That writes `.firebaserc`.
-Then:
-
-```bash
-cd app && npm run deploy:rules
-```
-
-That pushes `firestore.rules` (the full 5-role transition matrix) and
-`firestore.indexes.json`. **Composite indexes take a few minutes to build** —
-list and dashboard queries return errors until they finish. Watch progress under
-Firestore → Indexes.
-
-### 3e. Create the initial users
-
-Nobody can sign in until users exist *with role custom claims* — the app has no
-"create the first admin" screen, deliberately, since that would be a
-privilege-escalation hole.
-
-1. Get admin credentials — either route works, see `GO_LIVE.md` step A6:
-   - **gcloud, no key file** (required if your organization enforces
-     `iam.disableServiceAccountKeyCreation`, which is now the Workspace
-     default): `gcloud auth application-default login`
-   - **Service account key**: Project Settings → Service Accounts → Generate new
-     private key, saved as `app/serviceAccountKey.json`
-2. Run — with gcloud credentials:
-
-```bash
-cd app; $env:SI_TARGET="live"; $env:GOOGLE_CLOUD_PROJECT="si-cmms"; npm run bootstrap:users
-```
-
-   …or with a key file:
-
-```bash
-cd app; $env:SI_TARGET="live"; $env:GOOGLE_APPLICATION_CREDENTIALS="./serviceAccountKey.json"; npm run bootstrap:users
-```
-
-That creates six users (one per role) with claims and `/users/{uid}` profiles.
-Credentials are listed in `scripts/bootstrapUsers.js` — all with password
-`ChangeMe123!`. **Change them, and edit `DEPARTMENT_ID`/`PLANT_ID` in that file
-to match your real data, before anyone uses this for real.**
-
-Then seed the reference collections — `/departments`, `/assets`, `/technicians`,
-`/priorities`, `/sla`, `/plants`. Run this **after** `bootstrap:users`, so
-technician documents get real Auth UIDs instead of placeholder slugs:
-
-```bash
-cd app; $env:SI_TARGET="live"; $env:GOOGLE_APPLICATION_CREDENTIALS="./serviceAccountKey.json"; npm run seed:db
-```
-
-`SI_TARGET=live` is required and deliberate — every script in `scripts/`
-defaults to the emulator, so nothing can reach your real project by accident.
-Add `-- --dry-run` to see exactly what it would write first. The seed is
-idempotent; re-running it changes nothing.
-
-Optionally seed one demo work order:
-
-```bash
-cd app; $env:GOOGLE_APPLICATION_CREDENTIALS="./serviceAccountKey.json"; npm run seed:demo
-```
-
-> `serviceAccountKey.json` grants full admin access to your project. It is
-> already covered by `.gitignore` — keep it that way and never commit it.
-
-### 3f. Deploy Hosting
-
-```bash
-cd app && npm run deploy:hosting
-```
-
-That runs `next build` and uploads `out/`. You get a
-`https://your-project.web.app` URL.
+- **`NEXT_PUBLIC_*` values are baked in at build time.** Changing one in Vercel
+  requires a redeploy, not just a settings save.
+- **`src/lib/supabase.js` falls back to placeholder config** when the env vars are
+  empty. Without that, `createClient()` runs at module scope during the export
+  prerender and throws, failing the build on a fresh clone. Missing config is
+  reported as a loud `console.error` in the browser instead, where it's
+  actionable.
 
 ---
 
-## 4. Building the APK
+## 3. Deploying the web app (Vercel)
+
+### First time
+
+Follow `../SETUP_SUPABASE_VERCEL.md`, which covers publishing to GitHub and
+importing into Vercel. The one setting people get wrong:
+
+> **Root Directory must be `app`.** The Next app is not at the repo root, and the
+> build fails without this.
+
+Environment variables to set in Vercel — exactly two:
+
+| Name | Value |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://iclphobvhjwdinxnqexw.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the publishable key from Project Settings → API |
+
+**Never set `SUPABASE_SERVICE_ROLE_KEY` in Vercel.** It bypasses Row Level
+Security completely, and because this is a static export there is no server on
+Vercel that could use it safely — it would only ever end up in a browser bundle.
+It belongs in `app/.env.local` (gitignored) and in Supabase's own Edge Function
+environment, nowhere else.
+
+`app/vercel.json` already declares the framework, `outputDirectory: "out"`, and
+security headers. Leave the build settings alone.
+
+### After that
+
+Every push to `main` triggers a deploy. There is no deploy command to run.
+
+---
+
+## 4. Deploying database changes
+
+Migrations live in `supabase/migrations/` and are applied in filename order.
+
+```bash
+cd app && npx supabase db push
+```
+
+That needs Docker for local work; on this machine migrations have been applied
+through the Supabase MCP server (`apply_migration`) instead, which talks to the
+hosted project directly and needs no Docker.
+
+Either way: **migrations are the source of truth.** Don't change the schema in
+the dashboard SQL editor without writing the migration too, or the next clone
+won't match.
+
+Edge Functions deploy separately:
+
+```bash
+cd app && npx supabase functions deploy admin-users
+```
+
+`admin-users` is the only one, and it exists because setting another user's
+password requires the service-role key. See `supabase/functions/admin-users/`.
+
+---
+
+## 5. Building the APK
 
 Once `.env.local` holds real values:
 
@@ -222,8 +162,8 @@ Install it on a phone with USB debugging on:
 adb install -r app/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or just copy the `.apk` to the device and tap it (needs "install unknown apps"
-allowed for your file manager).
+**Rebuild the APK after any web change.** It embeds a snapshot of `out/`, so a
+Vercel deploy does not update it.
 
 App identity, set in `capacitor.config.json`:
 
@@ -250,83 +190,12 @@ update the app under the same identity.
 
 ---
 
-## 5. Plan limits: what works free, what needs Blaze
+## 6. Machine-specific Gradle problems
 
-The free **Spark** plan covers most of this. Two things do not:
+Three of them, all diagnosed here so nobody re-derives them. Each one stops the
+APK build outright, and none has an error message that points at its real cause.
 
-| Feature | Plan | Effect if unavailable |
-|---|---|---|
-| Firestore, Authentication, Hosting | Spark ✅ | — |
-| **Cloud Storage** (work order photos/videos) | **Blaze** | For projects created after Oct 2024 the default bucket requires billing. Attachment uploads in `lib/workOrders.js` will fail; everything else works. |
-| **Cloud Functions** | **Blaze** | Auto WO numbering, SLA computation, notification fan-out, SLA warning/breach sweeps, and dashboard stat rollups never fire. |
-
-That second row matters more than it looks. With Functions undeployed you get a
-working app whose **automation is inert** — work orders may lack numbers, SLA
-timers won't populate, notifications won't be created, and Manager/Admin
-dashboards read stat documents that nothing is writing, so they show zeros.
-
-If you upgrade to Blaze (set a budget alert first):
-
-```bash
-cd app && npm run deploy:functions
-```
-
-```bash
-cd app && npx firebase deploy --only storage
-```
-
----
-
-## 6. Everyday commands
-
-| Command | What it does |
-|---|---|
-| `npm run dev` | Next dev server at localhost:3000, against real Firebase |
-| `npm run build` | Static export into `out/` |
-| `npm run apk` | Full rebuild → debug APK |
-| `npm run cap:sync` | Copy an existing `out/` into the Android project (no web rebuild) |
-| `npm run deploy:hosting` | Build + deploy the site |
-| `npm run deploy:rules` | Deploy Firestore rules + indexes |
-| `npm run deploy:functions` | Deploy Cloud Functions (Blaze) |
-| `npm run emulators` | Local Firebase Emulator Suite (**needs JDK 21+** — see below) |
-| `npm run bootstrap:users` | Create the six role users (needs service account) |
-| `npm run seed:db` | Seed all reference collections (needs service account) |
-| `npm run seed:demo` | Seed one demo work order (needs service account) |
-| `npm run schema:check` | Fail on schema drift — no database or credentials needed |
-| `npm run apk:record` | Record the built APK into `/apk_builds` |
-
-### The two-JDK problem on this machine
-
-These two requirements conflict, and installing the wrong thing breaks the build:
-
-| Tool | JDK |
-|---|---|
-| Gradle 8.2.1 + AGP 8.2.1 (the APK build) | **17** — Gradle 8.2 cannot run on 21 at all |
-| firebase-tools 15 (the emulator only) | **21+** |
-
-This machine has JDK 17, which is why `npm run apk` works and `npm run emulators`
-does not. **If you install JDK 21 and point `JAVA_HOME` at it globally, the APK
-build stops working** with `Unsupported class file major version 65`.
-
-If you want both, keep `JAVA_HOME` on 17 and pin Gradle explicitly by adding this
-to `android/gradle.properties`:
-
-```
-org.gradle.java.home=C:/Program Files/Java/jdk-17
-```
-
-then set `JAVA_HOME` to 21 only in the shell where you run the emulator.
-
-**You do not need the emulator to go live.** It is for local testing only —
-the entire path in Section 3 works on JDK 17 alone.
-
-`npm run emulators` note: an APK on a real phone cannot reach `127.0.0.1`
-emulators on your PC. Use `npm run dev` in a browser for emulator work, or
-`adb reverse tcp:8080 tcp:8080` (and `9099`) for a USB-connected device.
-
----
-
-## 7. The Gradle "loopback connection" problem on this machine
+### "Unable to establish loopback connection"
 
 Worth reading before you touch `JAVA_TOOL_OPTIONS`, because without it every
 Gradle build fails immediately with:
@@ -390,18 +259,106 @@ Prints a `WEPollSelectorImpl` → the workaround is no longer needed. Throws
 **On a different machine**, none of this may apply — try a build without
 `JAVA_TOOL_OPTIONS` first, and only add it if you see the loopback error.
 
+### "SDK location not found" although ANDROID_HOME is set
+
+The other build-stopper on this machine:
+
+```
+> Could not determine the dependencies of null.
+   > SDK location not found. Define a valid SDK location with an ANDROID_HOME
+     environment variable or by setting the sdk.dir path in your project's local
+     properties file at '…\app\android\local.properties'.
+```
+
+Confusing, because `ANDROID_HOME` *is* set, `local.properties` *does* contain
+`sdk.dir`, and `%LOCALAPPDATA%\Android\Sdk` looks perfectly real in Explorer and
+in PowerShell.
+
+**What's actually happening.** The SDK was installed from a terminal running
+inside the Claude desktop app, which is an **MSIX package**. Windows redirects a
+packaged app's `AppData\Local` into its own container, so the download landed in
+
+```
+C:\Users\Ahmad Amirul\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\Android\Sdk
+```
+
+and the tidy `%LOCALAPPDATA%\Android\Sdk` is only a projection of it that exists
+for processes *inside* that container. The Gradle **daemon** runs detached and
+outside it, so for the daemon that directory simply does not exist — and neither
+does anything `ANDROID_HOME` points at, since it names the same phantom path.
+AGP finds no SDK from either source and reports the generic "not found" message.
+
+The tell, if you want to confirm it rather than take my word for it:
+
+```bash
+powershell -c "(Get-Item $env:LOCALAPPDATA\Android\Sdk).Target"
+```
+
+Prints a `…\Packages\…\LocalCache\…` path → you are looking at a redirected
+directory, not a real one.
+
+**The fix** is the real path in `android/local.properties`, which is what is
+there now. AGP prefers `sdk.dir` over the environment, so the misleading
+`ANDROID_HOME` no longer matters.
+
+`local.properties` is gitignored (Capacitor puts it there, correctly — it is
+machine-specific). So this fix does not travel with the repo: **on a fresh clone
+of this machine you must recreate it.**
+
+Two things worth knowing:
+
+- That location is inside an app's package cache. Resetting or reinstalling the
+  Claude desktop app **wipes it**, and the SDK goes with it. Moving the SDK to a
+  plain path like `C:\Android\Sdk` and repointing `sdk.dir`, `ANDROID_HOME` and
+  `PATH` is the durable cleanup.
+- Installing the SDK from a normal terminal — Windows Terminal, PowerShell,
+  cmd — avoids the redirection entirely and is the simpler thing to do next time.
+
+### Keep JAVA_HOME on 17
+
+Gradle 8.2.1 + AGP 8.2.1 **cannot run on JDK 21** — point `JAVA_HOME` at 21
+globally and the APK build stops with `Unsupported class file major version 65`.
+Nothing in this project needs 21 any more (that was a firebase-tools requirement,
+and firebase-tools is gone), so there is no longer any reason to install it.
+
+If some future tool does need 21, keep `JAVA_HOME` on 17 and pin Gradle
+explicitly in `android/gradle.properties`:
+
+```
+org.gradle.java.home=C:/Program Files/Java/jdk-17
+```
+
 ---
 
-## 8. Known gaps carried over
+## 7. Everyday commands
 
-These are pre-existing and unchanged by the APK work — see the root `README.md`
-for full context:
+| Command | What it does |
+|---|---|
+| `npm run dev` | Next dev server at localhost:3000, against the live Supabase project |
+| `npm run build` | Static export into `out/` |
+| `npm run apk` | Full rebuild → debug APK |
+| `npm run cap:sync` | Copy an existing `out/` into the Android project (no web rebuild) |
+| `npm run db:push` | Apply pending migrations (needs Docker) |
+| `npm run db:diff` | Diff the live schema against the migrations |
+| `npm run db:types` | Regenerate TypeScript types from the live schema |
+| `npm run bootstrap:users` | Create the six role users (needs the service-role key) |
+| `npm run seed:demo` | Seed one demo work order (needs the service-role key) |
+| `npm run apk:record` | Record the built APK into `apk_builds` |
 
-- Supervisor has no dashboard (needs department-scoped stat documents).
-- Asset, Department and Technician records are hardcoded lookups in
-  `src/lib/constants.js`, not real collections.
-- `priorities` and `sla` are designed as Firestore collections but read from
-  `constants.js`.
-- `next@14.2.5` is flagged by npm for a known security advisory. Most Next.js
-  CVEs target server-side features this app no longer ships (it's a static
-  export), but a bump to the latest patched 14.x is still worth doing.
+**Do not run `npm run build` while `npm run dev` is running.** They share
+`.next`, and the production build corrupts the dev server's cache — every chunk
+starts returning 500 and the page silently fails to hydrate. Stop the dev server
+first, or `rm -rf .next` afterwards.
+
+---
+
+## 8. Known gaps
+
+- The status change and its `work_order_history` row are now atomic
+  (`si_transition_work_order`, migration 0010), but **editing** a work order's
+  core fields while it is Open still writes no history entry.
+- `@capacitor/cli` pulls a `tar` version with a critical advisory. Fixing it
+  needs a Capacitor 6 → 8 major upgrade, which has its own breaking changes.
+- The APK cannot reach a `localhost` dev server from a real phone. Use
+  `npm run dev` in a desktop browser, or `adb reverse tcp:3000 tcp:3000` for a
+  USB-connected device.
