@@ -47,7 +47,9 @@ export default function StatusTimeline({ wo }) {
               </div>
               {i < STATUS_FLOW.length - 1 && <div className="w-0.5 flex-1 min-h-[28px]" style={{ background: i < flowIndex ? "#22C55E" : "#E7EAEE" }} />}
             </div>
-            <div className="pb-5.5">
+            {/* pb-5.5 isn't in Tailwind's spacing scale — it compiled to nothing,
+                so the timeline rows had no gap between them. */}
+            <div className="min-w-0 pb-5">
               <div className="text-[13.5px]" style={{ fontWeight: isCurrent ? 700 : 500, color: done ? "#101828" : "#64748B" }}>
                 {statusLabel(s)}
               </div>

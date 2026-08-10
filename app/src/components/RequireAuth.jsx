@@ -33,7 +33,7 @@ export default function RequireAuth({ children }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-ink-soft text-[13.5px]">
+      <div className="min-h-dvh flex items-center justify-center text-ink-soft text-[13.5px]">
         Loading…
       </div>
     );

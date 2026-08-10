@@ -103,12 +103,14 @@ function NotificationsInner() {
             <button
               key={n.id}
               onClick={() => openNotification(n)}
-              className={`w-full text-left flex items-start gap-3 px-5 py-4 hover:bg-canvas ${i > 0 ? "border-t border-[#F1F3F5]" : ""}`}
+              className={`w-full text-left flex items-start gap-3 px-4 py-3.5 sm:px-5 sm:py-4 hover:bg-canvas ${i > 0 ? "border-t border-[#F1F3F5]" : ""}`}
               style={{ background: isUnread ? "#F6F8FB" : "transparent" }}
             >
               <Icon size={17} style={{ color: meta.color, marginTop: 1, flexShrink: 0 }} />
               <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
+                {/* Wraps to two lines on a phone instead of squeezing the
+                    timestamp — notification titles run to a full clause. */}
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2">
                   <span className="text-[13.5px] font-semibold text-ink">{n.title}</span>
                   <span className="text-[11px] text-ink-soft font-mono whitespace-nowrap">{fmtFull(n.created_at)}</span>
                 </div>

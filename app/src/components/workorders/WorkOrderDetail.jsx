@@ -82,15 +82,15 @@ export default function WorkOrderDetail({ woId }) {
       </button>
 
       <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2.5">
-        <div>
-          <div className="flex items-center gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <span className="font-mono text-[13px] text-ink-soft">{wo.wo_number || "Pending…"}</span>
             <PriorityBadge p={wo.priority} />
             <StatusBadge s={wo.status} />
           </div>
-          <h1 className="text-xl font-bold text-ink mt-1.5">{wo.asset_name}</h1>
+          <h1 className="text-lg sm:text-xl font-bold text-ink mt-1.5 break-words">{wo.asset_name}</h1>
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           {showEdit && (
             <Button variant="ghost" icon={PencilLine} onClick={() => router.push(`/work-orders/edit?id=${woId}`)}>
               Edit
@@ -108,7 +108,10 @@ export default function WorkOrderDetail({ woId }) {
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-border mb-5 mt-4 overflow-x-auto">
+      {/* Six tabs need ~560px. It scrolls sideways on a phone, bleeding to the
+          screen edges so it's visibly a scrollable strip rather than a row that
+          happens to be cut off. */}
+      <div className="-mx-4 mb-5 mt-4 flex gap-1 overflow-x-auto border-b border-border px-4 no-scrollbar scroll-touch sm:mx-0 sm:px-0">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -121,7 +124,7 @@ export default function WorkOrderDetail({ woId }) {
         ))}
       </div>
 
-      <Card className="p-6">
+      <Card className="p-4 sm:p-6">
         {tab === "overview" && <OverviewTab wo={wo} />}
         {tab === "assignment" && <AssignPanel wo={wo} />}
         {tab === "comments" && <CommentsPanel wo={wo} />}
@@ -149,16 +152,16 @@ function OverviewTab({ wo }) {
     ["Permit / LOTO required", wo.permit_required ? "Yes" : "No"],
   ];
   return (
-    <div className="flex gap-8 flex-wrap">
-      <div className="flex-1 min-w-[280px]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
+      <div className="min-w-0">
         {rows.map(([label, val]) => (
-          <div key={label} className="flex justify-between py-2.5 border-b border-[#F1F3F5] text-[13.5px]">
-            <span className="text-ink-soft">{label}</span>
-            <span className="text-ink font-medium text-right">{val}</span>
+          <div key={label} className="flex justify-between gap-3 py-2.5 border-b border-[#F1F3F5] text-[13.5px]">
+            <span className="flex-shrink-0 text-ink-soft">{label}</span>
+            <span className="min-w-0 break-words text-ink font-medium text-right">{val}</span>
           </div>
         ))}
       </div>
-      <div className="flex-1 min-w-[280px]">
+      <div className="min-w-0">
         <div className="text-[12.5px] font-semibold text-ink mb-2">Complaint</div>
         <p className="text-[13.5px] text-ink leading-relaxed mb-5">{wo.description}</p>
         <div className="bg-canvas rounded p-3.5">

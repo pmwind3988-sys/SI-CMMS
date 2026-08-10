@@ -11,10 +11,55 @@ body {
   background: #f6f8fb;
 }
 
+html {
+  /* Android Chrome and iOS Safari inflate text in "narrow columns" unless told
+     not to — it silently overrides the type scale and breaks every fixed-height
+     row in the app. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  /* A single stray wide element used to give the whole page a horizontal
+     scrollbar on a phone, which reads as the layout being broken. Wide content
+     (tables, tab strips) scrolls inside its own container instead — see the
+     overflow-x-auto wrappers on the admin tables and the detail tabs. */
+  overflow-x: hidden;
+  /* Taps on buttons and links flashed a grey box on Android. */
+  -webkit-tap-highlight-color: transparent;
+}
+
 * {
   box-sizing: border-box;
 }
 
 .font-mono {
   font-variant-numeric: tabular-nums;
+}
+
+/* Mobile browsers zoom the page when a form control smaller than 16px takes
+   focus, and never zoom back out. The app's type scale is 13.5px, so every
+   input triggered it. Bumping controls to 16px only below the `md` breakpoint
+   keeps the desktop density intact. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Horizontal strips (detail tabs, settings tabs) that must scroll but shouldn't
+   show a scrollbar sitting on top of the content. */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Momentum scrolling for those strips inside the Android WebView. */
+.scroll-touch {
+  -webkit-overflow-scrolling: touch;
 }

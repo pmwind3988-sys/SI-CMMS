@@ -115,17 +115,17 @@ export default function UsersAdmin() {
 
       {error && <ErrorBanner message={error} />}
 
-      <div className="flex items-center gap-2.5 mb-3.5 flex-wrap">
-        <div className="flex items-center gap-2 bg-white border border-border rounded px-3 py-2 w-72">
-          <Search size={15} className="text-ink-soft" />
+      <div className="mb-3.5 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="flex items-center gap-2 rounded border border-border bg-white px-3 py-2 sm:w-72">
+          <Search size={15} className="flex-shrink-0 text-ink-soft" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Name, email or department…"
-            className="bg-transparent outline-none text-[13.5px] w-full"
+            className="w-full min-w-0 bg-transparent text-[13.5px] outline-none"
           />
         </div>
-        <select value={fRole} onChange={(e) => setFRole(e.target.value)} className={`${inputClass} w-48`}>
+        <select value={fRole} onChange={(e) => setFRole(e.target.value)} className={`${inputClass} sm:w-48`}>
           <option value="All">All roles</option>
           {ALL_ROLES.map((r) => (
             <option key={r} value={r}>
@@ -135,7 +135,11 @@ export default function UsersAdmin() {
         </select>
       </div>
 
-      <Card className="overflow-hidden">
+      {/* The row layout needs ~900px — four columns plus a 280px action group.
+          It stays as-is from `lg` up and is replaced by stacked cards below,
+          rather than being crushed or scrolled sideways: this is a screen an
+          admin does use from a phone. */}
+      <Card className="hidden overflow-hidden lg:block">
         <div className="flex items-center px-4 py-2.5 bg-canvas text-[11.5px] font-bold text-ink-soft uppercase tracking-wide">
           <div className="flex-[2]">User</div>
           <div className="flex-[1.5]">Role</div>
@@ -163,35 +167,48 @@ export default function UsersAdmin() {
             </div>
             <div className="flex-1 text-[12.5px] text-ink-soft truncate">{u.department_id || "—"}</div>
             <div className="w-20">
-              <span
-                className="text-[11.5px] font-bold"
-                style={{ color: u.status === "active" ? "#22C55E" : "#94A3B8" }}
-              >
-                {u.status === "active" ? "Active" : "Inactive"}
-              </span>
+              <StatusText status={u.status} />
             </div>
             <div className="w-[280px] flex items-center justify-end gap-1.5">
-              <Button size="sm" variant="ghost" icon={KeyRound} onClick={() => setPanel({ kind: "password", user: u })}>
-                Password
-              </Button>
-              <Button size="sm" variant="ghost" icon={ShieldCheck} onClick={() => setPanel({ kind: "role", user: u })}>
-                Role
-              </Button>
-              <Button size="sm" variant="ghost" icon={Pencil} onClick={() => setPanel({ kind: "profile", user: u })}>
-                Edit
-              </Button>
-              <Button
-                size="sm"
-                variant={u.status === "active" ? "danger" : "success"}
-                icon={Power}
-                onClick={() => handleToggleStatus(u)}
-              />
+              <UserActions user={u} setPanel={setPanel} onToggleStatus={handleToggleStatus} />
             </div>
           </div>
         ))}
 
         {users && filtered.length === 0 && <EmptyState>No users match those filters.</EmptyState>}
       </Card>
+
+      <div className="flex flex-col gap-2 lg:hidden">
+        {users === null && (
+          <Card className="px-4 py-6 text-[13px] text-ink-soft">Loading users…</Card>
+        )}
+        {filtered.map((u) => (
+          <Card key={u.id} className="p-3.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-[14px] font-semibold text-ink">
+                  {u.name}
+                  {u.id === me?.uid && <span className="font-normal text-ink-soft"> · you</span>}
+                </div>
+                <div className="truncate text-[12px] text-ink-soft">{u.email}</div>
+                <div className="mt-1 text-[12px] text-ink-soft">{u.department_id || "No department"}</div>
+              </div>
+              <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
+                <RoleBadge role={u.role} />
+                <StatusText status={u.status} />
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[#F1F3F5] pt-3">
+              <UserActions user={u} setPanel={setPanel} onToggleStatus={handleToggleStatus} />
+            </div>
+          </Card>
+        ))}
+        {users && filtered.length === 0 && (
+          <Card>
+            <EmptyState>No users match those filters.</EmptyState>
+          </Card>
+        )}
+      </div>
 
       {panel?.kind === "password" && (
         <PasswordDialog
@@ -239,13 +256,55 @@ export default function UsersAdmin() {
 }
 
 /* ------------------------------------------------------------------
+   Row pieces — shared by the desktop table and the mobile cards so the two
+   layouts can't drift apart.
+-------------------------------------------------------------------*/
+
+function StatusText({ status }) {
+  return (
+    <span
+      className="text-[11.5px] font-bold"
+      style={{ color: status === "active" ? "#22C55E" : "#94A3B8" }}
+    >
+      {status === "active" ? "Active" : "Inactive"}
+    </span>
+  );
+}
+
+function UserActions({ user, setPanel, onToggleStatus }) {
+  return (
+    <>
+      <Button size="sm" variant="ghost" icon={KeyRound} onClick={() => setPanel({ kind: "password", user })}>
+        Password
+      </Button>
+      <Button size="sm" variant="ghost" icon={ShieldCheck} onClick={() => setPanel({ kind: "role", user })}>
+        Role
+      </Button>
+      <Button size="sm" variant="ghost" icon={Pencil} onClick={() => setPanel({ kind: "profile", user })}>
+        Edit
+      </Button>
+      <Button
+        size="sm"
+        variant={user.status === "active" ? "danger" : "success"}
+        icon={Power}
+        aria-label={user.status === "active" ? "Deactivate account" : "Reactivate account"}
+        onClick={() => onToggleStatus(user)}
+      />
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------
    Dialogs
 -------------------------------------------------------------------*/
 
 function Modal({ title, subtitle, children, onClose }) {
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-6">
-      <Card className="w-full max-w-md p-5">
+    // Bottom-aligned on a phone so the dialog sits above the thumb and its own
+    // content scrolls; the create-user form is six fields tall and used to run
+    // off both ends of a 640px-high screen with no way to reach the buttons.
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-4 sm:items-center sm:p-6">
+      <Card className="max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 className="text-[15.5px] font-bold text-ink">{title}</h2>

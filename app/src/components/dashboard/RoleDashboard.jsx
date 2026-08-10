@@ -181,28 +181,39 @@ export default function RoleDashboard() {
           <EmptyState>Nothing waiting on you right now.</EmptyState>
         )}
 
+        {/* Five columns need ~520px; a 360px phone gives the row about 296px, which
+            left roughly 50px for the equipment name. Below `sm` the assignee and
+            SLA drop under the title instead of taking columns of their own, and
+            the CTA collapses to its arrow. */}
         {!loading &&
           stats.needsMe.map((w, i) => (
             <button
               key={w.id}
               onClick={() => router.push(`/work-orders/view?id=${w.id}`)}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-canvas ${
+              className={`w-full flex items-center gap-2 sm:gap-3 px-4 py-3 text-left hover:bg-canvas ${
                 i === 0 ? "" : "border-t border-[#F1F3F5]"
               }`}
             >
               <div className="flex-[2] min-w-0">
                 <div className="font-mono text-[11.5px] text-ink-soft">{w.wo_number || "Pending…"}</div>
                 <div className="text-[13.5px] text-ink font-medium truncate">{w.asset_name}</div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-ink-soft sm:hidden">
+                  <span className="truncate">{w.assigned_to_name || "Unassigned"}</span>
+                  <span aria-hidden="true">·</span>
+                  <SlaText w={w} remainMs={stats.remainMs} />
+                </div>
               </div>
-              <div className="w-14">
+              <div className="w-14 flex-shrink-0">
                 <PriorityBadge p={w.priority} size="sm" />
               </div>
               <div className="flex-1 text-[12.5px] text-ink-soft truncate hidden sm:block">
                 {w.assigned_to_name || "Unassigned"}
               </div>
-              <SlaCell w={w} remainMs={stats.remainMs} />
-              <span className="text-accent font-semibold text-[12.5px] flex items-center gap-1 whitespace-nowrap">
-                {attention.cta} <ArrowRight size={13} />
+              <div className="hidden sm:block">
+                <SlaCell w={w} remainMs={stats.remainMs} />
+              </div>
+              <span className="text-accent font-semibold text-[12.5px] flex flex-shrink-0 items-center gap-1 whitespace-nowrap">
+                <span className="hidden xs:inline">{attention.cta}</span> <ArrowRight size={13} />
               </span>
             </button>
           ))}
@@ -237,21 +248,26 @@ export default function RoleDashboard() {
             <button
               key={w.id}
               onClick={() => router.push(`/work-orders/view?id=${w.id}`)}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-canvas ${
+              className={`w-full flex items-center gap-2 sm:gap-3 px-4 py-2.5 text-left hover:bg-canvas ${
                 i === 0 ? "" : "border-t border-[#F1F3F5]"
               }`}
             >
               <div className="flex-[2] min-w-0">
                 <div className="font-mono text-[11px] text-ink-soft">{w.wo_number || "Pending…"}</div>
                 <div className="text-[13px] text-ink truncate">{w.asset_name}</div>
+                <div className="mt-0.5 text-[11.5px] text-ink-soft sm:hidden">
+                  <SlaText w={w} remainMs={stats.remainMs} />
+                </div>
               </div>
-              <div className="w-14">
+              <div className="w-14 flex-shrink-0">
                 <PriorityBadge p={w.priority} size="sm" />
               </div>
-              <div className="flex-[1.3]">
+              <div className="flex-shrink-0 sm:flex-[1.3]">
                 <StatusBadge s={w.status} />
               </div>
-              <SlaCell w={w} remainMs={stats.remainMs} />
+              <div className="hidden sm:block">
+                <SlaCell w={w} remainMs={stats.remainMs} />
+              </div>
             </button>
           ))}
       </Card>
@@ -264,21 +280,31 @@ export default function RoleDashboard() {
   );
 }
 
+/** The 96px-wide SLA column used from `sm` up. */
 function SlaCell({ w, remainMs }) {
-  if (w.status === "closed") {
-    return <div className="w-24 text-right font-mono text-[11.5px] text-ink-soft">—</div>;
-  }
-  const remain = remainMs(w);
-  if (remain == null) {
-    return <div className="w-24 text-right font-mono text-[11.5px] text-ink-soft">—</div>;
+  return (
+    <div className="w-24 text-right">
+      <SlaText w={w} remainMs={remainMs} />
+    </div>
+  );
+}
+
+/**
+ * The same value with no column width of its own, so it can sit inline under the
+ * equipment name on a phone where there is no room for a fifth column.
+ */
+function SlaText({ w, remainMs }) {
+  const remain = w.status === "closed" ? null : remainMs(w);
+  if (w.status === "closed" || remain == null) {
+    return <span className="font-mono text-[11.5px] text-ink-soft">—</span>;
   }
   const late = remain < 0;
   return (
-    <div
-      className="w-24 text-right font-mono text-[11.5px]"
+    <span
+      className="font-mono text-[11.5px]"
       style={{ color: late ? "#EF4444" : "#64748B", fontWeight: late ? 700 : 400 }}
     >
       {late ? "Breached" : `${fmtDue(remain)} left`}
-    </div>
+    </span>
   );
 }

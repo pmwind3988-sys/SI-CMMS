@@ -97,20 +97,22 @@ export default function AssignPanel({ wo }) {
           return (
             <div
               key={t.user_id}
-              className="flex items-center justify-between px-3.5 py-2.5 rounded border"
+              // Wraps rather than overflowing: a technician with three skills
+              // listed plus an Assign button needs more than a phone's width.
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3.5 py-2.5 rounded border"
               style={{
                 borderColor: isAssigned ? "#F59E0B" : "#E5E9F0",
                 background: isAssigned ? "#FDE7C4" : "#fff",
               }}
             >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-navy text-white flex items-center justify-center text-[12px] font-bold">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="w-8 h-8 flex-shrink-0 rounded-full bg-navy text-white flex items-center justify-center text-[12px] font-bold">
                   {(t.name || "?")
                     .split(" ")
                     .map((n) => n[0])
                     .join("")}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="text-[13.5px] text-ink font-medium">
                     {t.name}{" "}
                     {isBest && (

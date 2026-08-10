@@ -1,8 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, ClipboardList, Bell, Search, LogOut, Users, Settings } from "lucide-react";
+import { LayoutDashboard, ClipboardList, Bell, Search, LogOut, Users, Settings, Menu, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { RoleBadge } from "./ui/Badges";
 import { ROLES, ROLE_LABELS, dashboardPathForRole } from "../lib/roles";
@@ -24,9 +25,46 @@ function Logo({ size = 30, variant = "light" }) {
   );
 }
 
+/**
+ * Two layouts from one tree, switched at `lg` (1024px):
+ *
+ *   < lg  — the navy nav is an off-canvas drawer behind a hamburger. It used to
+ *           be a permanent 224px column, which on a 360px phone left 136px for
+ *           the actual screen and made every page unusable.
+ *   >= lg — the same nav is a sticky column, exactly as before.
+ *
+ * The switch is pure CSS (translate + `lg:` overrides) rather than a JS width
+ * check, so there is no flash of the wrong layout on first paint and the static
+ * export stays render-identical between Vercel and the APK's WebView.
+ */
 export default function AppShell({ children }) {
   const { user, signOut } = useAuth();
   const pathname = usePathname();
+  const [navOpen, setNavOpen] = useState(false);
+
+  // Navigating from the drawer must close it, or the page the user just asked
+  // for stays hidden behind it.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [pathname]);
+
+  // While the drawer is over the page, the page behind it must not scroll —
+  // on a phone a scrolling backdrop reads as the drawer itself failing to
+  // scroll. Escape closes it for anyone on a keyboard.
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setNavOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [navOpen]);
+
   if (!user) return null;
 
   const navItems = [
@@ -43,17 +81,47 @@ export default function AppShell({ children }) {
       : []),
   ];
 
+  const initials = user.name
+    ?.split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2);
+
   return (
-    <div className="min-h-screen flex bg-canvas font-sans">
-      {/* Sidebar */}
-      <div className="w-56 bg-navy flex flex-col p-4 flex-shrink-0">
-        <div className="flex items-center gap-2.5 px-2 mb-6">
-          <Logo size={30} variant="light" />
-          <div>
-            <div className="text-white font-extrabold text-[15.5px] leading-none">SI</div>
-            <div className="text-[9px] text-[#9FB6E0] tracking-wide leading-none mt-0.5">SERVICE INSIDE</div>
-          </div>
+    <div className="min-h-dvh flex bg-canvas font-sans">
+      {/* Drawer backdrop — mobile only. */}
+      {navOpen && (
+        <div
+          onClick={() => setNavOpen(false)}
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+          aria-hidden="true"
+        />
+      )}
+
+      <aside
+        id="app-nav"
+        aria-label="Main navigation"
+        className={`fixed top-0 bottom-0 left-0 z-50 flex w-64 max-w-[82vw] flex-col overflow-y-auto bg-navy p-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(1rem+env(safe-area-inset-bottom))] transition-transform duration-200 ease-out lg:sticky lg:bottom-auto lg:z-auto lg:h-dvh lg:w-56 lg:max-w-none lg:shrink-0 lg:translate-x-0 ${
+          navOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
+        }`}
+      >
+        <div className="mb-6 flex items-center justify-between gap-2 px-2">
+          <Link href={dashboardPathForRole(user.role)} className="flex items-center gap-2.5">
+            <Logo size={30} variant="light" />
+            <div>
+              <div className="text-[15.5px] font-extrabold leading-none text-white">SI</div>
+              <div className="mt-0.5 text-[9px] leading-none tracking-wide text-[#9FB6E0]">SERVICE INSIDE</div>
+            </div>
+          </Link>
+          <button
+            onClick={() => setNavOpen(false)}
+            className="-mr-1 p-1 text-[#9FB6E0] hover:text-white lg:hidden"
+            aria-label="Close navigation"
+          >
+            <X size={20} />
+          </button>
         </div>
+
         <nav className="flex flex-col gap-1">
           {navItems.map((item) => {
             const isActive = pathname === item.href || pathname?.startsWith(item.href + "/");
@@ -61,7 +129,7 @@ export default function AppShell({ children }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`rounded flex items-center gap-2.5 px-2.5 py-2 text-[13.5px] font-semibold ${isActive ? "bg-navy-mid text-white" : "text-[#9FB6E0] hover:bg-navy-mid/40"}`}
+                className={`flex items-center gap-2.5 rounded px-2.5 py-2.5 text-[13.5px] font-semibold lg:py-2 ${isActive ? "bg-navy-mid text-white" : "text-[#9FB6E0] hover:bg-navy-mid/40"}`}
               >
                 <item.icon size={16} />
                 {item.label}
@@ -69,41 +137,67 @@ export default function AppShell({ children }) {
             );
           })}
         </nav>
-        <div className="mt-auto pt-3 border-t border-navy-line">
-          <div className="flex items-center gap-2.5 mb-2.5">
-            <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-navy font-bold text-[12.5px]">
-              {user.name?.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+
+        <div className="mt-auto border-t border-navy-line pt-3">
+          <div className="mb-2.5 flex items-center gap-2.5">
+            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent text-[12.5px] font-bold text-navy">
+              {initials}
             </div>
-            <div>
-              <div className="text-white text-[12.5px] font-semibold">{user.name}</div>
-              <div className="text-[#9FB6E0] text-[10.5px]">{ROLE_LABELS[user.role] || user.role}</div>
+            <div className="min-w-0">
+              <div className="truncate text-[12.5px] font-semibold text-white">{user.name}</div>
+              <div className="text-[10.5px] text-[#9FB6E0]">{ROLE_LABELS[user.role] || user.role}</div>
             </div>
           </div>
           <button
             onClick={signOut}
-            className="flex items-center gap-2 text-[#9FB6E0] text-[12px] hover:text-white"
+            className="flex items-center gap-2 text-[12px] text-[#9FB6E0] hover:text-white"
           >
             <LogOut size={13} /> Sign out
           </button>
         </div>
-      </div>
+      </aside>
 
       {/* Main */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center justify-between px-6 py-3.5 bg-white border-b border-border">
-          <div className="flex items-center gap-2 bg-canvas rounded px-3 py-1.5 w-80">
-            <Search size={15} className="text-ink-soft" />
-            <input
-              placeholder="Search work orders…"
-              className="bg-transparent outline-none text-[13.5px] w-full"
-            />
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Sticky rather than static: on a phone the page itself scrolls (there
+            is no inner scroll container any more), so the bar has to follow. */}
+        <header className="sticky top-0 z-30 border-b border-border bg-white pt-[env(safe-area-inset-top)]">
+          <div className="flex items-center gap-2 px-4 py-2.5 sm:gap-3 lg:px-6 lg:py-3.5">
+            <button
+              onClick={() => setNavOpen(true)}
+              className="-ml-1.5 p-1.5 text-ink-soft lg:hidden"
+              aria-label="Open navigation"
+              aria-controls="app-nav"
+              aria-expanded={navOpen}
+            >
+              <Menu size={22} />
+            </button>
+
+            {/* The sidebar's brand mark is behind the drawer on mobile, so the
+                bar carries one of its own. */}
+            <Link href={dashboardPathForRole(user.role)} className="flex items-center gap-2 lg:hidden">
+              <Logo size={26} variant="dark" />
+              <span className="text-[15px] font-extrabold text-navy">SI</span>
+            </Link>
+
+            <div className="hidden max-w-xs flex-1 items-center gap-2 rounded bg-canvas px-3 py-1.5 sm:flex">
+              <Search size={15} className="flex-shrink-0 text-ink-soft" />
+              <input
+                placeholder="Search work orders…"
+                className="w-full bg-transparent text-[13.5px] outline-none"
+              />
+            </div>
+
+            <div className="ml-auto flex flex-shrink-0 items-center gap-3 sm:gap-4">
+              <NotificationBell />
+              <RoleBadge role={user.role} />
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            <NotificationBell />
-            <RoleBadge role={user.role} />
-          </div>
-        </div>
-        <div className="p-6 overflow-y-auto">{children}</div>
+        </header>
+
+        <main className="flex-1 p-4 sm:p-5 lg:p-6 pb-[calc(2rem+env(safe-area-inset-bottom))]">
+          {children}
+        </main>
       </div>
     </div>
   );

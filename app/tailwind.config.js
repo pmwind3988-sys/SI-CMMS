@@ -3,6 +3,23 @@ module.exports = {
   content: ["./src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
+      // 360px is the floor we design to (Galaxy A-series, most budget Androids
+      // on the plant floor). `xs` gives us one step below Tailwind's `sm` for
+      // the handful of places two columns only fit on a slightly wider phone.
+      screens: {
+        xs: "400px",
+      },
+      // Safe-area insets as first-class spacing, so a bar can be padded past a
+      // notch or the Android gesture pill with `pt-safe-t` / `pb-safe-b`.
+      // These resolve to 0px in a normal browser window, so they cost nothing
+      // on desktop — they only take effect once the viewport is edge-to-edge
+      // (viewport-fit=cover, set in app/layout.jsx).
+      spacing: {
+        "safe-t": "env(safe-area-inset-top)",
+        "safe-b": "env(safe-area-inset-bottom)",
+        "safe-l": "env(safe-area-inset-left)",
+        "safe-r": "env(safe-area-inset-right)",
+      },
       colors: {
         // SI brand system — Navy / Orange / Green / Red on white
         navy: { DEFAULT: "#0F3D91", deep: "#0B2F70", mid: "#1E4FA0", line: "#2C5AA8" },

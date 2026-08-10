@@ -54,15 +54,17 @@ export default function CommentsPanel({ wo }) {
 
   return (
     <div>
-      <div className="flex gap-2 mb-4">
+      <div className="mb-4 flex gap-2">
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Add a comment or progress update…"
-          className={`${inputClass} flex-1`}
+          className={`${inputClass} min-w-0 flex-1`}
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
-        <Button variant="amber" icon={Send} onClick={submit} disabled={saving || !text.trim()}>
+        {/* Post stays on the same row — it's short enough, and this is the one
+            control a technician taps repeatedly while working. */}
+        <Button variant="amber" icon={Send} onClick={submit} disabled={saving || !text.trim()} className="flex-shrink-0">
           Post
         </Button>
       </div>

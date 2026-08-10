@@ -39,7 +39,7 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-canvas font-sans p-6">
+    <div className="min-h-dvh flex items-center justify-center bg-canvas font-sans px-5 py-8 pt-[calc(2rem+env(safe-area-inset-top))] pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
       <div className="w-full max-w-sm">
         <Link href="/login" className="flex items-center gap-1.5 text-ink-soft text-[13px] mb-5">
           <ArrowLeft size={15} /> Back to sign in

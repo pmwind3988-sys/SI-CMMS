@@ -91,12 +91,16 @@ export default function WorkOrderList() {
         </div>
       )}
 
-      <div className="flex items-center gap-3 mb-3.5 flex-wrap">
-        <div className="flex items-center gap-2 bg-white border border-border rounded px-3 py-1.5 w-64">
-          <Search size={14} className="text-ink-soft" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search WO# or equipment…" className="outline-none text-[13px] w-full" />
+      {/* A two-column grid on a phone (search spanning both) rather than a row of
+          fixed 16rem/9rem/13rem controls, which together needed 640px and forced
+          the whole page sideways on a 360px screen. From `sm` up it's the
+          original single row. */}
+      <div className="mb-3.5 grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap sm:gap-3">
+        <div className="col-span-2 flex items-center gap-2 rounded border border-border bg-white px-3 py-1.5 sm:w-64">
+          <Search size={14} className="flex-shrink-0 text-ink-soft" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search WO# or equipment…" className="w-full min-w-0 outline-none text-[13px]" />
         </div>
-        <select value={fPriority} onChange={(e) => setFPriority(e.target.value)} className={`${inputClass} w-36`}>
+        <select value={fPriority} onChange={(e) => setFPriority(e.target.value)} className={`${inputClass} min-w-0 sm:w-36`}>
           <option>All</option>
           {priorities.map((p) => (
             <option key={p.id} value={p.id}>
@@ -104,7 +108,7 @@ export default function WorkOrderList() {
             </option>
           ))}
         </select>
-        <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={`${inputClass} w-52`}>
+        <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={`${inputClass} min-w-0 sm:w-52`}>
           <option value="All">All</option>
           {statuses.map((s) => (
             <option key={s.code} value={s.code}>
@@ -112,7 +116,7 @@ export default function WorkOrderList() {
             </option>
           ))}
         </select>
-        <Button variant="ghost" size="sm" icon={Download}>
+        <Button variant="ghost" size="sm" icon={Download} className="col-span-2 justify-center sm:col-span-1">
           Export
         </Button>
       </div>

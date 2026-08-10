@@ -176,9 +176,13 @@ export default function RaiseWorkOrderForm({ existing }) {
 
       {submitError && <ErrorBanner message={submitError} />}
 
-      <div className="flex gap-6 flex-wrap">
-        <div className="flex-[2] min-w-[380px]">
-          <Card className="p-5">
+      {/* Stacked below `lg`, two columns above. The old `flex-wrap` +
+          `min-w-[380px]` pair looked responsive but wasn't: min-width is a floor
+          flex-wrap can't go under, so on any phone narrower than 380px the
+          column overflowed the viewport instead of wrapping. */}
+      <div className="flex flex-col gap-5 lg:flex-row lg:gap-6">
+        <div className="min-w-0 lg:flex-[2]">
+          <Card className="p-4 sm:p-5">
             <Field label="Department" required hint={errors.department}>
               <select value={departmentId} onChange={(e) => handleDepartmentChange(e.target.value)} className={inputClass}>
                 <option value="">{ready ? "Select department…" : "Loading…"}</option>
@@ -214,7 +218,7 @@ export default function RaiseWorkOrderForm({ existing }) {
             )}
 
             <Field label="Work order type">
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {types.map((t) => (
                   <button
                     key={t.code}
@@ -266,7 +270,7 @@ export default function RaiseWorkOrderForm({ existing }) {
                 <span className="text-[12.5px] font-semibold text-ink">Auto Priority Suggestion</span>
               </div>
               {suggestion ? (
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-1">
                   <span className="text-[12.5px] text-ink-soft">
                     Based on production impact{safetyFlag ? " + safety risk" : ""}
                     {envFlag ? " + environmental risk" : ""}, the system recommends <strong style={{ color: priorityColor(suggestion) }}>{suggestion}</strong>.
@@ -308,7 +312,7 @@ export default function RaiseWorkOrderForm({ existing }) {
             </Field>
 
             {!isEdit && (
-              <div className="flex gap-4 flex-wrap mb-4">
+              <div className="mb-4 flex flex-col gap-4 sm:flex-row">
                 <FileUploadField label="Upload Photo" icon={ImageIcon} accept="image/*" inputRef={photoInput} files={photos} onSelect={(f) => setPhotos((p) => [...p, ...f])} onRemove={(i) => setPhotos((p) => p.filter((_, idx) => idx !== i))} previewImages />
                 <FileUploadField label="Upload Video" icon={Video} accept="video/*" inputRef={videoInput} files={videos} onSelect={(f) => setVideos((v) => [...v, ...f])} onRemove={(i) => setVideos((v) => v.filter((_, idx) => idx !== i))} />
               </div>
@@ -330,7 +334,7 @@ export default function RaiseWorkOrderForm({ existing }) {
             </Field>
 
             <Field label="Safety risk">
-              <div className="flex items-center gap-3 mb-2">
+              <div className="mb-2 flex flex-wrap items-center gap-3">
                 {["No", "Yes"].map((v) => (
                   <button
                     key={v}
@@ -375,7 +379,7 @@ export default function RaiseWorkOrderForm({ existing }) {
               </div>
             </Field>
 
-            <div className="flex gap-4">
+            <div className="flex flex-col sm:flex-row sm:gap-4">
               <div className="flex-1">
                 <Field label="Requester" required hint={errors.requester}>
                   <input value={requester} onChange={(e) => setRequester(e.target.value)} className={inputClass} />
@@ -390,8 +394,11 @@ export default function RaiseWorkOrderForm({ existing }) {
           </Card>
         </div>
 
-        <div className="flex-1 min-w-[280px]">
-          <div className="rounded bg-navy p-5 text-white sticky top-6">
+        <div className="min-w-0 lg:flex-1">
+          {/* Only sticky once it's a real side column — stuck to the top of a
+              stacked mobile layout it would hover over the form fields below it.
+              top-20 clears the sticky app header. */}
+          <div className="rounded bg-navy p-4 text-white sm:p-5 lg:sticky lg:top-20">
             <div className="flex items-center gap-2 mb-3.5">
               <AlertTriangle size={15} className="text-accent" />
               <span className="font-bold text-[14px]">SLA preview</span>
@@ -424,11 +431,11 @@ export default function RaiseWorkOrderForm({ existing }) {
               <p className="text-[12.5px] text-[#B9C9E8]">Fill in the form to see the priority and SLA targets here.</p>
             )}
           </div>
-          <div className="flex gap-2 mt-4">
+          <div className="mt-4 flex gap-2">
             <Button variant="amber" icon={isEdit ? Save : Send} onClick={handleSubmit} disabled={submitting} className="flex-1 justify-center">
               {submitting ? "Saving…" : isEdit ? "Save Changes" : "Submit"}
             </Button>
-            <Button variant="ghost" onClick={() => router.push(isEdit ? `/work-orders/view?id=${existing.id}` : "/work-orders")}>
+            <Button variant="ghost" className="justify-center" onClick={() => router.push(isEdit ? `/work-orders/view?id=${existing.id}` : "/work-orders")}>
               Cancel
             </Button>
           </div>
@@ -440,7 +447,7 @@ export default function RaiseWorkOrderForm({ existing }) {
 
 function FileUploadField({ label, icon: Icon, accept, inputRef, files, onSelect, onRemove, previewImages }) {
   return (
-    <div className="flex-1 min-w-[240px]">
+    <div className="min-w-0 flex-1">
       <div className="text-[12.5px] font-semibold text-ink mb-2">{label}</div>
       <button onClick={() => inputRef.current.click()} className="w-full flex items-center justify-center gap-2 py-4 border border-dashed border-[#D8DEE4] rounded bg-canvas text-ink-soft text-[13px]">
         <Icon size={16} /> {label}

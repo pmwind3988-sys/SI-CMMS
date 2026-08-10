@@ -82,7 +82,9 @@ export default function SettingsAdmin() {
 
       {error && <ErrorBanner message={error} />}
 
-      <div className="flex gap-1.5 mb-4 flex-wrap">
+      {/* Eight tabs wrapped to four rows on a phone and pushed the table below
+          the fold. A single scrolling strip keeps it to one row. */}
+      <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 no-scrollbar scroll-touch sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -90,7 +92,7 @@ export default function SettingsAdmin() {
               setTab(t.key);
               setError(null);
             }}
-            className={`px-3.5 py-2 rounded text-[13px] font-semibold border ${
+            className={`flex-shrink-0 whitespace-nowrap rounded border px-3.5 py-2 text-[13px] font-semibold ${
               tab === t.key ? "bg-ink text-white border-ink" : "bg-white text-ink border-[#D8DEE4]"
             }`}
           >
@@ -409,55 +411,67 @@ function EditableTable({
         </div>
       )}
 
+      {/* These grids are column-spec driven — the SLA tab alone has seven columns
+          plus an action cell — so there's no honest way to reflow them into cards.
+          Instead the table keeps its real width and scrolls horizontally inside
+          the card, which is why the row width is pinned rather than left to
+          collapse: without the min-width, flex would compress every cell to
+          nothing on a phone. */}
       <Card className="overflow-hidden">
-        <div className="flex items-center px-4 py-2.5 bg-canvas text-[11.5px] font-bold text-ink-soft uppercase tracking-wide">
-          {columns.map((c) => (
-            <div key={c.key} className={c.width}>
-              {c.label}
-            </div>
-          ))}
-          <div className="w-24 text-right">Edit</div>
-        </div>
-
-        {rows.map((row, i) => {
-          const isEditing = editing === row[rowKey];
-          return (
-            <div
-              key={row[rowKey]}
-              className={`flex items-center px-4 py-2.5 ${i === 0 ? "" : "border-t border-[#F1F3F5]"}`}
-            >
+        <div className="overflow-x-auto scroll-touch">
+          <div className="min-w-[46rem]">
+            <div className="flex items-center px-4 py-2.5 bg-canvas text-[11.5px] font-bold text-ink-soft uppercase tracking-wide">
               {columns.map((c) => (
-                <div key={c.key} className={`${c.width} pr-2 min-w-0`}>
-                  {!isEditing || c.type === "readonly" ? (
-                    <CellValue column={c} row={row} />
-                  ) : (
-                    <CellInput
-                      column={c}
-                      value={draft[c.key]}
-                      onChange={(v) => setDraft((d) => ({ ...d, [c.key]: v }))}
-                    />
-                  )}
+                <div key={c.key} className={c.width}>
+                  {c.label}
                 </div>
               ))}
-              <div className="w-24 flex justify-end gap-1.5">
-                {isEditing ? (
-                  <>
-                    <Button size="sm" variant="ghost" icon={X} onClick={() => setEditing(null)} />
-                    <Button
-                      size="sm"
-                      icon={busy ? Loader2 : Check}
-                      disabled={busy}
-                      onClick={() => save(row)}
-                    />
-                  </>
-                ) : (
-                  <Button size="sm" variant="ghost" icon={Pencil} onClick={() => startEdit(row)} />
-                )}
-              </div>
+              <div className="w-24 text-right">Edit</div>
             </div>
-          );
-        })}
+
+            {rows.map((row, i) => {
+              const isEditing = editing === row[rowKey];
+              return (
+                <div
+                  key={row[rowKey]}
+                  className={`flex items-center px-4 py-2.5 ${i === 0 ? "" : "border-t border-[#F1F3F5]"}`}
+                >
+                  {columns.map((c) => (
+                    <div key={c.key} className={`${c.width} pr-2 min-w-0`}>
+                      {!isEditing || c.type === "readonly" ? (
+                        <CellValue column={c} row={row} />
+                      ) : (
+                        <CellInput
+                          column={c}
+                          value={draft[c.key]}
+                          onChange={(v) => setDraft((d) => ({ ...d, [c.key]: v }))}
+                        />
+                      )}
+                    </div>
+                  ))}
+                  <div className="w-24 flex justify-end gap-1.5">
+                    {isEditing ? (
+                      <>
+                        <Button size="sm" variant="ghost" icon={X} aria-label="Cancel edit" onClick={() => setEditing(null)} />
+                        <Button
+                          size="sm"
+                          icon={busy ? Loader2 : Check}
+                          aria-label="Save row"
+                          disabled={busy}
+                          onClick={() => save(row)}
+                        />
+                      </>
+                    ) : (
+                      <Button size="sm" variant="ghost" icon={Pencil} aria-label="Edit row" onClick={() => startEdit(row)} />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </Card>
+      <p className="mt-2 text-[11.5px] text-ink-soft lg:hidden">Scroll the table sideways to reach every column.</p>
 
       {adding && (
         <AddRowDialog
@@ -571,8 +585,8 @@ function AddRowDialog({ title, fields, onClose, onSubmit, onError }) {
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-6">
-      <Card className="w-full max-w-md p-5">
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-4 sm:items-center sm:p-6">
+      <Card className="max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="flex items-start justify-between mb-4">
           <h2 className="text-[15.5px] font-bold text-ink">{title}</h2>
           <button onClick={onClose} aria-label="Close" className="text-ink-soft hover:text-ink">

@@ -64,7 +64,10 @@ export default function NotificationBell() {
         {unread.length > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-danger" />}
       </button>
       {open && (
-        <div className="absolute right-0 top-8 w-80 bg-white rounded border border-border shadow-lg z-50">
+        // 20rem wherever it fits, otherwise the viewport minus a gutter — a flat
+        // w-80 overhung the screen edge on anything narrower than ~360px, and the
+        // list needs a viewport-relative cap so it can't run off the bottom.
+        <div className="absolute right-0 top-8 z-50 w-[min(20rem,calc(100vw-1.5rem))] rounded border border-border bg-white shadow-lg">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <span className="font-bold text-[13px] text-ink">Notifications</span>
             {unread.length > 0 && (
@@ -73,7 +76,7 @@ export default function NotificationBell() {
               </button>
             )}
           </div>
-          <div className="max-h-96 overflow-y-auto">
+          <div className="max-h-[min(24rem,60dvh)] overflow-y-auto">
             {items.length === 0 && <div className="p-5 text-[12.5px] text-ink-soft text-center">You're all caught up.</div>}
             {items.map((n) => {
               const meta = NOTIFICATION_META[n.type] || { icon: "Bell", color: "#64748B" };

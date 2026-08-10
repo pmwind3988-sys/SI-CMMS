@@ -37,34 +37,41 @@ export default function AttachmentsPanel({ wo }) {
   const videos = (items || []).filter((a) => a.file_type === "video");
 
   return (
-    <div className="flex gap-6 flex-wrap">
+    // The banner was a flex child of the two-column row, so an upload error
+    // showed up as a third squeezed column instead of a full-width banner.
+    <div>
       {error && <ErrorBanner message={error} />}
-      <div className="flex-1 min-w-[260px]">
-        <div className="flex items-center justify-between mb-2.5">
-          <div className="font-bold text-[13.5px] text-ink">Photos ({photos.length})</div>
-          <Button size="sm" variant="ghost" icon={ImageIcon} onClick={() => photoInput.current.click()}>Upload</Button>
-          <input ref={photoInput} type="file" accept="image/*" multiple hidden onChange={(e) => upload(e.target.files, "photo")} />
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+        <div className="min-w-0">
+          <div className="mb-2.5 flex items-center justify-between">
+            <div className="font-bold text-[13.5px] text-ink">Photos ({photos.length})</div>
+            <Button size="sm" variant="ghost" icon={ImageIcon} onClick={() => photoInput.current.click()}>Upload</Button>
+            <input ref={photoInput} type="file" accept="image/*" multiple hidden onChange={(e) => upload(e.target.files, "photo")} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {photos.length === 0 && <div className="text-[12.5px] text-ink-soft">No photos uploaded yet.</div>}
+            {photos.map((p) => (
+              // w-18/h-18 aren't in Tailwind's scale, so these compiled to
+              // nothing and every photo rendered at its full camera resolution —
+              // one attachment pushed the page thousands of pixels wide.
+              <img key={p.id} src={p.file_url} alt="" className="h-20 w-20 flex-shrink-0 rounded border border-border object-cover" />
+            ))}
+          </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          {photos.length === 0 && <div className="text-[12.5px] text-ink-soft">No photos uploaded yet.</div>}
-          {photos.map((p) => (
-            <img key={p.id} src={p.file_url} alt="" className="w-18 h-18 rounded object-cover border border-border" />
-          ))}
-        </div>
-      </div>
-      <div className="flex-1 min-w-[260px]">
-        <div className="flex items-center justify-between mb-2.5">
-          <div className="font-bold text-[13.5px] text-ink">Videos ({videos.length})</div>
-          <Button size="sm" variant="ghost" icon={Video} onClick={() => videoInput.current.click()}>Upload</Button>
-          <input ref={videoInput} type="file" accept="video/*" multiple hidden onChange={(e) => upload(e.target.files, "video")} />
-        </div>
-        {videos.length === 0 && <div className="text-[12.5px] text-ink-soft">No videos uploaded yet.</div>}
-        <div className="flex flex-col gap-1.5">
-          {videos.map((v) => (
-            <a key={v.id} href={v.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-[12.5px] bg-canvas rounded px-2.5 py-2">
-              <Video size={14} className="text-ink-soft" /> Video attachment
-            </a>
-          ))}
+        <div className="min-w-0">
+          <div className="mb-2.5 flex items-center justify-between">
+            <div className="font-bold text-[13.5px] text-ink">Videos ({videos.length})</div>
+            <Button size="sm" variant="ghost" icon={Video} onClick={() => videoInput.current.click()}>Upload</Button>
+            <input ref={videoInput} type="file" accept="video/*" multiple hidden onChange={(e) => upload(e.target.files, "video")} />
+          </div>
+          {videos.length === 0 && <div className="text-[12.5px] text-ink-soft">No videos uploaded yet.</div>}
+          <div className="flex flex-col gap-1.5">
+            {videos.map((v) => (
+              <a key={v.id} href={v.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded bg-canvas px-2.5 py-2 text-[12.5px]">
+                <Video size={14} className="flex-shrink-0 text-ink-soft" /> Video attachment
+              </a>
+            ))}
+          </div>
         </div>
       </div>
     </div>

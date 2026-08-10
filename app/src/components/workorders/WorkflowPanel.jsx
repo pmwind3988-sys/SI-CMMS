@@ -41,6 +41,13 @@ function InfoBox({ children }) {
   return <div className="bg-canvas rounded px-4 py-3 mb-4 text-[12.5px] text-ink-soft">{children}</div>;
 }
 
+/**
+ * Layout note for the action rows below: the button pairs wrap, and each
+ * reason-input row stacks its input above its confirm button under `sm`. Side by
+ * side on a 360px screen the button took ~120px of a ~296px row, leaving the
+ * input too narrow to read back a sentence the technician had just typed.
+ */
+
 export default function WorkflowPanel({ wo, onGotoAssign }) {
   const { user } = useAuth();
   const [busy, setBusy] = useState(false);
@@ -97,12 +104,12 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
         <div>
           <InfoBox>You've been assigned this work order. Accept it to start, or decline with a reason so the Supervisor can reassign.</InfoBox>
           <ErrorLine />
-          <div className="flex gap-2 mb-3">
+          <div className="flex flex-wrap gap-2 mb-3">
             <Button variant="success" icon={CheckCircle2} disabled={busy} onClick={() => run(acceptWorkOrder)}>Accept</Button>
             <Button variant="danger" icon={Ban} onClick={() => setShowDecline((s) => !s)}>Decline</Button>
           </div>
           {showDecline && (
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} placeholder="Reason for declining…" className={`${inputClass} flex-1`} />
               <Button variant="danger" disabled={!declineReason || busy} onClick={async () => { await run(declineWorkOrder, declineReason); setShowDecline(false); }}>Confirm decline</Button>
             </div>
@@ -167,7 +174,7 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
             <Button variant="amber" icon={FlaskConical} disabled={busy} onClick={() => run(startTesting)}>Start Testing</Button>
           </div>
           {showSparePart && (
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input value={sparePartReason} onChange={(e) => setSparePartReason(e.target.value)} placeholder="Which part, and why?" className={`${inputClass} flex-1`} />
               <Button variant="ghost" disabled={!sparePartReason || busy} onClick={async () => { await run(markWaitingSparePart, sparePartReason); setShowSparePart(false); }}>Confirm</Button>
             </div>
@@ -201,7 +208,7 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
             <Button variant="success" icon={CheckCircle2} onClick={() => setShowComplete((s) => !s)}>Mark Completed</Button>
           </div>
           {showTestFail && (
-            <div className="flex gap-2 mb-3">
+            <div className="flex flex-col gap-2 mb-3 sm:flex-row">
               <input value={testFailReason} onChange={(e) => setTestFailReason(e.target.value)} placeholder="What failed?" className={`${inputClass} flex-1`} />
               <Button variant="danger" disabled={!testFailReason || busy} onClick={async () => { await run(testFailed, testFailReason); setShowTestFail(false); }}>Back to Repair</Button>
             </div>
@@ -224,12 +231,12 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
         <div>
           <InfoBox>The technician marked this completed. Please verify the fix before it's closed.</InfoBox>
           <ErrorLine />
-          <div className="flex gap-2 mb-3">
+          <div className="flex flex-wrap gap-2 mb-3">
             <Button variant="success" icon={ThumbsUp} disabled={busy} onClick={() => run(verifyAndClose)}>Confirm fixed — Close</Button>
             <Button variant="danger" icon={RotateCcw} onClick={() => setShowReopen((s) => !s)}>Not fixed</Button>
           </div>
           {showReopen && (
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} placeholder="What's still wrong?" className={`${inputClass} flex-1`} />
               <Button variant="danger" disabled={!reopenReason || busy} onClick={async () => { await run(reopenWorkOrder, reopenReason); setShowReopen(false); }}>Reopen</Button>
             </div>

@@ -112,7 +112,10 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex bg-navy font-sans">
+    // min-h-dvh, not min-h-screen: 100vh on a mobile browser is the height with
+    // the URL bar hidden, so the sign-in card sat partly below the fold and the
+    // page scrolled for no reason.
+    <div className="min-h-dvh flex bg-navy font-sans">
       <div
         className="hidden md:flex flex-1 flex-col justify-between p-12"
         style={{ background: "linear-gradient(160deg, #0F3D91 0%, #0B2F70 100%)" }}
@@ -136,7 +139,7 @@ export default function LoginPage() {
         <div className="font-mono text-[#5B76AE] text-[12px]">Authentication Module · v1.0</div>
       </div>
 
-      <div className="flex-1 flex items-center justify-center bg-canvas p-6">
+      <div className="flex-1 flex items-center justify-center bg-canvas px-5 py-8 pt-[calc(2rem+env(safe-area-inset-top))] pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
         <div className="w-full max-w-sm">
           <h2 className="text-xl font-bold text-ink mb-1.5">Sign in</h2>
           <p className="text-[13.5px] text-ink-soft mb-5">
