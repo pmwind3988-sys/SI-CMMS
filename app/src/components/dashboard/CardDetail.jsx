@@ -22,7 +22,7 @@ import { useRouter } from "next/navigation";
 import { X, ArrowRight } from "lucide-react";
 import { fmtDue } from "../../lib/constants";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
-import { Card, ErrorBanner, EmptyState } from "../ui/Surfaces";
+import { Card, ErrorBanner, EmptyState, ModalOverlay } from "../ui/Surfaces";
 
 export default function CardDetail({
   title,
@@ -55,13 +55,12 @@ export default function CardDetail({
   const list = rows ?? [];
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <Card className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-b-none sm:rounded-b">
+    <ModalOverlay onClose={onClose}>
+      {/* Bottom sheet on a phone, centred dialog from `sm` up. The height cap
+          is on the sheet itself so the header and footnote stay put and only
+          the row list scrolls; the safe-area padding keeps that footnote clear
+          of Android's gesture pill. */}
+      <Card className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-b-none pb-[env(safe-area-inset-bottom)] sm:rounded-b sm:pb-0">
         <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
           <div className="min-w-0">
             <h2 className="text-[15.5px] font-bold text-ink">
@@ -156,7 +155,7 @@ export default function CardDetail({
           <div className="border-t border-border px-4 py-2.5 text-[11.5px] text-ink-soft">{footnote}</div>
         )}
       </Card>
-    </div>
+    </ModalOverlay>
   );
 }
 

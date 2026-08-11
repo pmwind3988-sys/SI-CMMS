@@ -36,7 +36,7 @@ import { canEditRolePermissions } from "../../lib/constants";
 import { ALL_ROLES, ROLE_LABELS } from "../../lib/roles";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
-import { Card, ErrorBanner, Toast } from "../ui/Surfaces";
+import { Card, ErrorBanner, Toast, ModalOverlay } from "../ui/Surfaces";
 
 const TABS = [
   { key: "statuses", label: "Statuses" },
@@ -770,7 +770,7 @@ function AddRowDialog({ title, fields, onClose, onSubmit, onError }) {
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-4 sm:items-center sm:p-6">
+    <ModalOverlay className="p-4">
       <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="flex items-start justify-between mb-4">
           <h2 className="text-[15.5px] font-bold text-ink">{title}</h2>
@@ -814,6 +814,6 @@ function AddRowDialog({ title, fields, onClose, onSubmit, onError }) {
           </div>
         </form>
       </Card>
-    </div>
+    </ModalOverlay>
   );
 }

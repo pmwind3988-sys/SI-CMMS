@@ -9,7 +9,7 @@ import { fmtDue, canEditWhileOpen, canDeleteWorkOrder } from "../../lib/constant
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
-import { Card, ErrorBanner } from "../ui/Surfaces";
+import { Card, ErrorBanner, ModalOverlay } from "../ui/Surfaces";
 import Button from "../ui/Button";
 import AssignPanel from "./AssignPanel";
 import CommentsPanel from "./CommentsPanel";
@@ -191,7 +191,7 @@ function DeleteDialog({ wo, onClose, onDeleted }) {
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-4 sm:items-center sm:p-6">
+    <ModalOverlay className="p-4">
       <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="mb-4 flex items-start justify-between gap-3">
           <h2 className="text-[15.5px] font-bold text-ink">Delete this work order?</h2>
@@ -237,7 +237,7 @@ function DeleteDialog({ wo, onClose, onDeleted }) {
           </div>
         </form>
       </Card>
-    </div>
+    </ModalOverlay>
   );
 }
 

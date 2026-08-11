@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 
 export function Card({ children, className = "", ...rest }) {
@@ -7,6 +9,39 @@ export function Card({ children, className = "", ...rest }) {
     <div className={`bg-white rounded border border-border shadow-card ${className}`} {...rest}>
       {children}
     </div>
+  );
+}
+
+/**
+ * A full-viewport modal backdrop, rendered into `<body>` instead of in place.
+ *
+ * `position: fixed` resolves against the nearest transformed ancestor, and
+ * `<main>` in AppShell carries `.rise`, whose `animation-fill-mode: both`
+ * leaves `transform: translateY(0)` on it permanently. Inside that box
+ * `inset-0` is the *page*, not the screen: on desktop the dialog centred
+ * against the whole scroll height and hung off the bottom of the window, and
+ * on a phone — where the panel aligns to the end — it landed below the fold
+ * entirely, leaving a dimmed screen with no visible dialog. Portalling out is
+ * the only fix that does not depend on every future ancestor staying
+ * transform-free.
+ *
+ * The tree is prerendered by the static export, so the portal waits for mount.
+ */
+export function ModalOverlay({ children, onClose, className = "" }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  return createPortal(
+    <div
+      className={`fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center sm:p-6 ${className}`}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+    >
+      {children}
+    </div>,
+    document.body
   );
 }
 

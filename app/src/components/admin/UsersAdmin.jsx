@@ -45,7 +45,7 @@ import { ROLES, ROLE_LABELS, ALL_ROLES } from "../../lib/roles";
 import { RoleBadge } from "../ui/Badges";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
-import { Card, ErrorBanner, EmptyState, Toast } from "../ui/Surfaces";
+import { Card, ErrorBanner, EmptyState, Toast, ModalOverlay } from "../ui/Surfaces";
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -422,7 +422,7 @@ function Modal({ title, subtitle, children, onClose }) {
     // Bottom-aligned on a phone so the dialog sits above the thumb and its own
     // content scrolls; the create-user form is six fields tall and used to run
     // off both ends of a 640px-high screen with no way to reach the buttons.
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-4 sm:items-center sm:p-6">
+    <ModalOverlay className="p-4">
       <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="flex items-start justify-between mb-4">
           <div>
@@ -435,7 +435,7 @@ function Modal({ title, subtitle, children, onClose }) {
         </div>
         {children}
       </Card>
-    </div>
+    </ModalOverlay>
   );
 }
 
