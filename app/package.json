@@ -11,6 +11,7 @@
     "db:push": "supabase db push",
     "db:diff": "supabase db diff",
     "db:types": "supabase gen types typescript --linked > src/lib/database.types.ts",
+    "check:env": "node scripts/checkEnv.js",
     "seed:demo": "node scripts/seedDemoWorkOrder.js",
     "bootstrap:users": "node scripts/bootstrapUsers.js",
     "apk:record": "node scripts/recordApkBuild.js",

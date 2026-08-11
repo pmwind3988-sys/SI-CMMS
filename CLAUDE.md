@@ -100,11 +100,17 @@ requester(1) → technician(2) → supervisor(3) → manager(4) → admin(5) →
 the client mirror. The comparison needs no subquery because the row being checked carries
 both the role and the flag being compared.
 
-**Superuser is not a sixth enum value.** It is `role='admin'` plus `users.is_protected`, the
-flag the hosted project already injects into the JWT. That keeps `si_is_admin()` true for
-them, so every existing policy, `RequireRole` and transition row applies unchanged and only
-the rank comparison sees the extra tier. Adding to the `si_role` enum would have flipped
+**Superuser is not a sixth enum value.** It is `role='admin'` plus `users.is_protected`,
+injected into the JWT as the `is_protected` claim by `custom_access_token_hook` (migration
+0017 — 0002's hook emitted only `user_role`, `department_id` and `plant_ids`, and 0015 was
+written believing the flag was already there). That keeps `si_is_admin()` true for them, so
+every existing policy, `RequireRole` and transition row applies unchanged and only the rank
+comparison sees the extra tier. Adding to the `si_role` enum would have flipped
 `si_is_admin()` to false for the account needing the most access.
+
+The failure mode if that claim is missing is silence, not an error: `si_is_superuser()`
+returns false, the account is an ordinary rank-5 admin, and the sixth tier simply does not
+exist. Anything depending on a claim needs the hook checked, not assumed.
 
 Consequences that are deliberate, not gaps:
 
