@@ -101,7 +101,10 @@ export default function AppShell({ children }) {
       <aside
         id="app-nav"
         aria-label="Main navigation"
-        className={`fixed top-0 bottom-0 left-0 z-50 flex w-64 max-w-[82vw] flex-col overflow-y-auto bg-navy p-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(1rem+env(safe-area-inset-bottom))] transition-transform duration-200 ease-out lg:sticky lg:bottom-auto lg:z-auto lg:h-dvh lg:w-56 lg:max-w-none lg:shrink-0 lg:translate-x-0 ${
+        // si-navy replaces the flat bg-navy fill: the brand gradient plus the
+        // drifting highlight, defined once in globals.css so the sidebar, the
+        // login panel and the mobile brand band cannot drift apart.
+        className={`si-navy fixed top-0 bottom-0 left-0 z-50 flex w-64 max-w-[82vw] flex-col overflow-y-auto p-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(1rem+env(safe-area-inset-bottom))] transition-transform duration-200 ease-out lg:sticky lg:bottom-auto lg:z-auto lg:h-dvh lg:w-56 lg:max-w-none lg:shrink-0 lg:translate-x-0 ${
           navOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
         }`}
       >
@@ -195,7 +198,13 @@ export default function AppShell({ children }) {
           </div>
         </header>
 
-        <main className="flex-1 p-4 sm:p-5 lg:p-6 pb-[calc(2rem+env(safe-area-inset-bottom))]">
+        {/* Keyed on the path so the entrance replays on every navigation rather
+            than only on first mount — which is the whole point of it: it marks
+            that the content changed, on a phone where there is no other cue. */}
+        <main
+          key={pathname}
+          className="rise flex-1 p-4 sm:p-5 lg:p-6 pb-[calc(2rem+env(safe-area-inset-bottom))]"
+        >
           {children}
         </main>
       </div>

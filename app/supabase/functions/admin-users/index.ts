@@ -1,8 +1,9 @@
 /**
  * SI — Service Inside · admin-users Edge Function
  *
- * Why this exists at all: setting another user's password and creating auth
- * accounts require Supabase's Admin API, which requires the service-role key.
+ * Why this exists at all: setting another user's password, changing a sign-in
+ * address and creating auth accounts all reach into auth.users, which requires
+ * Supabase's Admin API, which requires the service-role key.
  * That key bypasses Row Level Security completely, so it can never be shipped to
  * the browser. This function is the only place it runs, on Supabase's servers,
  * where the key is injected from the environment and never leaves.
@@ -153,6 +154,84 @@ Deno.serve(async (req: Request) => {
     if (error) return json({ error: error.message }, 400);
 
     return json({ ok: true, message: "Password updated." });
+  }
+
+  /* ---------------------------------------------------------------
+     set_email — the sign-in identity.
+
+     Two stores have to agree: auth.users.email is what the user types at the
+     sign-in screen, and public.users.email is what every screen in the app
+     displays. Only the Admin API can write the first, which is why this lives
+     here rather than beside updateUserProfile().
+
+     Same rank rule as set_password, and for the same reason: an email change is
+     an account takeover if it is aimed at somebody you do not outrank — reset
+     the address, then use Forgot password on it. Self is allowed, so an admin
+     can correct their own address without a Superuser.
+  ----------------------------------------------------------------*/
+  if (action === "set_email") {
+    const userId = String(payload.user_id ?? "");
+    const email = String(payload.email ?? "").trim().toLowerCase();
+
+    if (!userId) return json({ error: "Which user?" }, 400);
+    // Deliberately loose: the authority on what is a deliverable address is the
+    // Admin API below, and a stricter regex here would only reject valid ones.
+    if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)) {
+      return json({ error: "That doesn't look like a valid email address." }, 400);
+    }
+
+    if (userId !== caller.user.id) {
+      const { data: targetRow, error: targetError } = await admin
+        .from("users")
+        .select("role, is_protected, name")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (targetError) return json({ error: "Couldn't verify that account." }, 500);
+      if (!targetRow) return json({ error: "No such user." }, 404);
+      if (targetRow.is_protected) {
+        return json(
+          { error: "This account is protected. It can only be changed from the database." },
+          403,
+        );
+      }
+      if (rankOfAccount(targetRow) >= rankOfAccount(callerRow)) {
+        return json(
+          { error: "You can only change the email address of someone below you in the hierarchy." },
+          403,
+        );
+      }
+    }
+
+    // email_confirm marks the new address verified straight away. Without it the
+    // account is left mid-change — Supabase keeps the old address live until a
+    // link is clicked, and these are provisioned shop-floor accounts whose
+    // mailbox the admin may well not be able to reach.
+    const { error: authError } = await admin.auth.admin.updateUserById(userId, {
+      email,
+      email_confirm: true,
+    });
+    if (authError) return json({ error: authError.message }, 400);
+
+    // The profile row second: if this fails the account can still sign in with
+    // the new address, and a stale display value is the milder of the two
+    // failures. Rolling the auth change back would risk leaving neither store
+    // written if that call failed too.
+    const { error: profileError } = await admin
+      .from("users")
+      .update({ email })
+      .eq("id", userId);
+
+    if (profileError) {
+      return json({
+        ok: true,
+        message:
+          `Sign-in address changed to ${email}, but the profile record still shows the old one: ` +
+          `${profileError.message}`,
+      });
+    }
+
+    return json({ ok: true, message: `Sign-in address changed to ${email}.` });
   }
 
   /* ---------------------------------------------------------------

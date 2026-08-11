@@ -30,7 +30,26 @@
  *    user to sign out and back in. Call refreshSession() to make it immediate.
  */
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { supabase, REMEMBER_ME_KEY } from "../lib/supabase";
+import { supabase, rememberMe as persistRememberMe } from "../lib/supabase";
+
+/**
+ * Where a password-reset link should land.
+ *
+ * window.location.origin is wrong in the APK — Capacitor serves the same static
+ * export from https://localhost, so a link built from it points at the phone
+ * itself and dies in whatever browser opens the mail. NEXT_PUBLIC_SITE_URL is
+ * the deployed web origin, and it is what the Android build must use.
+ */
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || null;
+
+function resetRedirectUrl() {
+  const base =
+    SITE_URL || (typeof window !== "undefined" ? window.location.origin : null);
+  if (!base) return undefined;
+  // trailingSlash: true in next.config.js — /reset-password without the slash
+  // is a redirect, and Supabase matches the redirect allow-list on the exact URL.
+  return `${base.replace(/\/+$/, "")}/reset-password/`;
+}
 
 const AuthContext = createContext(null);
 
@@ -119,17 +138,18 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const signIn = useCallback(async (email, password, rememberMe) => {
-    // Must precede signInWithPassword — it decides which store the session
-    // lands in. See the storage adapter in lib/supabase.js.
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(REMEMBER_ME_KEY, rememberMe ? "true" : "false");
-    }
+  const signIn = useCallback(async (email, password, remember) => {
+    // The flag must precede signInWithPassword — it decides which store the
+    // session lands in. See the storage adapter in lib/supabase.js.
+    persistRememberMe(remember);
     const { data, error: signInError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
     if (signInError) throw signInError;
+    // The address only after the credentials were accepted, so a rejected
+    // attempt does not leave a typo waiting in the field next time.
+    if (remember) persistRememberMe(true, email);
     // Hand the role back with the user so the caller can redirect immediately
     // instead of waiting for onAuthStateChange to populate `user`. Same source
     // of truth as everywhere else: the user_role claim from the access-token
@@ -148,9 +168,9 @@ export function AuthProvider({ children }) {
   }, []);
 
   const resetPassword = useCallback(async (email) => {
-    const redirectTo =
-      typeof window !== "undefined" ? `${window.location.origin}/reset-password/` : undefined;
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: resetRedirectUrl(),
+    });
     if (resetError) throw resetError;
   }, []);
 

@@ -91,6 +91,68 @@ export async function updateWorkOrderFields(woId, fields) {
 }
 
 /* ------------------------------------------------------------------
+   DELETE — the one destructive operation in the module.
+-------------------------------------------------------------------*/
+
+/**
+ * Remove a work order permanently.
+ *
+ * Who may do this is data, not code: role_permissions.can_delete_work_orders,
+ * which only a Superuser writes (migration 0018). The work_orders_delete policy
+ * additionally holds the caller to the rows their role can already see, so a
+ * granted Supervisor reaches their own department and not the plant.
+ *
+ * The database handles the rest of it: a BEFORE DELETE trigger snapshots the row
+ * into work_order_deletions and removes the comments, attachments and
+ * notifications that reference it polymorphically. History cascades on its FK.
+ *
+ * Two details worth keeping:
+ *
+ *   - Storage objects are outside all of that, and the attachment rows naming
+ *     them are gone a moment later, so the keys are collected first. Removing
+ *     them is best-effort: a bucket that refuses the delete leaves orphaned
+ *     files, which is a tidiness problem, not a correctness one, and must not
+ *     fail an operation the database has already committed.
+ *   - RLS refusing a DELETE is silent — it removes no rows and reports no
+ *     error. `.select()` is what turns that back into something the user can be
+ *     told, matching how the rest of this module reports refusals.
+ */
+export async function deleteWorkOrder(woId) {
+  let paths = [];
+  const { data: files } = await supabase
+    .from("attachments")
+    .select("storage_path, file_url")
+    .eq("entity_type", "work_order")
+    .eq("entity_id", woId);
+  paths = (files ?? []).map((a) => a.storage_path || a.file_url).filter(Boolean);
+
+  const { data, error } = await supabase
+    .from("work_orders")
+    .delete()
+    .eq("id", woId)
+    .select("id, wo_number");
+
+  if (error) throw error;
+  if (!data?.length) {
+    throw new Error(
+      "That work order was not deleted. Either your role has not been granted deletion, " +
+        "or this record is outside what your role can see. A Superuser grants deletion in " +
+        "Administration → Settings → Permissions."
+    );
+  }
+
+  if (paths.length) {
+    try {
+      await supabase.storage.from("attachments").remove(paths);
+    } catch {
+      // The rows are gone either way; orphaned objects are a cleanup job.
+    }
+  }
+
+  return data[0];
+}
+
+/* ------------------------------------------------------------------
    READS (live)
 -------------------------------------------------------------------*/
 export function listenWorkOrder(woId, cb, onError) {

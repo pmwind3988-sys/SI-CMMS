@@ -70,6 +70,42 @@ export function canEditWhileOpen(wo, currentUser) {
   );
 }
 
+/**
+ * May this account delete work orders at all?
+ *
+ * Mirrors si_can_delete_work_orders() (migration 0018): a Superuser always, and
+ * otherwise whatever the role_permissions row for their role says. `roleCan`
+ * comes from useReferenceData(), which keeps that table live.
+ *
+ * A Superuser is unconditional in both places on purpose — the account that
+ * administers the toggles must not be able to switch off its own way back.
+ */
+export function canDeleteWorkOrders(currentUser, roleCan) {
+  if (!currentUser) return false;
+  if (currentUser.isSuperuser) return true;
+  return roleCan?.(currentUser.role, "can_delete_work_orders") === true;
+}
+
+/**
+ * …and may they delete *this* one? The capability grants the verb; the row still
+ * has to be inside what their role can see, which is the second half of the
+ * work_orders_delete policy restated.
+ */
+export function canDeleteWorkOrder(wo, currentUser, roleCan) {
+  if (!canDeleteWorkOrders(currentUser, roleCan)) return false;
+  return (
+    isManagerOrAdmin(currentUser) ||
+    isSupervisorOfDept(wo, currentUser) ||
+    isAssigneeOf(wo, currentUser) ||
+    isRequesterOf(wo, currentUser)
+  );
+}
+
+/** Only a Superuser writes role_permissions — see migration 0018. */
+export function canEditRolePermissions(currentUser) {
+  return currentUser?.isSuperuser === true;
+}
+
 /* ------------------------------------------------------------------
    User administration — mirrors the users_* policies and
    si_guard_user_self_update as rewritten in migration 0015.
@@ -103,6 +139,17 @@ export function canChangeUserRole(target, me) {
 
 /** Same rule; the Edge Function re-checks it server-side. */
 export function canSetUserPassword(target, me) {
+  return canEditUser(target, me);
+}
+
+/**
+ * Same rule again, and it has to be: a sign-in address you can repoint at a
+ * mailbox you control is an account takeover, so changing one is exactly as
+ * privileged as setting a password. Your own is included — an Administrator
+ * correcting their own address needs no Superuser — and a peer Administrator's
+ * is not, which is the whole point of the rank rule.
+ */
+export function canChangeUserEmail(target, me) {
   return canEditUser(target, me);
 }
 

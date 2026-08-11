@@ -33,13 +33,14 @@ import {
   setUserRole,
   setUserStatus,
   updateUserProfile,
+  setUserEmail,
   clearDemoMark,
   demoFlagsOf,
   isDemoAccount,
   DEMO_FLAGS,
 } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
-import { canEditUser, assignableRoles } from "../../lib/constants";
+import { canEditUser, canChangeUserEmail, assignableRoles } from "../../lib/constants";
 import { ROLES, ROLE_LABELS, ALL_ROLES } from "../../lib/roles";
 import { RoleBadge } from "../ui/Badges";
 import Button from "../ui/Button";
@@ -287,6 +288,7 @@ export default function UsersAdmin() {
       {panel?.kind === "profile" && (
         <ProfileDialog
           user={panel.user}
+          me={me}
           onClose={() => setPanel(null)}
           onDone={(msg) => {
             setPanel(null);
@@ -421,7 +423,7 @@ function Modal({ title, subtitle, children, onClose }) {
     // content scrolls; the create-user form is six fields tall and used to run
     // off both ends of a 640px-high screen with no way to reach the buttons.
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-4 sm:items-center sm:p-6">
-      <Card className="max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
+      <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 className="text-[15.5px] font-bold text-ink">{title}</h2>
@@ -570,11 +572,33 @@ function RoleDialog({ user, me, departments, onClose, onDone }) {
   );
 }
 
-function ProfileDialog({ user, onClose, onDone }) {
+/**
+ * Name, phone and — new — the sign-in address.
+ *
+ * The three do not travel together. Name and phone are a plain UPDATE that the
+ * users_update policy already permits; the address is in auth.users and only the
+ * Admin API reaches it, so it goes through the admin-users Edge Function. Both
+ * are submitted from one form because to the admin it is one edit, but they are
+ * applied in order and reported separately when only one of them fails.
+ *
+ * Who may change an address is the same rank rule as the password: your own
+ * account, or one strictly below you. A peer Administrator's is not offered,
+ * because repointing a sign-in address at a mailbox you control is an account
+ * takeover by another name — and the function refuses it server-side regardless
+ * of what this form shows.
+ */
+function ProfileDialog({ user, me, onClose, onDone }) {
+  const mayChangeEmail = canChangeUserEmail(user, me);
+  const originalEmail = (user.email || "").trim().toLowerCase();
+
   const [name, setName] = useState(user.name || "");
   const [phone, setPhone] = useState(user.phone || "");
+  const [email, setEmail] = useState(user.email || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  const nextEmail = email.trim().toLowerCase();
+  const emailChanged = mayChangeEmail && nextEmail !== originalEmail;
 
   async function submit(e) {
     e.preventDefault();
@@ -583,12 +607,35 @@ function ProfileDialog({ user, onClose, onDone }) {
       setError("A name is required.");
       return;
     }
+    if (emailChanged && !nextEmail) {
+      setError("An email address is required — it is how this account signs in.");
+      return;
+    }
     setBusy(true);
+
+    // Profile fields first: they are the cheap, reversible half. If the address
+    // change then fails, the message says so explicitly rather than leaving the
+    // admin to guess which parts of the form were applied.
     try {
       await updateUserProfile(user.id, { name: name.trim(), phone: phone.trim() });
-      onDone(`${name.trim()} updated.`);
     } catch (e) {
       setError(describeError(e, "Couldn't save those details."));
+      setBusy(false);
+      return;
+    }
+
+    if (!emailChanged) {
+      onDone(`${name.trim()} updated.`);
+      return;
+    }
+
+    try {
+      const res = await setUserEmail(user.id, nextEmail);
+      onDone(res?.message || `${name.trim()} now signs in as ${nextEmail}.`);
+    } catch (e) {
+      setError(
+        `${describeError(e, "Couldn't change that email address.")} The name and phone were saved.`
+      );
       setBusy(false);
     }
   }
@@ -603,8 +650,23 @@ function ProfileDialog({ user, onClose, onDone }) {
         <Field label="Phone">
           <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} />
         </Field>
-        <p className="text-[12px] text-ink-soft mb-4">
-          Email addresses are the sign-in identity and are not editable here.
+        <Field label="Email" required={mayChangeEmail}>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className={inputClass}
+            autoComplete="off"
+            disabled={!mayChangeEmail}
+            aria-describedby="email-note"
+          />
+        </Field>
+        <p id="email-note" className="text-[12px] text-ink-soft mb-4">
+          {!mayChangeEmail
+            ? "You can only change the sign-in address of your own account, or of someone below you in the hierarchy."
+            : emailChanged
+              ? `This is how they sign in. From now on they will use ${nextEmail}, not ${originalEmail} — tell them, and their existing sessions stay signed in until the token expires.`
+              : "This is how they sign in. Changing it takes effect immediately; the new address is marked confirmed, so there is no email to click."}
         </p>
         <div className="flex gap-2 justify-end">
           <Button variant="ghost" onClick={onClose} type="button">

@@ -63,3 +63,89 @@ body {
 .scroll-touch {
   -webkit-overflow-scrolling: touch;
 }
+
+/* ---------------------------------------------------------------------------
+   Motion and the navy surface.
+
+   Both come from the original pre-Supabase build (archive/SI_WorkOrderModule.jsx)
+   and were lost in the rewrite: `.rise` was on every page container and on the
+   sign-in card, and the navy was a gradient rather than a flat fill. They are
+   defined here, once, so web and the APK's WebView render the same thing and
+   nothing has to be reproduced per screen.
+--------------------------------------------------------------------------- */
+
+@keyframes siRiseIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* `both` matters: without it the element is painted at full opacity for the one
+   frame before the animation starts, which reads as a flicker rather than an
+   entrance. */
+.rise {
+  animation: siRiseIn 0.4s ease both;
+}
+
+.rise-slow {
+  animation: siRiseIn 0.55s ease both;
+}
+
+/* The navy brand surface — the sidebar, the login panel, the mobile brand band.
+   A 160deg gradient (the value the desktop login panel already used inline) with
+   two slow-drifting highlights over it, in the amber and the pale blue the rest
+   of the system uses. */
+.si-navy {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(160deg, #0f3d91 0%, #0b2f70 100%);
+}
+
+/* Animating background-position rather than a transform is deliberate: several
+   of the surfaces this sits on scroll (the sidebar is overflow-y-auto), and a
+   transformed overlay large enough to drift visibly would push their scroll
+   extent out and give them a stray scrollbar. */
+.si-navy::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(38% 30% at 20% 12%, rgba(245, 158, 11, 0.22), transparent 70%),
+    radial-gradient(44% 34% at 84% 82%, rgba(96, 165, 250, 0.2), transparent 72%);
+  background-repeat: no-repeat;
+  background-size:
+    170% 170%,
+    180% 180%;
+  animation: siSheenDrift 22s ease-in-out infinite;
+}
+
+@keyframes siSheenDrift {
+  0%,
+  100% {
+    background-position:
+      0% 0%,
+      100% 100%;
+  }
+  50% {
+    background-position:
+      34% 24%,
+      66% 72%;
+  }
+}
+
+/* Decoration only, all of it — nothing here carries meaning, so switching it
+   off costs the user nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .rise-slow,
+  .si-navy::before {
+    animation: none;
+  }
+}

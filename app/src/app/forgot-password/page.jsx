@@ -20,6 +20,43 @@ export default function ForgotPasswordPage() {
   const [status, setStatus] = useState("idle"); // idle | sending | sent
   const [error, setError] = useState(null);
 
+  /**
+   * Which failures are safe to show.
+   *
+   * "This address has no account" is not, and never appears here — that is the
+   * enumeration risk the whole screen is shaped around, and Supabase does not
+   * report it for this endpoint anyway.
+   *
+   * Everything else is. Swallowing them all was the more dangerous default: an
+   * unconfigured SMTP sender, a rate limit, an unreachable project and a
+   * perfectly delivered email were reported identically as "check your inbox",
+   * so the one failure this screen exists to prevent — a user waiting for a mail
+   * that is never coming — looked exactly like success. None of these say
+   * anything about whether the account exists.
+   */
+  function surfacableError(e) {
+    if (e?.code === "validation_failed" || e?.status === 422) {
+      return "That doesn't look like a valid email address.";
+    }
+    if (e?.name === "AuthRetryableFetchError") {
+      return "Can't reach the authentication server. Check your connection and try again.";
+    }
+    if (e?.code === "over_email_send_rate_limit" || e?.status === 429) {
+      return "Too many reset requests. Wait a few minutes and try again.";
+    }
+    // A 500 from this endpoint is almost always the project's email sender:
+    // Supabase's built-in SMTP is rate-limited to a handful of messages an hour
+    // and is disabled outright on some projects.
+    if (e?.status >= 500 || /sending.*email/i.test(e?.message || "")) {
+      return (
+        "The server couldn't send the email. This is a configuration problem, not a " +
+        "problem with your address — tell your administrator to check the project's " +
+        "SMTP settings."
+      );
+    }
+    return null;
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
@@ -27,20 +64,22 @@ export default function ForgotPasswordPage() {
     try {
       await resetPassword(email);
     } catch (e) {
-      // Only a malformed email is surfaced — "user not found" is treated
-      // identically to success, for the enumeration reason noted above.
-      if (e?.code === "validation_failed" || e?.status === 422) {
+      const message = surfacableError(e);
+      if (message) {
         setStatus("idle");
-        setError("That doesn't look like a valid email address.");
+        setError(message);
         return;
       }
+      // Anything unrecognised is treated as success, deliberately: an
+      // unfamiliar error is more likely to leak whether the account exists than
+      // to be useful.
     }
     setStatus("sent");
   }
 
   return (
     <div className="min-h-dvh flex items-center justify-center bg-canvas font-sans px-5 py-8 pt-[calc(2rem+env(safe-area-inset-top))] pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
-      <div className="w-full max-w-sm">
+      <div className="rise w-full max-w-sm">
         <Link href="/login" className="flex items-center gap-1.5 text-ink-soft text-[13px] mb-5">
           <ArrowLeft size={15} /> Back to sign in
         </Link>
@@ -67,7 +106,6 @@ export default function ForgotPasswordPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com"
                   className={inputClass}
                   autoComplete="username"
                   required

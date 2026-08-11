@@ -13,9 +13,10 @@
  *   RPC           — role changes, via si_set_user_role(). SECURITY DEFINER
  *                   because it also enforces that a Supervisor may only
  *                   provision inside their own department.
- *   Edge Function — passwords and account creation. These need Supabase's Admin
- *                   API and therefore the service-role key, which bypasses RLS
- *                   and must never reach a browser. See
+ *   Edge Function — passwords, sign-in addresses and account creation. All three
+ *                   write auth.users, which needs Supabase's Admin API and
+ *                   therefore the service-role key — a key that bypasses RLS and
+ *                   must never reach a browser. See
  *                   supabase/functions/admin-users.
  */
 import { supabase, liveQuery } from "./supabase";
@@ -168,6 +169,20 @@ export async function setUserPassword(userId, password) {
 }
 
 /**
+ * Change a user's sign-in address.
+ *
+ * Also an Edge Function call, and for the same reason as the password: the
+ * address the user actually signs in with lives in auth.users, which only the
+ * Admin API reaches. The function writes public.users.email too, so the two
+ * agree, and applies the rank rule — your own account, or one strictly below
+ * you, which is what stops one Administrator taking over another's by pointing
+ * it at a mailbox they control.
+ */
+export async function setUserEmail(userId, email) {
+  return invokeAdminFunction({ action: "set_email", user_id: userId, email });
+}
+
+/**
  * Create an account. The users row is what grants the role — the access-token
  * hook reads users.role when minting a token — so the function writes both, and
  * rolls the auth account back if the profile insert fails.
@@ -221,6 +236,27 @@ export async function updateUserProfile(userId, { name, phone }) {
   if (Object.keys(patch).length === 0) return;
   const { error } = await supabase.from("users").update(patch).eq("id", userId);
   if (error) throw error;
+}
+
+/**
+ * Grant or revoke a capability for a whole role.
+ *
+ * A plain UPDATE: role_permissions_update is `using (si_is_superuser())`, so the
+ * database is what limits this to a Superuser, and an Administrator attempting
+ * it gets a refusal rather than a silent no-op — which is why the row count is
+ * checked. There is no insert or delete policy; the five rows are the five
+ * values of the si_role enum, like the other enum-keyed tables (migration 0009).
+ */
+export async function setRolePermission(role, capability, value) {
+  const { data, error } = await supabase
+    .from("role_permissions")
+    .update({ [capability]: value })
+    .eq("role", role)
+    .select("role");
+  if (error) throw error;
+  if (!data?.length) {
+    throw new Error("Only a Superuser can change role permissions.");
+  }
 }
 
 /** Keep a technician's skill list in step, so AssignPanel's matching works. */

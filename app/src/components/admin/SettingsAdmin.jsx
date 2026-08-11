@@ -21,15 +21,19 @@
  * supervisor's board without them reloading.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Check, X, Pencil, Plus, Loader2, Info } from "lucide-react";
+import { Check, X, Pencil, Plus, Loader2, Info, ShieldAlert, Lock } from "lucide-react";
 import { useReferenceData, updateReferenceRow } from "../../lib/referenceData";
 import {
   upsertDepartment,
   upsertAsset,
   updateSlaTargets,
   updatePriority,
+  setRolePermission,
 } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
+import { useAuth } from "../../context/AuthContext";
+import { canEditRolePermissions } from "../../lib/constants";
+import { ALL_ROLES, ROLE_LABELS } from "../../lib/roles";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
 import { Card, ErrorBanner, Toast } from "../ui/Surfaces";
@@ -43,6 +47,7 @@ const TABS = [
   { key: "severities", label: "Safety severities" },
   { key: "departments", label: "Departments" },
   { key: "assets", label: "Equipment" },
+  { key: "permissions", label: "Permissions" },
 ];
 
 export default function SettingsAdmin() {
@@ -343,7 +348,187 @@ export default function SettingsAdmin() {
           }}
         />
       )}
+
+      {ref.ready && tab === "permissions" && (
+        <PermissionsPanel rows={ref.rolePermissions} onFlash={flash} onError={setError} />
+      )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------
+   Permissions — who may delete work orders.
+
+   Every other tab on this screen is Admin-editable. This one is not: only a
+   Superuser writes role_permissions (migration 0018), because a capability an
+   Administrator can grant themselves is not a capability, it is a formality.
+   An Administrator still sees the table, so the current grants are never a
+   mystery — they just cannot move the toggles.
+
+   Toggle-then-apply rather than save-on-click: these are five switches that are
+   usually reasoned about together, and a switch that writes the moment it is
+   touched turns a change of mind into a second audited write.
+-------------------------------------------------------------------*/
+
+const CAPABILITIES = [
+  {
+    key: "can_delete_work_orders",
+    label: "Delete work orders",
+    detail:
+      "Permanently remove a work order and everything attached to it. The deletion is recorded — who, when, and a copy of the record — but the work order itself does not come back.",
+  },
+];
+
+function PermissionsPanel({ rows, onFlash, onError }) {
+  const { user: me } = useAuth();
+  const mayEdit = canEditRolePermissions(me);
+
+  // The draft is seeded from the live rows and re-seeded whenever they change,
+  // so another Superuser's change does not sit invisible behind a stale draft.
+  const [draft, setDraft] = useState({});
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const next = {};
+    for (const r of rows) {
+      for (const c of CAPABILITIES) next[`${r.role}.${c.key}`] = r[c.key] === true;
+    }
+    setDraft(next);
+  }, [rows]);
+
+  const dirty = useMemo(
+    () =>
+      rows.flatMap((r) =>
+        CAPABILITIES.filter((c) => draft[`${r.role}.${c.key}`] !== (r[c.key] === true)).map((c) => ({
+          role: r.role,
+          capability: c.key,
+          value: draft[`${r.role}.${c.key}`],
+        }))
+      ),
+    [rows, draft]
+  );
+
+  async function apply() {
+    setBusy(true);
+    onError(null);
+    try {
+      for (const change of dirty) {
+        await setRolePermission(change.role, change.capability, change.value);
+      }
+      onFlash(
+        dirty.length === 1
+          ? "Permission updated."
+          : `${dirty.length} permissions updated.`
+      );
+    } catch (e) {
+      onError(describeError(e, "Couldn't save those permissions."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="mb-3 flex items-start gap-2 rounded bg-canvas px-3.5 py-2.5 text-[12.5px] text-ink-soft">
+        <Info size={14} className="mt-0.5 flex-shrink-0" />
+        <span>
+          {mayEdit
+            ? "Granting a capability here gives it to every account holding that role. It does not widen what they can see — a Supervisor granted deletion reaches their own department, not the plant. A Superuser always holds every capability and is not listed."
+            : "Only a Superuser can change these. They are shown so you can see what your role currently holds."}
+        </span>
+      </div>
+
+      {mayEdit && rows.length > 0 && (
+        <div className="mb-3 flex items-start gap-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-3.5 py-2.5 text-[12.5px] text-danger">
+          <ShieldAlert size={14} className="mt-0.5 flex-shrink-0" />
+          <span>
+            Deletion is the only irreversible action in this system. Everything else that looks
+            like removal is a status change, and can be undone.
+          </span>
+        </div>
+      )}
+
+      {/* No rows at all means the table isn't there yet, which is a migration
+          that has not been applied — not a database in which nobody has been
+          granted anything. Saying so beats five permanently-disabled switches. */}
+      {rows.length === 0 && (
+        <div className="mb-3 flex items-start gap-2 rounded border border-[#F59E0B66] bg-[#FFFBEB] px-3.5 py-2.5 text-[12.5px] text-[#92400E]">
+          <ShieldAlert size={14} className="mt-0.5 flex-shrink-0" />
+          <span>
+            No permission rows were returned. Migration 0018 has probably not been applied to this
+            project yet — run <span className="font-mono">npm run db:push</span>. Until then nobody
+            can delete work orders, which is the safe default.
+          </span>
+        </div>
+      )}
+
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto scroll-touch">
+          <div className="min-w-[34rem]">
+            <div className="flex items-center bg-canvas px-4 py-2.5 text-[11.5px] font-bold uppercase tracking-wide text-ink-soft">
+              <div className="flex-1">Role</div>
+              {CAPABILITIES.map((c) => (
+                <div key={c.key} className="w-56">
+                  {c.label}
+                </div>
+              ))}
+            </div>
+
+            {ALL_ROLES.map((role, i) => {
+              const row = rows.find((r) => r.role === role);
+              return (
+                <div
+                  key={role}
+                  className={`flex items-center px-4 py-3 ${i === 0 ? "" : "border-t border-[#F1F3F5]"}`}
+                >
+                  <div className="flex-1 text-[13.5px] font-medium text-ink">
+                    {ROLE_LABELS[role] || role}
+                  </div>
+                  {CAPABILITIES.map((c) => {
+                    const id = `${role}.${c.key}`;
+                    const checked = draft[id] === true;
+                    return (
+                      <label
+                        key={c.key}
+                        title={c.detail}
+                        className={`flex w-56 items-center gap-2 text-[13px] ${
+                          mayEdit ? "cursor-pointer text-ink" : "cursor-default text-ink-soft"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-amber"
+                          checked={checked}
+                          disabled={!mayEdit || !row}
+                          onChange={(e) =>
+                            setDraft((d) => ({ ...d, [id]: e.target.checked }))
+                          }
+                        />
+                        {checked ? "Allowed" : "Not allowed"}
+                        {!mayEdit && <Lock size={12} className="text-ink-soft" />}
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </Card>
+
+      {mayEdit && (
+        <div className="mt-3 flex items-center gap-3">
+          <Button icon={busy ? Loader2 : Check} disabled={busy || dirty.length === 0} onClick={apply}>
+            {busy ? "Applying…" : "Apply changes"}
+          </Button>
+          <span className="text-[12.5px] text-ink-soft">
+            {dirty.length === 0
+              ? "No changes to apply."
+              : `${dirty.length} change${dirty.length === 1 ? "" : "s"} pending.`}
+          </span>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -586,7 +771,7 @@ function AddRowDialog({ title, fields, onClose, onSubmit, onError }) {
 
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-4 sm:items-center sm:p-6">
-      <Card className="max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
+      <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="flex items-start justify-between mb-4">
           <h2 className="text-[15.5px] font-bold text-ink">{title}</h2>
           <button onClick={onClose} aria-label="Close" className="text-ink-soft hover:text-ink">

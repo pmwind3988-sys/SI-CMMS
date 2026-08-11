@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bell,
@@ -38,12 +38,32 @@ export default function NotificationBell() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
+  const rootRef = useRef(null);
 
   useEffect(() => {
     if (!user) return;
     const unsub = listenNotifications(user, setItems, (err) => console.error("notifications", err));
     return unsub;
   }, [user]);
+
+  // Tapping anywhere else closes it. On a phone the panel covers most of the
+  // screen, so without this the only way out was the bell itself — which is
+  // underneath it once the header stops being the top thing on the page.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e) => {
+      if (!rootRef.current?.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   const unread = items.filter((n) => n.status !== "read");
 
@@ -58,25 +78,55 @@ export default function NotificationBell() {
   }
 
   return (
-    <div className="relative">
-      <button onClick={() => setOpen((o) => !o)} className="relative" aria-label="Notifications">
+    <div className="relative" ref={rootRef}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="relative"
+        aria-label="Notifications"
+        aria-expanded={open}
+        aria-haspopup="menu"
+      >
         <Bell size={19} className="text-ink-soft" />
         {unread.length > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-danger" />}
       </button>
       {open && (
-        // 20rem wherever it fits, otherwise the viewport minus a gutter — a flat
-        // w-80 overhung the screen edge on anything narrower than ~360px, and the
-        // list needs a viewport-relative cap so it can't run off the bottom.
-        <div className="absolute right-0 top-8 z-50 w-[min(20rem,calc(100vw-1.5rem))] rounded border border-border bg-white shadow-lg">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-            <span className="font-bold text-[13px] text-ink">Notifications</span>
-            {unread.length > 0 && (
-              <button onClick={handleMarkAllRead} className="flex items-center gap-1 text-[11.5px] text-ink-soft hover:text-navy">
-                <CheckCheck size={13} /> Mark all read
-              </button>
-            )}
-          </div>
-          <div className="max-h-[min(24rem,60dvh)] overflow-y-auto">
+        <>
+          {/* A tap shield rather than a visual scrim: the panel is anchored to
+              the viewport below, so on a phone there is a lot of page behind it
+              whose buttons would otherwise still be live. */}
+          <div className="fixed inset-0 z-40 sm:hidden" aria-hidden="true" onClick={() => setOpen(false)} />
+          {/*
+            Positioning, and why it is two different things.
+
+            The panel is 20rem wide and was anchored `absolute right-0` to the
+            bell. The bell is not at the right edge of the header — the role
+            badge sits beside it, and "Administrator" is wide — so on a phone
+            those 20rem were measured leftwards from roughly the middle of the
+            screen and ran off the left edge entirely. Capping the width at the
+            viewport did not help: the overflow was in where it started, not in
+            how wide it was.
+
+            Below `sm` it is therefore pinned to the viewport instead, with equal
+            gutters, which cannot depend on what else the header happens to be
+            carrying. From `sm` up the anchored dropdown is correct and is what
+            it goes back to. `fixed` resolves against the viewport here because
+            nothing in the header chain sets a transform or a filter.
+          */}
+          <div
+            role="menu"
+            className="rise fixed inset-x-3 top-[calc(3.5rem+env(safe-area-inset-top))] z-50 overflow-hidden rounded border border-border bg-white shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:top-8 sm:w-80"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <span className="font-bold text-[13px] text-ink">Notifications</span>
+              {unread.length > 0 && (
+                <button onClick={handleMarkAllRead} className="flex items-center gap-1 text-[11.5px] text-ink-soft hover:text-navy">
+                  <CheckCheck size={13} /> Mark all read
+                </button>
+              )}
+            </div>
+            {/* Capped against the viewport, not the content: the list has to end
+                above the bottom of the screen whether it holds two items or forty. */}
+            <div className="max-h-[min(24rem,60dvh)] overflow-y-auto">
             {items.length === 0 && <div className="p-5 text-[12.5px] text-ink-soft text-center">You're all caught up.</div>}
             {items.map((n) => {
               const meta = NOTIFICATION_META[n.type] || { icon: "Bell", color: "#64748B" };
@@ -99,19 +149,20 @@ export default function NotificationBell() {
                 </button>
               );
             })}
+            </div>
+            <div className="px-4 py-2.5 border-t border-border text-center">
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  router.push("/notifications");
+                }}
+                className="text-[12px] font-semibold text-navy"
+              >
+                View all notifications
+              </button>
+            </div>
           </div>
-          <div className="px-4 py-2.5 border-t border-border text-center">
-            <button
-              onClick={() => {
-                setOpen(false);
-                router.push("/notifications");
-              }}
-              className="text-[12px] font-semibold text-navy"
-            >
-              View all notifications
-            </button>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );

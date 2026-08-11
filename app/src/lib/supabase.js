@@ -55,22 +55,123 @@ if (typeof window !== "undefined" && !isSupabaseConfigured) {
  */
 export const REMEMBER_ME_KEY = "si_remember_me";
 
-function backingStore() {
+/** The address to prefill the sign-in form with, when the box was ticked. */
+export const REMEMBERED_EMAIL_KEY = "si_remembered_email";
+
+/**
+ * Web Storage throws rather than returning null in a few real situations — a
+ * WebView with DOM storage disabled, Safari's private mode quota, a page
+ * running from a file:// origin. Every access here is guarded, because the one
+ * thing that must not happen is the whole auth layer failing to load over it.
+ */
+function store(kind) {
+  try {
+    return window[kind] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function readFrom(kind, key) {
+  try {
+    return store(kind)?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isRemembered() {
   // Default to remembering, matching Firebase's default persistence.
-  const remembered = window.localStorage.getItem(REMEMBER_ME_KEY) !== "false";
-  return remembered ? window.localStorage : window.sessionStorage;
+  return readFrom("localStorage", REMEMBER_ME_KEY) !== "false";
 }
 
 const hybridStorage = {
-  getItem: (key) => backingStore().getItem(key),
-  setItem: (key, value) => backingStore().setItem(key, value),
-  // Clear both, so flipping the flag can never orphan a live token in the
-  // store we are no longer reading from.
+  /**
+   * Read from wherever the value actually is, rather than from wherever the
+   * flag says it should be.
+   *
+   * That distinction is the bug "Remember me" had. The flag picked the store for
+   * reads as well as writes, so a session written to localStorage under a ticked
+   * box became invisible the moment anything set the flag to "false" — a second
+   * sign-in with the box cleared, a sign-in that errored after the flag was
+   * written, a stale "false" from an earlier visit. The token was still sitting
+   * in localStorage; nothing ever looked there again, and the user was returned
+   * to the sign-in screen with no explanation.
+   *
+   * localStorage wins when both hold something, but setItem below guarantees
+   * they never do.
+   */
+  getItem: (key) => readFrom("localStorage", key) ?? readFrom("sessionStorage", key),
+
+  /**
+   * Exactly one store holds the session at any moment: the one the flag selects.
+   * Purging the other first is what keeps the fallback read above honest — a
+   * leftover token in localStorage must not resurrect a session the user
+   * deliberately chose not to persist.
+   */
+  setItem: (key, value) => {
+    const remembered = isRemembered();
+    try {
+      store(remembered ? "sessionStorage" : "localStorage")?.removeItem(key);
+    } catch {
+      // Nothing to clean up, or storage is unavailable — the write below is
+      // what matters.
+    }
+    try {
+      store(remembered ? "localStorage" : "sessionStorage")?.setItem(key, value);
+    } catch {
+      // Out of quota or storage disabled. The session still works for this page
+      // load; it just will not survive a reload.
+    }
+  },
+
+  // Clear both, so signing out can never orphan a live token in the store we
+  // are no longer reading from.
   removeItem: (key) => {
-    window.localStorage.removeItem(key);
-    window.sessionStorage.removeItem(key);
+    for (const kind of ["localStorage", "sessionStorage"]) {
+      try {
+        store(kind)?.removeItem(key);
+      } catch {
+        // Already gone, or storage is unavailable.
+      }
+    }
   },
 };
+
+/**
+ * Record the choice before signing in — it decides which store the session
+ * lands in, and signInWithPassword is the call that writes it.
+ *
+ * The address is kept alongside it only when the box is ticked, so the sign-in
+ * form can prefill. It is an identifier, not a credential; the password is
+ * never stored.
+ *
+ * Omitting `email` sets the flag and leaves any stored address alone. That is
+ * what lets the caller do this in two steps — flag before signInWithPassword,
+ * because it decides the store; address only once the credentials were actually
+ * accepted, so a typo in a rejected attempt is not what greets the user next
+ * time. Unticking clears the address either way.
+ */
+export function rememberMe(flag, email) {
+  const local = store("localStorage");
+  if (!local) return;
+  try {
+    local.setItem(REMEMBER_ME_KEY, flag ? "true" : "false");
+    if (!flag) local.removeItem(REMEMBERED_EMAIL_KEY);
+    else if (email) local.setItem(REMEMBERED_EMAIL_KEY, email);
+  } catch {
+    // Storage unavailable — sign-in still works, it just won't be remembered.
+  }
+}
+
+export function rememberedEmail() {
+  if (readFrom("localStorage", REMEMBER_ME_KEY) === "false") return "";
+  return readFrom("localStorage", REMEMBERED_EMAIL_KEY) || "";
+}
+
+export function wasRememberMeChecked() {
+  return isRemembered();
+}
 
 export const supabase = createClient(url, anonKey, {
   auth: {

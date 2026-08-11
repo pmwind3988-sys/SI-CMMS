@@ -10,18 +10,28 @@
  * under Authentication → URL Configuration → Redirect URLs, or Supabase refuses
  * the redirect before the user ever gets here.
  *
- * How the session arrives:
- *   The client uses the implicit flow, so Supabase appends the recovery tokens to
- *   the URL *fragment* (#access_token=…&type=recovery). `detectSessionInUrl` in
- *   lib/supabase.js consumes that fragment, establishes a session and emits
- *   PASSWORD_RECOVERY. That happens asynchronously and may complete before this
- *   component mounts, so waiting only for the event would race — getSession() is
- *   checked as well, and either one is enough to proceed.
+ * How the session arrives — three shapes, because which one Supabase sends is
+ * decided by project configuration this page does not control, and getting only
+ * one of them right is why "the reset link doesn't work" is such a common
+ * report:
+ *
+ *   1. Fragment (#access_token=…&type=recovery). The implicit flow, which is
+ *      supabase-js's default and what this client uses. `detectSessionInUrl` in
+ *      lib/supabase.js consumes the fragment, establishes a session and emits
+ *      PASSWORD_RECOVERY. That happens asynchronously and may complete before
+ *      this component mounts, so waiting only for the event would race —
+ *      getSession() is checked as well, and either is enough.
+ *
+ *   2. Query ?token_hash=…&type=recovery. What the current default email
+ *      template produces once a project moves to the /auth/v1/verify endpoint.
+ *      Nothing consumes it automatically; verifyOtp() has to be called.
+ *
+ *   3. Query ?code=…. The PKCE flow. exchangeCodeForSession() redeems it.
  *
  *   A failed link (expired, already used, tampered with) comes back as
- *   #error=…&error_description=… instead. Those parameters are read on the very
- *   first render, because detectSessionInUrl strips the fragment once it has
- *   looked at it.
+ *   error=…&error_description=… in whichever of the two the project uses. The
+ *   fragment is read on the very first render, because detectSessionInUrl strips
+ *   it once it has looked at it.
  *
  * Deliberately NOT wrapped in RequireAuth: the visitor is mid-recovery and has no
  * ordinary session, and RequireAuth would bounce them to /login and discard the
@@ -46,9 +56,14 @@ const MIN_LENGTH = 8;
  */
 const INITIAL_HASH =
   typeof window === "undefined" ? "" : window.location.hash.replace(/^#/, "");
+const INITIAL_QUERY =
+  typeof window === "undefined" ? "" : window.location.search.replace(/^\?/, "");
+
+const HASH_PARAMS = new URLSearchParams(INITIAL_HASH);
+const QUERY_PARAMS = new URLSearchParams(INITIAL_QUERY);
 
 /**
- * True only for a genuine recovery redirect.
+ * Which of the three link shapes this is, if any.
  *
  * Deliberately not "a session exists": this page is reached from an emailed
  * link, so an ordinary signed-in session must NOT unlock it. Otherwise anyone
@@ -56,12 +71,20 @@ const INITIAL_HASH =
  * knowing the current one, which is a real privilege escalation on a shared
  * shop-floor terminal.
  */
-const HAS_RECOVERY_TOKEN = /(^|&)type=recovery(&|$)/.test(INITIAL_HASH);
+const RECOVERY = (() => {
+  if (/(^|&)type=recovery(&|$)/.test(INITIAL_HASH)) return { kind: "fragment" };
+  const tokenHash = QUERY_PARAMS.get("token_hash");
+  if (tokenHash && QUERY_PARAMS.get("type") === "recovery") {
+    return { kind: "token_hash", tokenHash };
+  }
+  const code = QUERY_PARAMS.get("code");
+  if (code) return { kind: "code", code };
+  return null;
+})();
 
-/** Read the error the recovery redirect may have left in the fragment. */
-function readFragmentError() {
-  if (!INITIAL_HASH) return null;
-  const params = new URLSearchParams(INITIAL_HASH);
+/** Read the error the recovery redirect may have left, in either carrier. */
+function readLinkError() {
+  const params = HASH_PARAMS.get("error") || HASH_PARAMS.get("error_code") ? HASH_PARAMS : QUERY_PARAMS;
   if (!params.get("error") && !params.get("error_code")) return null;
   const code = params.get("error_code") || params.get("error");
   const description = params.get("error_description");
@@ -76,7 +99,7 @@ export default function ResetPasswordPage() {
   const router = useRouter();
 
   // Lazy initialiser: this must run before detectSessionInUrl clears the hash.
-  const [linkError, setLinkError] = useState(readFragmentError);
+  const [linkError, setLinkError] = useState(readLinkError);
 
   const [phase, setPhase] = useState("checking"); // checking | ready | saving | done | invalid
   const [password, setPassword] = useState("");
@@ -106,13 +129,20 @@ export default function ResetPasswordPage() {
       );
     };
 
-    // No recovery token in the URL at all — someone navigated here directly, or
-    // is already signed in. Either way this is not a recovery, so stop now
-    // rather than offering a password change we haven't authenticated.
-    if (!HAS_RECOVERY_TOKEN) {
+    // Nothing recovery-shaped in the URL at all — someone navigated here
+    // directly, or is already signed in. Either way this is not a recovery, so
+    // stop now rather than offering a password change we haven't authenticated.
+    if (!RECOVERY) {
       reject();
       return;
     }
+
+    const fail = (message) => {
+      if (settled) return;
+      settled = true;
+      setPhase("invalid");
+      setLinkError(message);
+    };
 
     const {
       data: { subscription },
@@ -120,15 +150,43 @@ export default function ResetPasswordPage() {
       if (event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") ready();
     });
 
-    // Covers the case where the fragment was consumed before this mounted: the
-    // token was present (checked above), so an existing session here is the
-    // recovery session.
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) ready();
-    });
+    if (RECOVERY.kind === "fragment") {
+      // Covers the case where the fragment was consumed before this mounted:
+      // the token was present (checked above), so an existing session here is
+      // the recovery session.
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session) ready();
+      });
+    } else if (RECOVERY.kind === "token_hash") {
+      supabase.auth
+        .verifyOtp({ token_hash: RECOVERY.tokenHash, type: "recovery" })
+        .then(({ error }) => {
+          if (error) {
+            fail(
+              /expired|invalid/i.test(error.message)
+                ? "That reset link has expired or has already been used. Request a new one."
+                : error.message
+            );
+          } else {
+            ready();
+          }
+        });
+    } else {
+      supabase.auth.exchangeCodeForSession(RECOVERY.code).then(({ error }) => {
+        if (error) {
+          fail(
+            /expired|invalid/i.test(error.message)
+              ? "That reset link has expired or has already been used. Request a new one."
+              : error.message
+          );
+        } else {
+          ready();
+        }
+      });
+    }
 
     // The token was in the URL but Supabase never established a session from it.
-    const timer = setTimeout(reject, 6000);
+    const timer = setTimeout(reject, 8000);
 
     return () => {
       clearTimeout(timer);
@@ -168,7 +226,7 @@ export default function ResetPasswordPage() {
 
   return (
     <div className="min-h-dvh flex items-center justify-center bg-canvas font-sans px-5 py-8 pt-[calc(2rem+env(safe-area-inset-top))] pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
-      <div className="w-full max-w-sm">
+      <div className="rise w-full max-w-sm">
         <Link href="/login" className="flex items-center gap-1.5 text-ink-soft text-[13px] mb-5">
           <ArrowLeft size={15} /> Back to sign in
         </Link>
@@ -218,7 +276,6 @@ export default function ResetPasswordPage() {
                     type={showPw ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
                     className={inputClass}
                     autoComplete="new-password"
                     required
@@ -238,7 +295,6 @@ export default function ResetPasswordPage() {
                   type={showPw ? "text" : "password"}
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
-                  placeholder="••••••••"
                   className={inputClass}
                   autoComplete="new-password"
                   required

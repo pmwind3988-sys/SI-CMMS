@@ -43,6 +43,15 @@ const SOURCES = {
   impact_levels: { select: "code, label, suggests_priority, sort_order, description", order: "sort_order" },
   wo_types: { select: "code, label, sort_order, description", order: "sort_order" },
   safety_severities: { select: "code, label, escalates_to_priority, sort_order", order: "sort_order" },
+  // Not reference data in the same sense — these are capability grants a
+  // Superuser makes (migration 0018), not labels. They ride along here for the
+  // reason the whole provider exists: a handful of rows that almost every
+  // screen needs and that change perhaps twice a year, so one subscription
+  // shared by everyone beats a listener per component.
+  //
+  // What is read here decides what to *show*. si_can_delete_work_orders() and
+  // the work_orders_delete policy decide what is allowed.
+  role_permissions: { select: "role, can_delete_work_orders, updated_at", order: "role" },
 };
 
 export function ReferenceDataProvider({ children }) {
@@ -90,6 +99,7 @@ export function ReferenceDataProvider({ children }) {
     const impacts = data.impact_levels ?? [];
     const types = data.wo_types ?? [];
     const severities = data.safety_severities ?? [];
+    const rolePermissions = data.role_permissions ?? [];
 
     const byKey = (rows, key) => new Map(rows.map((r) => [r[key], r]));
     const departmentMap = byKey(departments, "id");
@@ -117,9 +127,18 @@ export function ReferenceDataProvider({ children }) {
     // ran unauthenticated. Requiring rows there stops `ready` going true on the
     // empty-array state described above. departments and assets are excluded:
     // a site with no equipment registered yet is a real, valid state.
+    //
+    // role_permissions is excluded from both lists, and that exclusion is
+    // load-bearing rather than tidy-minded. `ready` gates every screen in the
+    // app; if it waited on a table that does not exist until migration 0018 has
+    // been applied, a project one migration behind would show no labels
+    // anywhere — a whole-app outage caused by a feature it isn't using yet. Its
+    // absence degrades to "no role holds the capability", which is the right
+    // answer for a database where the grants have not been created.
     const NEVER_EMPTY = ["priorities", "sla", "wo_statuses", "impact_levels", "wo_types", "safety_severities"];
+    const READY_SOURCES = Object.keys(SOURCES).filter((t) => t !== "role_permissions");
     const ready =
-      Object.keys(SOURCES).every((t) => Array.isArray(data[t])) &&
+      READY_SOURCES.every((t) => Array.isArray(data[t])) &&
       NEVER_EMPTY.every((t) => (data[t]?.length ?? 0) > 0);
 
     return {
@@ -134,6 +153,15 @@ export function ReferenceDataProvider({ children }) {
       impacts,
       types,
       severities,
+      rolePermissions,
+
+      /**
+       * Does this role hold this capability? Absent rows read false, which is
+       * the same fail-closed direction si_can_delete_work_orders() takes for an
+       * unrecognised role claim.
+       */
+      roleCan: (role, capability) =>
+        rolePermissions.find((r) => r.role === role)?.[capability] === true,
 
       departmentById: (id) => departmentMap.get(id) ?? null,
       assetById: (id) => assetMap.get(id) ?? null,

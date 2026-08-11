@@ -7,11 +7,12 @@
  * expiry mid-use) is intentionally not used to override that, matching
  * the requirement that role determines landing page, not browsing history.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff, ArrowRight, Loader2, ShieldCheck } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { rememberedEmail, wasRememberMeChecked } from "../../lib/supabase";
 import { dashboardPathForRole } from "../../lib/roles";
 import Field, { inputClass } from "../../components/ui/Field";
 import { ErrorBanner } from "../../components/ui/Surfaces";
@@ -46,6 +47,19 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(true);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
+
+  /**
+   * Read in an effect rather than as a useState initialiser. This page is part
+   * of a static export, so its HTML is generated at build time with an empty
+   * field; seeding the initial state from localStorage would make the first
+   * client render disagree with that HTML, and React discards the whole tree
+   * on a hydration mismatch.
+   */
+  useEffect(() => {
+    setRememberMe(wasRememberMeChecked());
+    const saved = rememberedEmail();
+    if (saved) setEmail(saved);
+  }, []);
 
   /**
    * Supabase auth errors carry a machine-readable `code` plus an HTTP `status`;
@@ -115,11 +129,27 @@ export default function LoginPage() {
     // min-h-dvh, not min-h-screen: 100vh on a mobile browser is the height with
     // the URL bar hidden, so the sign-in card sat partly below the fold and the
     // page scrolled for no reason.
-    <div className="min-h-dvh flex bg-navy font-sans">
-      <div
-        className="hidden md:flex flex-1 flex-col justify-between p-12"
-        style={{ background: "linear-gradient(160deg, #0F3D91 0%, #0B2F70 100%)" }}
-      >
+    <div className="min-h-dvh flex flex-col md:flex-row bg-navy font-sans">
+      {/* The navy panel, on a phone.
+          Below `md` the branded half was simply hidden and the screen was a
+          plain grey field with a form on it — the one place in the app with no
+          brand surface at all. This is the same gradient, reduced to a band
+          across the top, with the sign-in card overlapping its bottom edge so
+          the two read as one object rather than two stacked blocks. */}
+      <div className="si-navy px-6 pb-11 pt-[calc(2.5rem+env(safe-area-inset-top))] md:hidden">
+        <div className="rise flex items-center gap-3">
+          <Logo size={34} />
+          <div>
+            <div className="text-[19px] font-extrabold leading-none text-white">SI</div>
+            <div className="mt-0.5 text-[9.5px] tracking-wide text-[#9FB6E0]">SERVICE INSIDE</div>
+          </div>
+        </div>
+        <h1 className="rise-slow mt-5 text-[19px] font-bold leading-snug text-white">
+          One system, five roles, one source of truth.
+        </h1>
+      </div>
+
+      <div className="si-navy hidden flex-1 flex-col justify-between p-12 md:flex">
         <div className="flex items-center gap-3">
           <Logo />
           <div>
@@ -127,7 +157,7 @@ export default function LoginPage() {
             <div className="text-[10px] text-[#9FB6E0] tracking-wide mt-0.5">SERVICE INSIDE</div>
           </div>
         </div>
-        <div className="max-w-md">
+        <div className="rise-slow max-w-md">
           <h1 className="text-white text-2xl font-bold leading-snug mb-3.5">
             One system, five roles, one source of truth.
           </h1>
@@ -139,8 +169,8 @@ export default function LoginPage() {
         <div className="font-mono text-[#5B76AE] text-[12px]">Authentication Module · v1.0</div>
       </div>
 
-      <div className="flex-1 flex items-center justify-center bg-canvas px-5 py-8 pt-[calc(2rem+env(safe-area-inset-top))] pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
-        <div className="w-full max-w-sm">
+      <div className="-mt-6 flex flex-1 items-start justify-center rounded-t-[20px] bg-canvas px-5 pb-[calc(2rem+env(safe-area-inset-bottom))] pt-8 md:mt-0 md:items-center md:rounded-none md:p-6">
+        <div className="rise w-full max-w-sm">
           <h2 className="text-xl font-bold text-ink mb-1.5">Sign in</h2>
           <p className="text-[13.5px] text-ink-soft mb-5">
             {COMPANY_EMAIL_DOMAIN
@@ -150,11 +180,15 @@ export default function LoginPage() {
           {error && <ErrorBanner message={error} />}
           <form onSubmit={handleSubmit}>
             <Field label="Company email" required>
+              {/* No placeholder on either field. The label already says what
+                  goes in it, and a greyed sample address is routinely misread as
+                  a filled-in value — people tab past it and submit an empty
+                  form. The password field's row of bullets was worse: it is
+                  indistinguishable from a typed password. */}
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder={COMPANY_EMAIL_DOMAIN ? `you@${COMPANY_EMAIL_DOMAIN}` : "you@company.com"}
                 className={inputClass}
                 autoComplete="username"
                 required
@@ -166,7 +200,6 @@ export default function LoginPage() {
                   type={showPw ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
                   className={`${inputClass} pr-10`}
                   autoComplete="current-password"
                   required
