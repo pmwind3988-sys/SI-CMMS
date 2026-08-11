@@ -24,18 +24,103 @@ import { supabase, liveQuery } from "./supabase";
    Reads
 -------------------------------------------------------------------*/
 
+/**
+ * si_dummy_flags is a computed column, not a stored one — PostgREST calls
+ * si_dummy_flags(users) per row (migration 0012). Selecting it here rather than
+ * re-deriving "does this still look like demo data?" in the client keeps one
+ * definition, and keeps it next to the columns it reads.
+ */
+// is_protected is selected because the client predicates in constants.js read
+// it. RLS already hides protected rows from everyone but their owner (migration
+// 0015), so in practice it arrives false — carrying it keeps the predicate
+// honest rather than relying on that.
+const USER_SELECT =
+  "id, name, email, phone, role, department_id, plant_ids, status, created_at, " +
+  "last_login_at, is_protected, seed_source, password_changed_at, si_dummy_flags";
+
 /** Every user, live. The users_select policy already limits who sees this. */
 export function listenUsers(cb, onError) {
   return liveQuery({
     table: "users",
-    run: () =>
-      supabase
-        .from("users")
-        .select("id, name, email, phone, role, department_id, plant_ids, status, created_at, last_login_at")
-        .order("name", { ascending: true }),
+    run: () => supabase.from("users").select(USER_SELECT).order("name", { ascending: true }),
     cb,
     onError,
   });
+}
+
+/* ------------------------------------------------------------------
+   Demo accounts
+
+   The six accounts bootstrapUsers.js creates share one password and an
+   @example.com address, and until now nothing in the app ever said so. Each
+   reason is tracked separately so it clears on its own the moment it is dealt
+   with — an account with no reasons left is simply not flagged.
+-------------------------------------------------------------------*/
+
+export const DEMO_FLAGS = {
+  placeholder_email: {
+    short: "Placeholder email",
+    detail: "The sign-in address is at a reserved demo domain, so it can never receive mail.",
+    fix: "Create a real account for this person and deactivate this one.",
+  },
+  default_password: {
+    short: "Default password",
+    detail: "Still on the password the seeding script set — shared with every other seeded account.",
+    fix: "Set a new password from this row.",
+  },
+  unchanged_profile: {
+    short: "Seed profile",
+    detail: "Name and phone are still exactly what was seeded, so nobody has claimed this account.",
+    fix: "Edit the profile, or clear the demo mark if this is a real person.",
+  },
+  never_signed_in: {
+    short: "Never signed in",
+    detail: "Provisioned by the seeding script and never used.",
+    fix: "Deactivate it if nobody needs it.",
+  },
+};
+
+export function demoFlagsOf(user) {
+  return user?.si_dummy_flags ?? [];
+}
+
+export function isDemoAccount(user) {
+  return demoFlagsOf(user).length > 0;
+}
+
+/**
+ * Only the flagged accounts, for the Admin dashboard card. Filtering client-side
+ * rather than as a PostgREST predicate on the computed column: the user table is
+ * small, and the card wants the full rows anyway to list them.
+ */
+export function listenDemoAccounts(cb, onError) {
+  return liveQuery({
+    table: "users",
+    run: () => supabase.from("users").select(USER_SELECT).order("name", { ascending: true }),
+    cb: (rows) => cb(rows.filter(isDemoAccount)),
+    onError,
+  });
+}
+
+/**
+ * "This is a real account, stop flagging it."
+ *
+ * A plain UPDATE, like the other profile writes: users_update already limits
+ * this to an Administrator, and si_guard_user_self_update (migration 0012)
+ * rejects it from anyone else — a flagged user must not be able to clear their
+ * own flag.
+ *
+ * Clearing seed_source drops default_password, unchanged_profile and
+ * never_signed_in together, because all three only apply to a seeded account.
+ * placeholder_email survives deliberately: an @example.com address is still
+ * fake, and the only honest fix is a different account.
+ */
+export async function clearDemoMark(userId) {
+  const { error } = await supabase
+    .from("users")
+    .update({ seed_source: null, seed_name: null, seed_phone: null })
+    .eq("id", userId);
+  if (error) throw error;
 }
 
 /** Technician records, for skills and availability. */

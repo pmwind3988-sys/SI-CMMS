@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="432" height="432">
+  <!--
+    Adaptive-icon foreground layer (Android 8+). The background is a flat colour
+    supplied by values/ic_launcher_background.xml, so this carries the mark only,
+    on transparency.
+
+    108x108 is the adaptive-icon canvas; the launcher may mask anything outside
+    the centre 72x72, and it parallaxes the two layers independently. The mark is
+    drawn 60 units tall inside that safe zone rather than filling it, so no part
+    of the S or the dot is ever clipped by a circular, squircle or teardrop mask.
+
+    The group transform maps the 34-unit drawing in icon.svg into this canvas:
+    scale 60/17.5 (the mark's own height), then centre its bounding box — which
+    is offset, not centred, in the source — on (54, 54).
+  -->
+  <g transform="translate(-5.57 5.14) scale(3.4286)">
+    <path
+      d="M9.2 13.4c0-2.1 1.9-3.6 4.6-3.6 2.4 0 4.1 1 4.8 2.7l-2.3 1.1c-.5-1-1.3-1.5-2.5-1.5-1.1 0-1.8.5-1.8 1.2 0 .8.8 1.1 2.3 1.5 2.5.6 4.3 1.4 4.3 3.8 0 2.2-2 3.7-4.9 3.7-2.6 0-4.5-1.1-5.2-2.9l2.3-1.1c.5 1.1 1.5 1.7 2.9 1.7 1.2 0 2-.5 2-1.3 0-.8-.8-1.1-2.5-1.5-2.4-.6-4-1.5-4-3.8z"
+      fill="#FFFFFF"/>
+    <rect x="22.4" y="10.1" width="2.5" height="12.9" rx="1.1" fill="#FFFFFF"/>
+    <circle cx="23.65" cy="7.4" r="1.9" fill="#F59E0B"/>
+  </g>
+</svg>

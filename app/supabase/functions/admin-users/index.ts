@@ -35,6 +35,33 @@ const CORS = {
 
 const MIN_PASSWORD_LENGTH = 8;
 
+/**
+ * The role hierarchy from migration 0015, restated. It has to be restated:
+ * everything below runs on the service-role key, which bypasses Row Level
+ * Security, so the users_update / users_insert policies never see these writes.
+ * Keep the two in step — if the ranks here and si_role_rank() ever disagree, the
+ * looser one wins, and it is this one.
+ */
+const ROLE_RANK: Record<string, number> = {
+  requester: 1,
+  technician: 2,
+  supervisor: 3,
+  manager: 4,
+  admin: 5,
+};
+const SUPERUSER_RANK = 6;
+
+/** The rank of a role name. */
+const rankOfRole = (role: string | null | undefined) => ROLE_RANK[role ?? ""] ?? 0;
+
+/**
+ * The rank of an actual account. A Superuser is role='admin' with is_protected,
+ * outranking every role — which is what lets them, and only them, create an
+ * Administrator here.
+ */
+const rankOfAccount = (row: { role?: string | null; is_protected?: boolean | null } | null) =>
+  row?.is_protected ? SUPERUSER_RANK : rankOfRole(row?.role);
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -64,7 +91,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: callerRow, error: roleError } = await admin
     .from("users")
-    .select("role, status, name")
+    .select("role, status, name, is_protected")
     .eq("id", caller.user.id)
     .maybeSingle();
 
@@ -94,6 +121,34 @@ Deno.serve(async (req: Request) => {
       return json({ error: `Use at least ${MIN_PASSWORD_LENGTH} characters.` }, 400);
     }
 
+    // Resetting someone's password is editing them, so it obeys the same rank
+    // rule as any other write: your own account, or one strictly below you.
+    // Without this an Administrator could take over a peer Administrator's
+    // account by resetting its password — the exact thing 0015 set out to stop,
+    // reachable through the one path RLS does not cover.
+    if (userId !== caller.user.id) {
+      const { data: targetRow, error: targetError } = await admin
+        .from("users")
+        .select("role, is_protected, name")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (targetError) return json({ error: "Couldn't verify that account." }, 500);
+      if (!targetRow) return json({ error: "No such user." }, 404);
+      if (targetRow.is_protected) {
+        return json(
+          { error: "This account is protected. It can only be changed from the database." },
+          403,
+        );
+      }
+      if (rankOfAccount(targetRow) >= rankOfAccount(callerRow)) {
+        return json(
+          { error: "You can only set the password of someone below you in the hierarchy." },
+          403,
+        );
+      }
+    }
+
     const { error } = await admin.auth.admin.updateUserById(userId, { password });
     if (error) return json({ error: error.message }, 400);
 
@@ -121,6 +176,16 @@ Deno.serve(async (req: Request) => {
     if (!VALID_ROLES.includes(role)) return json({ error: "Pick a valid role." }, 400);
     if (password.length < MIN_PASSWORD_LENGTH) {
       return json({ error: `Use at least ${MIN_PASSWORD_LENGTH} characters.` }, 400);
+    }
+    // You cannot create a peer. Matches the users_insert policy, which this
+    // path would otherwise sail straight past on the service-role key — and
+    // means a new Administrator is made from the Supabase dashboard, alongside
+    // the protected accounts.
+    if (rankOfRole(role) >= rankOfAccount(callerRow)) {
+      return json(
+        { error: "You cannot create an account at or above your own rank." },
+        403,
+      );
     }
 
     // email_confirm: these are shop-floor accounts an admin provisions directly,

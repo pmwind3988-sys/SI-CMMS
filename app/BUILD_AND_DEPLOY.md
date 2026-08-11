@@ -13,39 +13,104 @@ historical note, it's stale.
 
 Nothing here needs reinstalling unless you move to a different machine.
 
+> **This section was rewritten on 2026-08-11** for the current PC (profile
+> `C:\Users\User`). It previously described a machine whose profile was
+> `C:\Users\Ahmad Amirul`; none of that toolchain carried over, and `npm run apk`
+> failed with `JAVA_HOME is not set` until it was reinstalled from scratch.
+
 | Tool | Version | Location |
 |---|---|---|
-| Node.js | 24.18.1 | `C:\Program Files\nodejs` |
-| Eclipse Temurin JDK | 17.0.20 | `C:\Users\Ahmad Amirul\toolchain\jdk17` |
-| Android SDK | cmdline-tools 11.0, platform-tools, platform `android-34`, build-tools `34.0.0` | `…\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\Android\Sdk` — **not** `%LOCALAPPDATA%\Android\Sdk`, see §6 |
-| Capacitor | 6.x (`core`, `android`, `cli`) | project `node_modules` |
-| GitHub CLI | 2.97.0 | system |
+| Node.js | 24.x | `C:\Program Files\nodejs` |
+| Eclipse Temurin JDK | 17.0.20+8 | `C:\Program Files\Eclipse Adoptium\jdk-17.0.20.8-hotspot` |
+| Android SDK | cmdline-tools 12.0, platform-tools, platform `android-34`, build-tools `34.0.0` | `C:\Android\Sdk` |
+| Capacitor | 6.x (`core`, `android`, `cli` — all three must match, see §6) | project `node_modules` |
 | `@supabase/supabase-js` | ^2.112.2 | project `node_modules` |
 | `supabase` CLI | ^2.111.0 | project `node_modules` — call it as `npx supabase` |
 
 Environment variables set at **User** scope (so they persist across reboots):
 
 ```
-JAVA_HOME         = C:\Users\AHMADA~1\TOOLCH~1\jdk17
-ANDROID_HOME      = C:\Users\Ahmad Amirul\AppData\Local\Android\Sdk
+JAVA_HOME         = C:\Program Files\Eclipse Adoptium\jdk-17.0.20.8-hotspot
+ANDROID_HOME      = C:\Android\Sdk
 ANDROID_SDK_ROOT  = (same as ANDROID_HOME)
-JAVA_TOOL_OPTIONS = -Djdk.net.unixdomain.tmpdir=C:/Users/AHMADA~1/.gradle/sockets
-PATH             += %JAVA_HOME%\bin, %ANDROID_HOME%\platform-tools, %ANDROID_HOME%\cmdline-tools\latest\bin
+JAVA_TOOL_OPTIONS = -Djavax.net.ssl.trustStore=C:\Android\certs\gradle-truststore.jks
+                    -Djavax.net.ssl.trustStorePassword=changeit
+PATH             += C:\Program Files\Eclipse Adoptium\jdk-17.0.20.8-hotspot\bin
+                    C:\Android\Sdk\platform-tools
+                    C:\Android\Sdk\cmdline-tools\latest\bin
 ```
 
-`JAVA_TOOL_OPTIONS` is not a tuning setting — without it **no Gradle build runs at
-all on this machine**. See §6. It makes every JVM print one
+Those PATH entries are **literal absolute paths, not `%JAVA_HOME%\bin`**, and that
+is deliberate. A `%VAR%` reference inside PATH only expands if the registry value
+is typed `REG_EXPAND_SZ` — and PowerShell's
+`[Environment]::SetEnvironmentVariable(name, value, 'User')` writes `REG_SZ`,
+which silently *downgrades* the type. The `%JAVA_HOME%\bin` then sits in PATH as
+literal text forever and `java` is never found, in every future shell, with no
+error to explain why. Literal paths have no expansion step to get wrong.
+
+If you do want the `%VAR%` form, write it through the registry API with an
+explicit kind, not through `SetEnvironmentVariable`:
+
+```powershell
+$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+$k.SetValue('Path', $value, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+```
+
+Check what you actually have with `$k.GetValueKind('Path')` — it must say
+`ExpandString`.
+
+`JAVA_TOOL_OPTIONS` is not a tuning setting — without it **Gradle cannot download
+a single dependency on this machine**, because Norton intercepts HTTPS and the JVM
+doesn't trust its certificate. See §6. It makes every JVM print one
 `Picked up JAVA_TOOL_OPTIONS: …` line to stderr, which is expected and harmless.
 
-`JAVA_HOME` deliberately uses the 8.3 short path. The real folder sits under
-`C:\Users\Ahmad Amirul\`, and the space in that name breaks both `sdkmanager.bat`
-and Gradle's JVM detection. Don't "tidy" it to the long path.
-
-`ANDROID_HOME` above is **wrong for Gradle and does nothing** — the SDK is not
-really at that path. `android/local.properties` carries the real one. See §6.
+The SDK deliberately lives at `C:\Android\Sdk` — a short path with no spaces,
+outside any user profile and outside any MSIX package container. That one choice
+avoids three separate failure modes the previous machine hit (see §6).
 
 Android Studio was **not** installed — only the command-line SDK, which is all a
 Gradle APK build needs.
+
+`android/local.properties` is gitignored, so it does **not** travel with the repo.
+On a fresh clone recreate it:
+
+```properties
+sdk.dir=C\:\\Android\\Sdk
+```
+
+### Setting this up on a new machine
+
+```bash
+winget install --id EclipseAdoptium.Temurin.17.JDK --accept-package-agreements --accept-source-agreements
+```
+
+Then unpack the Android command-line tools so that `sdkmanager.bat` ends up at
+`C:\Android\Sdk\cmdline-tools\latest\bin\`, and install the three packages the
+build needs:
+
+```bash
+sdkmanager --sdk_root=C:\Android\Sdk "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+```
+
+Set the four variables above at User scope, then **open a new terminal** — env
+changes do not propagate into already-running shells, and a stale shell will still
+report `JAVA_HOME is not set`.
+
+"New terminal" means a new *process tree*. A new tab inside VS Code, Cursor or a
+desktop app's integrated terminal inherits the environment block of the editor
+process that spawned it, which was captured when that app launched — so the tab
+looks new and is not. Restart the host application, or verify from a standalone
+Windows Terminal / PowerShell window.
+
+To confirm the persisted values are correct without restarting anything, launch a
+process with a freshly-built environment block:
+
+```powershell
+Start-Process cmd.exe -ArgumentList '/c','java -version & pause' -UseNewEnvironment
+```
+
+`-UseNewEnvironment` rebuilds from the registry instead of inheriting, so it tells
+you what a genuinely new shell will see.
 
 ---
 
@@ -92,12 +157,29 @@ importing into Vercel. The one setting people get wrong:
 > **Root Directory must be `app`.** The Next app is not at the repo root, and the
 > build fails without this.
 
-Environment variables to set in Vercel — exactly two:
+Environment variables to set in Vercel — two required, one optional:
 
-| Name | Value |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | `https://iclphobvhjwdinxnqexw.supabase.co` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the publishable key from Project Settings → API |
+| Name | Value | |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://iclphobvhjwdinxnqexw.supabase.co` | required |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the publishable key from Project Settings → API | required |
+| `NEXT_PUBLIC_COMPANY_EMAIL_DOMAIN` | e.g. `pmw-group.com` — restricts sign-in to one email domain | optional |
+
+Those are the only three `process.env` reads in the shipped app
+(`src/lib/supabase.js` and `src/app/login/page.jsx`).
+
+**All three are inlined at build time, not read at runtime.** This is a static
+export — there is no server process on Vercel to read an environment variable, so
+`next build` bakes the literal values into the JavaScript bundle. Two consequences:
+
+- Changing a value in the Vercel dashboard does nothing until you **redeploy**.
+- `NEXT_PUBLIC_COMPANY_EMAIL_DOMAIN` set in `app/.env.local` but *not* in Vercel
+  means the domain restriction applies locally and silently **does not** apply to
+  the deployed site. It is a UI convenience either way — the real boundary is RLS,
+  not this check — but the two environments will disagree.
+
+The same applies to the APK: `npm run apk` bakes in whatever is in `app/.env.local`
+at build time, so web and Android can drift if those two sources differ.
 
 **Never set `SUPABASE_SERVICE_ROLE_KEY` in Vercel.** It bypasses Row Level
 Security completely, and because this is a static export there is no server on
@@ -192,10 +274,119 @@ update the app under the same identity.
 
 ## 6. Machine-specific Gradle problems
 
-Three of them, all diagnosed here so nobody re-derives them. Each one stops the
-APK build outright, and none has an error message that points at its real cause.
+All diagnosed here so nobody re-derives them. Each one stops the APK build
+outright, and none has an error message that points at its real cause.
+
+Which ones apply **right now** (profile `C:\Users\User`, verified 2026-08-11):
+
+| Problem | Applies here? |
+|---|---|
+| Norton intercepts HTTPS → `PKIX path building failed` | **Yes** — worked around via `JAVA_TOOL_OPTIONS` |
+| Capacitor CLI/runtime version drift → `VERSION_21` | **Yes** — fixed by pinning the CLI to 6.x |
+| "Unable to establish loopback connection" | No — Gradle's daemon socket works on this machine |
+| "SDK location not found" via MSIX redirection | No — the SDK is at a plain path, `C:\Android\Sdk` |
+| Keep `JAVA_HOME` on 17 | **Yes** — still a hard constraint |
+
+### `PKIX path building failed` — Norton is intercepting HTTPS
+
+The build-stopper on this machine. `sdkmanager` reports it as a download failure:
+
+```
+Warning: Failed to download any source lists!
+Warning: IO exception while downloading manifest
+Warning: Failed to find package 'platform-tools'
+```
+
+and Gradle reports it as a protocol problem, which is a red herring:
+
+```
+> The server may not support the client's requested TLS protocol versions: (TLSv1.2, TLSv1.3).
+   > (certificate_unknown) PKIX path building failed:
+     unable to find valid certification path to requested target
+```
+
+**What's actually happening.** Norton Antivirus's Web/Mail Shield terminates
+outbound TLS locally and re-signs it with its own CA, so the certificate the JVM
+sees for `dl.google.com` is:
+
+```
+Subject : CN=*.google.com
+Issuer  : CN=Norton Web/Mail Shield Root, O=Norton Web/Mail Shield,
+          OU=generated by Norton Antivirus for SSL/TLS scanning
+```
+
+That root **is** trusted by Windows, which is why `Invoke-WebRequest`, `npm` and
+the browser all work fine. Java does not use the Windows certificate store — it
+uses its own `cacerts` — so every JVM-based tool fails and nothing else does.
+That asymmetry is the diagnostic: if PowerShell can fetch a URL and Gradle can't,
+suspect the truststore, not the network.
+
+`-Djavax.net.ssl.trustStoreType=Windows-ROOT` is enough for `sdkmanager`, but
+**not** for Gradle's dependency resolver, which builds its own SSL context. So the
+durable fix is a truststore file:
+
+```powershell
+# export the Norton root Windows already trusts
+$c = Get-Item Cert:\LocalMachine\Root\303ECDCE46AD972415C293DB18ABB9AE3A705F13
+[IO.File]::WriteAllBytes("C:\Android\certs\norton-web-mail-shield-root.cer", $c.Export('Cert'))
+
+# start from a COPY of the JDK's cacerts, so the shipped truststore stays pristine
+copy "$env:JAVA_HOME\lib\security\cacerts" C:\Android\certs\gradle-truststore.jks
+keytool -importcert -noprompt -trustcacerts -alias norton-web-mail-shield `
+        -file C:\Android\certs\norton-web-mail-shield-root.cer `
+        -keystore C:\Android\certs\gradle-truststore.jks -storepass changeit
+```
+
+then point every JVM at it via `JAVA_TOOL_OPTIONS` (§1).
+
+Two deliberate choices. The truststore is a **copy**, not the JDK's own `cacerts`,
+so a JDK update can't silently drop the entry and nothing else on the machine has
+its trust widened. And the CA imported is one Windows **already** trusts from a
+locally-installed product — this adds no trust that wasn't already there.
+
+To undo it entirely: delete `C:\Android\certs` and clear `JAVA_TOOL_OPTIONS`. If
+you later exclude these hosts from Norton's HTTPS scanning, do exactly that.
+
+### Capacitor CLI and runtime must be the same major version
+
+`npm run apk` runs `cap sync`, and **`cap sync` rewrites
+`android/app/capacitor.build.gradle`** from the CLI's own template. With
+`@capacitor/cli` on 8.x and `@capacitor/core`/`@capacitor/android` on 6.x, the
+sync silently rewrote:
+
+```diff
+-      sourceCompatibility JavaVersion.VERSION_17
+-      targetCompatibility JavaVersion.VERSION_17
++      sourceCompatibility JavaVersion.VERSION_21
++      targetCompatibility JavaVersion.VERSION_21
+```
+
+which this project cannot build: it is Gradle 8.2.1 + AGP 8.2.1, and Gradle only
+gained JDK 21 support in 8.5.
+
+The file's own header says `DO NOT EDIT THIS FILE` and it means it — editing it
+back is pointless, the next `cap sync` overwrites it again. Fix the version drift
+instead, and keep all three Capacitor packages on the same major:
+
+```bash
+npm install --save-dev @capacitor/cli@^6.2.1
+npx cap sync android
+git diff --stat app/android/     # must be empty
+```
+
+A clean `git diff` on `app/android/` after a sync is the check that CLI and
+runtime agree. Moving to Capacitor 8 for real is a coordinated upgrade —
+`core` + `android` + `cli` together, plus AGP and Gradle — not a CLI bump.
 
 ### "Unable to establish loopback connection"
+
+> **Does not apply to the current machine.** Kept because the diagnosis is hard to
+> re-derive and the cause (a filter driver interfering with the Temp folder) can
+> reappear. Everything below is written for the *old* profile
+> (`C:\Users\Ahmad Amirul`) where it was reproduced. Note that `JAVA_TOOL_OPTIONS`
+> is now in use here for an unrelated reason — the Norton truststore above — so if
+> you ever need this workaround too, **append** to that variable rather than
+> replacing it.
 
 Worth reading before you touch `JAVA_TOOL_OPTIONS`, because without it every
 Gradle build fails immediately with:
@@ -261,7 +452,11 @@ Prints a `WEPollSelectorImpl` → the workaround is no longer needed. Throws
 
 ### "SDK location not found" although ANDROID_HOME is set
 
-The other build-stopper on this machine:
+> **Does not apply to the current machine** — the SDK sits at `C:\Android\Sdk`,
+> a plain path outside any package container, precisely so this cannot recur.
+> Kept as the reason that location was chosen.
+
+The build-stopper on the old machine:
 
 ```
 > Could not determine the dependencies of null.
@@ -325,8 +520,13 @@ If some future tool does need 21, keep `JAVA_HOME` on 17 and pin Gradle
 explicitly in `android/gradle.properties`:
 
 ```
-org.gradle.java.home=C:/Program Files/Java/jdk-17
+org.gradle.java.home=C:/Program Files/Eclipse Adoptium/jdk-17.0.20.8-hotspot
 ```
+
+Note that a JDK 21 runtime is already present on this machine, bundled inside
+Angry IP Scanner (`C:\Program Files\Angry IP Scanner\jre`). It is a JRE — no
+`javac` — so it can never satisfy a Gradle build, but it will answer
+`java -version` if it ever reaches `PATH`. Don't let it.
 
 ---
 

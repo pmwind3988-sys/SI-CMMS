@@ -1,0 +1,69 @@
+-- ============================================================================
+-- SI — Service Inside · 0013 Make the protected-user guard executable
+-- ============================================================================
+-- si_guard_protected_user() and si_protected_override() were added directly to
+-- the hosted project and have never existed in this directory — see the note at
+-- the bottom about the three migrations that are still only in the database.
+--
+-- THE BUG
+--
+-- The guard is SECURITY INVOKER, so its body runs as whoever triggered the
+-- write. Its first statement is:
+--
+--     if si_protected_override() then ...
+--
+-- and si_protected_override() carries {postgres=X/postgres} — EXECUTE was
+-- revoked from PUBLIC, presumably by a hardening pass modelled on 0007. So for
+-- any signed-in user the guard raises
+--
+--     permission denied for function si_protected_override
+--
+-- on its first line, before reaching the is_protected test it exists to
+-- perform. A guard meant to protect one account instead rejected every INSERT,
+-- UPDATE and DELETE on public.users for every role including admin. In the app
+-- that was Admin -> Users -> Edit and the activate/deactivate toggle failing,
+-- and a user unable to change their own phone number. Role changes and password
+-- changes survived only because they route through si_set_user_role() and the
+-- admin-users Edge Function, which run as postgres and the service role.
+--
+-- THE FIX
+--
+-- Run the guard as its owner, which is what every other guard on this schema
+-- already does — si_guard_user_self_update, si_guard_notification_update,
+-- si_guard_comment_update, si_guard_technician_update and
+-- si_guard_work_order_transition are all SECURITY DEFINER (migration 0002).
+-- This one was written without it.
+--
+-- Chosen over `grant execute on function si_protected_override() to
+-- authenticated` because that would publish the helper at
+-- /rest/v1/rpc/si_protected_override. Harmless in itself — it only reports
+-- whether a GUC the caller cannot set is set — but 0007, 0008 and 0011 spent
+-- three migrations closing exactly that kind of hole, and there is no reason to
+-- reopen one when the alternative is a single word.
+--
+-- The override itself is unaffected: current_setting() reads session state, not
+-- role state, so a DBA doing
+--     set si.allow_protected_write = 'on';
+-- in psql still bypasses the guard exactly as before.
+-- ============================================================================
+
+alter function public.si_guard_protected_user() security definer;
+
+-- Belt and braces, matching 0007: a trigger function is never called directly,
+-- and the executor does not check EXECUTE when firing one.
+revoke all on function public.si_guard_protected_user() from public, anon, authenticated;
+revoke all on function public.si_protected_override()   from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- NOTE ON MIGRATION DRIFT
+-- `supabase migration list` reports 14 timestamped versions applied to the
+-- hosted project and zero of the 0001-0014 filenames in this directory. The
+-- protected-user guard, si_protected_override() and users.is_protected are part
+-- of that gap: they are live, and this repository has no record of them.
+--
+-- CLAUDE.md states that supabase/migrations/*.sql is the source of truth for
+-- schema, RLS and triggers. Until those three unrecorded migrations are pulled
+-- back into this directory, that is not true, and the next person to read this
+-- directory will draw conclusions about public.users that the database does not
+-- share.
+-- ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@
 // work_orders.assigned_to_id is a uuid foreign key onto users(id), so its slug
 // ids ("tech-arun") could never have been assigned. AssignPanel reads the real
 // roster via listenTechnicians().
-import { ROLES } from "./roles";
+import { ROLES, ALL_ROLES, roleRank, accountRank } from "./roles";
 
 /** Humanise a millisecond duration for an SLA countdown. */
 export function fmtDue(ms) {
@@ -68,4 +68,49 @@ export function canEditWhileOpen(wo, currentUser) {
     isSupervisorOfDept(wo, currentUser) ||
     isManagerOrAdmin(currentUser)
   );
+}
+
+/* ------------------------------------------------------------------
+   User administration — mirrors the users_* policies and
+   si_guard_user_self_update as rewritten in migration 0015.
+
+   The rule: your own row, or one whose rank is strictly below yours.
+   Managers and Supervisors have no non-self branch, which is what keeps
+   user administration Admin-only.
+-------------------------------------------------------------------*/
+
+/**
+ * May `me` write this user's row at all?
+ *
+ * A protected account is never writable from the app, its own holder included —
+ * si_guard_protected_user refuses every write to one, so a Superuser changes
+ * their own name in Supabase. That is what the flag is for.
+ */
+export function canEditUser(target, me) {
+  if (!me || !target) return false;
+  if (target.is_protected) return false;
+  if (target.id === me.uid) return true;
+  return me.role === ROLES.ADMIN && accountRank(target) < accountRank(me);
+}
+
+/**
+ * Role, department and status all move someone within the hierarchy, so none of
+ * them may be aimed at yourself — the row you are always allowed to write.
+ */
+export function canChangeUserRole(target, me) {
+  return canEditUser(target, me) && target.id !== me?.uid;
+}
+
+/** Same rule; the Edge Function re-checks it server-side. */
+export function canSetUserPassword(target, me) {
+  return canEditUser(target, me);
+}
+
+/**
+ * Creating or granting a peer is not allowed, so the picker must not offer one.
+ * A Superuser ranks 6, so Administrator (5) is in range for them and for nobody
+ * else — which is exactly how a new Administrator gets made.
+ */
+export function assignableRoles(me) {
+  return ALL_ROLES.filter((r) => roleRank(r) < accountRank(me));
 }

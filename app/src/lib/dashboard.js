@@ -10,7 +10,7 @@
  * Function wrote, so the chart and card components are unchanged. updated_at is
  * merged up from the row so `cards.updated_at` still resolves.
  */
-import { supabase, liveRow } from "./supabase";
+import { supabase, liveQuery, liveRow } from "./supabase";
 
 function statRow(id, cb, onError) {
   return liveRow({
@@ -34,6 +34,30 @@ export function listenDashboardCards(cb, onError) {
 
 export function listenDashboardCharts(cb, onError) {
   return statRow("dashboard_charts", cb, onError);
+}
+
+/**
+ * The rows behind one card, live.
+ *
+ * The cards themselves stay on the precomputed snapshot — this is a single
+ * card's drill-down, opened deliberately, so one indexed query on demand is a
+ * fair price for being able to answer "which ones?".
+ *
+ * The predicates live in si_dashboard_card_rows() (migration 0012), copied from
+ * si_compute_dashboard_stats(), rather than being rebuilt as PostgREST filters
+ * here — a second definition of "open" or "completed today" in JavaScript is
+ * exactly how a drill-down starts disagreeing with the number it opened from.
+ *
+ * Being live means the list can be a few minutes ahead of the card, which is
+ * refreshed every fifteen. The modal says so rather than hiding it.
+ */
+export function listenDashboardCardRows(card, cb, onError) {
+  return liveQuery({
+    table: "work_orders",
+    run: () => supabase.rpc("si_dashboard_card_rows", { p_card: card }),
+    cb,
+    onError,
+  });
 }
 
 /** Manager/Admin-only — the role check lives inside the RPC, see migration 0004. */

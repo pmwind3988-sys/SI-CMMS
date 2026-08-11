@@ -38,6 +38,7 @@ import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, EmptyState } from "../ui/Surfaces";
 import { describeError } from "../../lib/errors";
 import StatCard from "./StatCard";
+import CardDetail, { rowFromWorkOrder } from "./CardDetail";
 
 /** The one status where work is sitting on this role's desk. */
 const ATTENTION = {
@@ -76,6 +77,7 @@ export default function RoleDashboard() {
   const router = useRouter();
   const [workOrders, setWorkOrders] = useState(null);
   const [error, setError] = useState(null);
+  const [drill, setDrill] = useState(null); // the key of the card whose rows are open
 
   useEffect(() => {
     if (!user) return;
@@ -116,22 +118,83 @@ export default function RoleDashboard() {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
+    // Each card keeps the rows it counted, not just the count — the drill-down
+    // is then the same array, so a card and its list cannot disagree.
     return {
       total: rows.length,
-      open: open.length,
+      open,
       needsMe: rows.filter((w) => w.status === attention.status),
-      inProgress: open.filter((w) => IN_PROGRESS.includes(w.status)).length,
-      overdue: overdue.length,
-      atRisk: atRisk.length,
+      inProgress: open.filter((w) => IN_PROGRESS.includes(w.status)),
+      overdue,
+      atRisk,
       closedToday: rows.filter(
         (w) => w.status === "closed" && w.closed_at && new Date(w.closed_at) >= startOfToday
-      ).length,
+      ),
       recent: [...rows].slice(0, 8),
       remainMs,
     };
   }, [workOrders, slaForPriority, attention.status]);
 
   const loading = workOrders === null || !ready;
+
+  /* Label, colour and the rows behind each figure, in one place so the card and
+     its drill-down are built from the same entry. */
+  const cards = [
+    {
+      key: "needsMe",
+      icon: Inbox,
+      label: attention.heading,
+      color: "#F59E0B",
+      rows: stats.needsMe,
+      blurb: attention.blurb,
+    },
+    {
+      key: "open",
+      icon: ClipboardList,
+      label: "Open",
+      rows: stats.open,
+      title: "Not yet closed",
+      blurb: "Everything still in flight in your scope.",
+    },
+    {
+      key: "inProgress",
+      icon: Wrench,
+      label: "In progress",
+      color: "#F59E0B",
+      rows: stats.inProgress,
+      title: "A technician is on these",
+      blurb: "Accepted through to testing.",
+    },
+    {
+      key: "atRisk",
+      icon: Clock,
+      label: "SLA at risk",
+      color: "#F59E0B",
+      rows: stats.atRisk,
+      title: "Under a quarter of the SLA window left",
+      blurb: "The same threshold the warning sweep uses before it notifies anyone.",
+    },
+    {
+      key: "overdue",
+      icon: AlertOctagon,
+      label: "Overdue",
+      color: "#EF4444",
+      rows: stats.overdue,
+      title: "Past the resolution deadline",
+      blurb: "Still open with the SLA window already spent.",
+    },
+    {
+      key: "closedToday",
+      icon: CheckCircle2,
+      label: "Closed today",
+      color: "#22C55E",
+      rows: stats.closedToday,
+      title: "Closed since midnight",
+      blurb: "Verified and closed today, in your scope.",
+    },
+  ];
+
+  const openCard = cards.find((c) => c.key === drill) || null;
 
   return (
     <div className="max-w-6xl">
@@ -146,19 +209,28 @@ export default function RoleDashboard() {
       {error && <ErrorBanner message={error} />}
 
       <div className="grid gap-3 mb-6" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
-        <StatCard
-          icon={Inbox}
-          label={attention.heading}
-          value={stats.needsMe.length}
-          color="#F59E0B"
-          loading={loading}
-        />
-        <StatCard icon={ClipboardList} label="Open" value={stats.open} loading={loading} />
-        <StatCard icon={Wrench} label="In progress" value={stats.inProgress} color="#F59E0B" loading={loading} />
-        <StatCard icon={Clock} label="SLA at risk" value={stats.atRisk} color="#F59E0B" loading={loading} />
-        <StatCard icon={AlertOctagon} label="Overdue" value={stats.overdue} color="#EF4444" loading={loading} />
-        <StatCard icon={CheckCircle2} label="Closed today" value={stats.closedToday} color="#22C55E" loading={loading} />
+        {cards.map((c) => (
+          <StatCard
+            key={c.key}
+            icon={c.icon}
+            label={c.label}
+            color={c.color}
+            value={c.rows.length}
+            loading={loading}
+            onClick={loading ? undefined : () => setDrill(c.key)}
+          />
+        ))}
       </div>
+
+      {openCard && (
+        <CardDetail
+          title={openCard.title || openCard.label}
+          blurb={openCard.blurb}
+          rows={openCard.rows.map((w) => rowFromWorkOrder(w, stats.remainMs))}
+          emptyText="Nothing here at the moment."
+          onClose={() => setDrill(null)}
+        />
+      )}
 
       {/* The actionable queue. */}
       <Card className="mb-6 overflow-hidden">

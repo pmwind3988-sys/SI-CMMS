@@ -91,6 +91,11 @@ export function AuthProvider({ children }) {
           role: claims.user_role || profile.role || null,
           departmentId: claims.department_id || profile.department_id || null,
           plantIds: claims.plant_ids || profile.plant_ids || [],
+          // A Superuser is role 'admin' plus is_protected, ranking above every
+          // role (migration 0015). Claims only, never the profile row: a missing
+          // claim must read false so a stale token degrades to plain admin
+          // rather than silently granting the top tier.
+          isSuperuser: claims.is_protected === true,
         });
       } catch (e) {
         if (active) {

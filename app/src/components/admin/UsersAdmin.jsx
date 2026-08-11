@@ -21,6 +21,8 @@ import {
   Search,
   Loader2,
   Pencil,
+  FlaskConical,
+  BadgeCheck,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useReferenceData } from "../../lib/referenceData";
@@ -31,8 +33,13 @@ import {
   setUserRole,
   setUserStatus,
   updateUserProfile,
+  clearDemoMark,
+  demoFlagsOf,
+  isDemoAccount,
+  DEMO_FLAGS,
 } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
+import { canEditUser, assignableRoles } from "../../lib/constants";
 import { ROLES, ROLE_LABELS, ALL_ROLES } from "../../lib/roles";
 import { RoleBadge } from "../ui/Badges";
 import Button from "../ui/Button";
@@ -50,6 +57,7 @@ export default function UsersAdmin() {
   const [toast, setToast] = useState(null);
   const [q, setQ] = useState("");
   const [fRole, setFRole] = useState("All");
+  const [demoOnly, setDemoOnly] = useState(false);
   const [panel, setPanel] = useState(null); // { kind: 'password'|'role'|'profile'|'create', user? }
 
   useEffect(() => {
@@ -69,6 +77,7 @@ export default function UsersAdmin() {
     const needle = q.trim().toLowerCase();
     return rows.filter((u) => {
       if (fRole !== "All" && u.role !== fRole) return false;
+      if (demoOnly && !isDemoAccount(u)) return false;
       if (!needle) return true;
       return (
         u.name?.toLowerCase().includes(needle) ||
@@ -76,18 +85,28 @@ export default function UsersAdmin() {
         u.department_id?.toLowerCase().includes(needle)
       );
     });
-  }, [users, q, fRole]);
+  }, [users, q, fRole, demoOnly]);
 
-  const activeAdmins = (users ?? []).filter((u) => u.role === ROLES.ADMIN && u.status === "active");
+  const demoCount = (users ?? []).filter(isDemoAccount).length;
 
+  async function handleClearDemoMark(u) {
+    setError(null);
+    try {
+      await clearDemoMark(u.id);
+      flash(`${u.name} is no longer marked as a demo account.`);
+    } catch (e) {
+      setError(describeError(e, "Couldn't clear that demo mark."));
+    }
+  }
+
+  // The last-active-Administrator check that used to live here is gone, and not
+  // by oversight. Migration 0015 makes locking out the last admin structurally
+  // impossible — you cannot deactivate a peer Administrator (same rank) and you
+  // cannot deactivate yourself — so the check could never fire. Worse, it had
+  // become unreliable: protected accounts are hidden from this list, so counting
+  // visible admins would have under-reported them.
   async function handleToggleStatus(u) {
     const next = u.status === "active" ? "inactive" : "active";
-    // Locking out the last active administrator is unrecoverable from inside the
-    // app — it would need the service-role key and a script to undo.
-    if (next === "inactive" && u.role === ROLES.ADMIN && activeAdmins.length <= 1) {
-      setError("This is the only active Administrator. Promote another one first.");
-      return;
-    }
     setError(null);
     try {
       await setUserStatus(u.id, next);
@@ -114,6 +133,25 @@ export default function UsersAdmin() {
       </div>
 
       {error && <ErrorBanner message={error} />}
+
+      {demoCount > 0 && (
+        <div className="mb-3.5 flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded border border-[#F59E0B66] bg-[#FFFBEB] px-4 py-3 text-[13px] text-[#92400E]">
+          <span className="flex min-w-0 items-start gap-2">
+            <FlaskConical size={15} className="mt-0.5 flex-shrink-0" />
+            <span className="min-w-0">
+              <strong>{demoCount}</strong> {demoCount === 1 ? "account is" : "accounts are"} still
+              seeded demo data. Each one shows why below, and each reason disappears on its own once
+              it is dealt with.
+            </span>
+          </span>
+          <button
+            onClick={() => setDemoOnly((v) => !v)}
+            className="flex-shrink-0 font-semibold text-[#92400E] hover:underline"
+          >
+            {demoOnly ? "Show everyone" : "Show only these"}
+          </button>
+        </div>
+      )}
 
       <div className="mb-3.5 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center">
         <div className="flex items-center gap-2 rounded border border-border bg-white px-3 py-2 sm:w-72">
@@ -145,7 +183,7 @@ export default function UsersAdmin() {
           <div className="flex-[1.5]">Role</div>
           <div className="flex-1">Department</div>
           <div className="w-20">Status</div>
-          <div className="w-[280px] text-right">Actions</div>
+          <div className="w-[320px] text-right">Actions</div>
         </div>
 
         {users === null && <div className="px-4 py-6 text-[13px] text-ink-soft">Loading users…</div>}
@@ -161,6 +199,7 @@ export default function UsersAdmin() {
                 {u.id === me?.uid && <span className="text-ink-soft font-normal"> · you</span>}
               </div>
               <div className="text-[12px] text-ink-soft truncate">{u.email}</div>
+              <DemoFlags user={u} />
             </div>
             <div className="flex-[1.5]">
               <RoleBadge role={u.role} />
@@ -169,8 +208,14 @@ export default function UsersAdmin() {
             <div className="w-20">
               <StatusText status={u.status} />
             </div>
-            <div className="w-[280px] flex items-center justify-end gap-1.5">
-              <UserActions user={u} setPanel={setPanel} onToggleStatus={handleToggleStatus} />
+            <div className="w-[320px] flex items-center justify-end gap-1.5">
+              <UserActions
+                user={u}
+                me={me}
+                setPanel={setPanel}
+                onToggleStatus={handleToggleStatus}
+                onClearDemoMark={handleClearDemoMark}
+              />
             </div>
           </div>
         ))}
@@ -192,6 +237,7 @@ export default function UsersAdmin() {
                 </div>
                 <div className="truncate text-[12px] text-ink-soft">{u.email}</div>
                 <div className="mt-1 text-[12px] text-ink-soft">{u.department_id || "No department"}</div>
+                <DemoFlags user={u} />
               </div>
               <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
                 <RoleBadge role={u.role} />
@@ -199,7 +245,13 @@ export default function UsersAdmin() {
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[#F1F3F5] pt-3">
-              <UserActions user={u} setPanel={setPanel} onToggleStatus={handleToggleStatus} />
+              <UserActions
+                user={u}
+                me={me}
+                setPanel={setPanel}
+                onToggleStatus={handleToggleStatus}
+                onClearDemoMark={handleClearDemoMark}
+              />
             </div>
           </Card>
         ))}
@@ -223,6 +275,7 @@ export default function UsersAdmin() {
       {panel?.kind === "role" && (
         <RoleDialog
           user={panel.user}
+          me={me}
           departments={departments}
           onClose={() => setPanel(null)}
           onDone={(msg) => {
@@ -243,6 +296,7 @@ export default function UsersAdmin() {
       )}
       {panel?.kind === "create" && (
         <CreateUserDialog
+          me={me}
           departments={departments}
           onClose={() => setPanel(null)}
           onDone={(msg) => {
@@ -271,25 +325,88 @@ function StatusText({ status }) {
   );
 }
 
-function UserActions({ user, setPanel, onToggleStatus }) {
+/**
+ * Why this account still counts as demo data. Rendered per row rather than as a
+ * single "Demo" pill: "placeholder email" and "never signed in" call for
+ * completely different responses, and lumping them together is what makes a
+ * flag get ignored.
+ */
+function DemoFlags({ user }) {
+  const flags = demoFlagsOf(user);
+  if (flags.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1">
+      <FlaskConical size={11} className="flex-shrink-0 text-[#B45309]" aria-hidden="true" />
+      <span className="sr-only">Demo account:</span>
+      {flags.map((f) => (
+        <span
+          key={f}
+          title={`${DEMO_FLAGS[f]?.detail ?? f} ${DEMO_FLAGS[f]?.fix ?? ""}`.trim()}
+          className="rounded bg-[#FEF3C7] px-1.5 py-px text-[10.5px] font-semibold text-[#92400E]"
+        >
+          {DEMO_FLAGS[f]?.short || f}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Buttons are hidden, not disabled, when the hierarchy forbids the action —
+ * a row you cannot act on shows nothing rather than five dead controls. These
+ * predicates only decide what to *show*; migration 0015's policies decide what
+ * is allowed, and a disagreement surfaces as the database's own error message.
+ */
+function UserActions({ user, me, setPanel, onToggleStatus, onClearDemoMark }) {
+  const editable = canEditUser(user, me);
+  const isSelf = user.id === me?.uid;
+
+  if (!editable) {
+    return (
+      <span className="text-[11.5px] text-ink-soft">
+        {user.role === me?.role ? "Same rank — not editable here" : "Not editable here"}
+      </span>
+    );
+  }
+
+  // Only offered when there is a seed mark to clear. A placeholder email is not
+  // dismissible on its own — it is still a fake address after any amount of
+  // acknowledging, and the only real fix is a different account.
+  const canClearMark = Boolean(user.seed_source);
   return (
     <>
+      {canClearMark && (
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={BadgeCheck}
+          aria-label="Not a demo account"
+          title="Mark this as a real account — clears the seed-related flags"
+          onClick={() => onClearDemoMark(user)}
+        />
+      )}
       <Button size="sm" variant="ghost" icon={KeyRound} onClick={() => setPanel({ kind: "password", user })}>
         Password
       </Button>
-      <Button size="sm" variant="ghost" icon={ShieldCheck} onClick={() => setPanel({ kind: "role", user })}>
-        Role
-      </Button>
+      {/* Role and status both move someone within the hierarchy, so neither may
+          be aimed at yourself — si_guard_user_self_update raises on both. */}
+      {!isSelf && (
+        <Button size="sm" variant="ghost" icon={ShieldCheck} onClick={() => setPanel({ kind: "role", user })}>
+          Role
+        </Button>
+      )}
       <Button size="sm" variant="ghost" icon={Pencil} onClick={() => setPanel({ kind: "profile", user })}>
         Edit
       </Button>
-      <Button
-        size="sm"
-        variant={user.status === "active" ? "danger" : "success"}
-        icon={Power}
-        aria-label={user.status === "active" ? "Deactivate account" : "Reactivate account"}
-        onClick={() => onToggleStatus(user)}
-      />
+      {!isSelf && (
+        <Button
+          size="sm"
+          variant={user.status === "active" ? "danger" : "success"}
+          icon={Power}
+          aria-label={user.status === "active" ? "Deactivate account" : "Reactivate account"}
+          onClick={() => onToggleStatus(user)}
+        />
+      )}
     </>
   );
 }
@@ -386,7 +503,11 @@ function PasswordDialog({ user, onClose, onDone }) {
   );
 }
 
-function RoleDialog({ user, departments, onClose, onDone }) {
+function RoleDialog({ user, me, departments, onClose, onDone }) {
+  // You cannot grant a role at or above your own — si_set_user_role raises on
+  // it, so the picker must not offer it. Their current role is kept in the list
+  // even if it is out of range, so the select is never blank on open.
+  const choices = Array.from(new Set([...assignableRoles(me), user.role]));
   const [role, setRole] = useState(user.role);
   const [departmentId, setDepartmentId] = useState(user.department_id || "");
   const [busy, setBusy] = useState(false);
@@ -411,7 +532,7 @@ function RoleDialog({ user, departments, onClose, onDone }) {
       <form onSubmit={submit}>
         <Field label="Role" required>
           <select value={role} onChange={(e) => setRole(e.target.value)} className={inputClass}>
-            {ALL_ROLES.map((r) => (
+            {choices.map((r) => (
               <option key={r} value={r}>
                 {ROLE_LABELS[r]}
               </option>
@@ -498,7 +619,9 @@ function ProfileDialog({ user, onClose, onDone }) {
   );
 }
 
-function CreateUserDialog({ departments, onClose, onDone }) {
+function CreateUserDialog({ me, departments, onClose, onDone }) {
+  // Creating a peer is rejected by the admin-users function, so don't offer it.
+  const choices = assignableRoles(me);
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -553,7 +676,7 @@ function CreateUserDialog({ departments, onClose, onDone }) {
         </Field>
         <Field label="Role" required>
           <select value={form.role} onChange={set("role")} className={inputClass}>
-            {ALL_ROLES.map((r) => (
+            {choices.map((r) => (
               <option key={r} value={r}>
                 {ROLE_LABELS[r]}
               </option>

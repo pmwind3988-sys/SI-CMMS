@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    The adaptive icon's background layer (Android 8+). Brand navy, matching the
+    tile the <Logo> component draws in AppShell.
+
+    This was #FFFFFF, which was correct only for the Capacitor default mark. The
+    SI foreground is white letterforms, so leaving it white would have rendered
+    the icon invisible on every Android 8+ launcher while the legacy PNG looked
+    fine — the kind of break you only see on a real handset.
+-->
 <resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <color name="ic_launcher_background">#0F3D91</color>
 </resources>
