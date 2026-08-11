@@ -24,16 +24,25 @@ export default function StatCard({
 
   const body = (
     <>
-      <div className="flex items-start justify-between gap-1.5 mb-2">
-        <span className="text-[11.5px] font-semibold text-ink-soft text-left">{label}</span>
-        {Icon && <Icon size={15} className="flex-shrink-0 mt-px" style={{ color }} />}
+      {/* `break-words`: the longest label ("Total Open Work Orders") is wider
+          than a 150px card on a 360px phone, and without it the label decided
+          the card's width instead of the grid doing it. */}
+      <div className="mb-2 flex items-start justify-between gap-1.5">
+        <span className="min-w-0 break-words text-left text-[11px] font-semibold leading-[1.35] text-ink-soft sm:text-[11.5px]">
+          {label}
+        </span>
+        {Icon && <Icon size={15} className="mt-px flex-shrink-0" style={{ color }} />}
       </div>
+      {/* `mt-auto` is the whole point of the flex column: labels wrap to one,
+          two or three lines depending on the width, and without it the numbers
+          in a row of cards sat at three different heights — the cards stretch
+          to a common height but their contents used to start from the top. */}
       {loading ? (
-        <div className="h-7 w-16 bg-canvas rounded animate-pulse" />
+        <div className="mt-auto h-7 w-16 animate-pulse rounded bg-canvas" />
       ) : (
-        <div className="flex items-baseline justify-between gap-1">
-          <span className="flex items-baseline gap-1">
-            <span className="font-mono text-[21px] sm:text-[24px] font-bold text-ink">{value}</span>
+        <div className="mt-auto flex items-baseline justify-between gap-1">
+          <span className="flex min-w-0 items-baseline gap-1">
+            <span className="font-mono text-[21px] font-bold leading-none text-ink sm:text-[24px]">{value}</span>
             {unit && <span className="text-[12px] text-ink-soft">{unit}</span>}
           </span>
           {interactive && (
@@ -48,7 +57,7 @@ export default function StatCard({
     </>
   );
 
-  const base = `rounded-xl border p-3 sm:p-4 shadow-card ${
+  const base = `flex flex-col rounded-xl border p-3 sm:p-4 shadow-card ${
     emphasis ? "border-[#F59E0B77] bg-[#FFFBEB]" : "border-border bg-white"
   }`;
 

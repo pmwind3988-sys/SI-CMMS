@@ -39,15 +39,28 @@ const ROLE_MAP = {
   admin: { c: "#EF4444", Icon: ShieldCheck },
 };
 
-export function RoleBadge({ role }) {
+/**
+ * `compact` drops the label below `xs` (400px) and leaves the icon, which is
+ * already colour-coded per role. "Administrator" is 84px of text; in the app
+ * bar, beside the hamburger, the brand mark and the bell, it was the element
+ * that pushed the row past a 360px viewport — and `body { overflow-x: hidden }`
+ * meant it was clipped rather than scrollable to.
+ */
+export function RoleBadge({ role, compact = false }) {
   const cfg = ROLE_MAP[role] || ROLE_MAP.requester;
   const Icon = cfg.Icon;
+  const label = ROLE_LABELS[role] || role;
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full text-[11.5px] font-bold px-2.5 py-1"
+      className="inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold"
       style={{ background: `${cfg.c}12`, color: cfg.c, border: `1px solid ${cfg.c}45` }}
+      // The label is hidden from the accessibility tree along with the text
+      // when it collapses, so the badge carries it itself.
+      aria-label={label}
+      title={label}
     >
-      <Icon size={12} /> {ROLE_LABELS[role] || role}
+      <Icon size={12} className="flex-shrink-0" />
+      <span className={`truncate ${compact ? "hidden xs:inline" : ""}`}>{label}</span>
     </span>
   );
 }

@@ -99,31 +99,48 @@ body {
 /* The navy brand surface — the sidebar, the login panel, the mobile brand band.
    A 160deg gradient (the value the desktop login panel already used inline) with
    two slow-drifting highlights over it, in the amber and the pale blue the rest
-   of the system uses. */
-.si-navy {
-  position: relative;
-  isolation: isolate;
-  background: linear-gradient(160deg, #0f3d91 0%, #0b2f70 100%);
-}
+   of the system uses.
 
-/* Animating background-position rather than a transform is deliberate: several
-   of the surfaces this sits on scroll (the sidebar is overflow-y-auto), and a
-   transformed overlay large enough to drift visibly would push their scroll
-   extent out and give them a stray scrollbar. */
-.si-navy::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background-image:
-    radial-gradient(38% 30% at 20% 12%, rgba(245, 158, 11, 0.22), transparent 70%),
-    radial-gradient(44% 34% at 84% 82%, rgba(96, 165, 250, 0.2), transparent 72%);
-  background-repeat: no-repeat;
-  background-size:
-    170% 170%,
-    180% 180%;
-  animation: siSheenDrift 22s ease-in-out infinite;
+   `@layer components` is load-bearing, not tidiness. Tailwind emits its
+   utilities where `@tailwind utilities` sits — the top of this file — so a bare
+   `.si-navy { position: relative }` written down here outranked `.fixed` on the
+   sidebar: same specificity, later in the sheet. The sidebar was therefore
+   never fixed below `lg`. It stayed in the flex row holding a 256px column that
+   `-translate-x-full` emptied but did not give back, so every screen had a
+   blank strip down its left that the drawer appeared to "fill" when opened —
+   it was simply sliding back into space it had never released. At `lg` the same
+   override beat `lg:sticky`, and the sidebar scrolled away with the page.
+
+   In the components layer the utility wins, which is what the layer is for.
+   `position: relative` stays as the default because the two login panels use
+   `.si-navy` with no position utility of their own and the ::before overlay
+   needs a positioned ancestor. */
+@layer components {
+  .si-navy {
+    position: relative;
+    isolation: isolate;
+    background: linear-gradient(160deg, #0f3d91 0%, #0b2f70 100%);
+  }
+
+  /* Animating background-position rather than a transform is deliberate: several
+     of the surfaces this sits on scroll (the sidebar is overflow-y-auto), and a
+     transformed overlay large enough to drift visibly would push their scroll
+     extent out and give them a stray scrollbar. */
+  .si-navy::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+      radial-gradient(38% 30% at 20% 12%, rgba(245, 158, 11, 0.22), transparent 70%),
+      radial-gradient(44% 34% at 84% 82%, rgba(96, 165, 250, 0.2), transparent 72%);
+    background-repeat: no-repeat;
+    background-size:
+      170% 170%,
+      180% 180%;
+    animation: siSheenDrift 22s ease-in-out infinite;
+  }
 }
 
 @keyframes siSheenDrift {

@@ -43,6 +43,9 @@ dev server or `npm run lint`.
 **Never run `npm run build` while `npm run dev` is live** — they share `.next`, and the
 production build corrupts the dev cache (every chunk 500s, page fails to hydrate silently).
 
+`npm run lint` is currently broken on its own: Next 16 removed `next lint`. Until the script
+is repointed at ESLint directly, `npm run build` is the compile check.
+
 Environment: `app/.env.local` (copy `.env.local.example`). `SUPABASE_SERVICE_ROLE_KEY` is
 read only by the Node scripts in `app/scripts/`; it bypasses RLS and must never be set in
 Vercel or prefixed `NEXT_PUBLIC_`.
@@ -188,13 +191,57 @@ The `attachments` bucket is private. `attachments.file_url` stores the **object 
 `listenAttachments()` mints a one-hour signed URL on read. 50MB cap with a mime allowlist,
 enforced by the bucket.
 
+### Deleting work orders (migration 0018)
+
+The only irreversible operation in the module, and the only capability that is **granted
+rather than inherent**. `role_permissions` holds one row per `si_role` value; only a
+Superuser may write it (`role_permissions_update` is `using (si_is_superuser())`), and it
+ships with Admin allowed and everyone else not — where 0002 left it. Admin → Settings →
+Permissions is the toggle-then-apply screen.
+
+Two things the toggle deliberately cannot do. It does not widen *scope*:
+`work_orders_delete` restates `work_orders_select`'s predicate, so a granted Supervisor
+reaches their own department, not the plant. And it does not reach the Superuser:
+`si_can_delete_work_orders()` is true for them unconditionally, so the account holding the
+switches cannot flip its own way out of fixing a mistake.
+
+The delete itself is a plain RLS-enforced `DELETE` from `deleteWorkOrder()`, not an RPC —
+RLS is the boundary, so nothing needs to restate it. A BEFORE DELETE trigger
+(`si_archive_deleted_work_order`, SECURITY DEFINER) snapshots the row into
+`work_order_deletions` and removes the comments, attachments and notifications that
+reference it polymorphically; history cascades on its FK. Storage objects are outside all
+of that and are removed client-side, best-effort, before the row goes.
+
+RLS refusing a DELETE removes no rows and raises nothing, so `deleteWorkOrder()` selects
+what it deleted and throws when that comes back empty. A rejected write should look like a
+rejected write.
+
 ### Admin operations
 
 Three mechanisms by need: plain UPDATE for profile fields and status (column guard limits
 non-admins to their own name/phone/photo); RPC `si_set_user_role` for role changes (also
 enforces supervisor department scoping); Edge Function `supabase/functions/admin-users` for
-password changes and account creation, since those need the service-role key. That function
-re-checks the caller is an active admin *from the database*, not from the JWT claim.
+password changes, **sign-in address changes** and account creation, since all three write
+`auth.users` and need the service-role key. That function re-checks the caller is an active
+admin *from the database*, not from the JWT claim.
+
+An email change is as privileged as a password reset — a sign-in address repointed at a
+mailbox you control is an account takeover — so `set_email` applies the same rank rule: your
+own account, or one strictly below you. An Administrator can therefore fix their own address
+and their subordinates', and not another Administrator's.
+
+### Password reset
+
+`resetPasswordForEmail` needs an absolute redirect, and `window.location.origin` is wrong in
+the APK: Capacitor serves the same export from `https://localhost`, so a link built from it
+points the user's mail client at their own phone. `NEXT_PUBLIC_SITE_URL` overrides it and
+must also be listed under Authentication → URL Configuration → Redirect URLs.
+
+`/reset-password` accepts all three link shapes, because which one arrives is project
+configuration this app does not control: the implicit fragment (`#type=recovery`, consumed
+by `detectSessionInUrl`), `?token_hash=…&type=recovery` (needs `verifyOtp`), and `?code=…`
+(PKCE, needs `exchangeCodeForSession`). It still refuses to unlock on an ordinary signed-in
+session with no recovery token — otherwise an unattended browser is a password change.
 
 ### Static export constraints
 

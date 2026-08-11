@@ -177,10 +177,16 @@ export default function AppShell({ children }) {
             </button>
 
             {/* The sidebar's brand mark is behind the drawer on mobile, so the
-                bar carries one of its own. */}
-            <Link href={dashboardPathForRole(user.role)} className="flex items-center gap-2 lg:hidden">
+                bar carries one of its own. The wordmark beside it repeats what
+                the mark already says, so it is the first thing to go when the
+                row is short of room — below `xs` the logo stands alone. */}
+            <Link
+              href={dashboardPathForRole(user.role)}
+              className="flex min-w-0 flex-shrink-0 items-center gap-2 lg:hidden"
+              aria-label="SI — Service Inside"
+            >
               <Logo size={26} variant="dark" />
-              <span className="text-[15px] font-extrabold text-navy">SI</span>
+              <span className="hidden text-[15px] font-extrabold text-navy xs:inline">SI</span>
             </Link>
 
             <div className="hidden max-w-xs flex-1 items-center gap-2 rounded bg-canvas px-3 py-1.5 sm:flex">
@@ -191,9 +197,9 @@ export default function AppShell({ children }) {
               />
             </div>
 
-            <div className="ml-auto flex flex-shrink-0 items-center gap-3 sm:gap-4">
+            <div className="ml-auto flex min-w-0 items-center gap-2.5 sm:gap-4">
               <NotificationBell />
-              <RoleBadge role={user.role} />
+              <RoleBadge role={user.role} compact />
             </div>
           </div>
         </header>

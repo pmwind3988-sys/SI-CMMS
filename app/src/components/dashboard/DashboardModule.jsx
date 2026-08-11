@@ -216,8 +216,12 @@ export default function DashboardModule() {
         </button>
       )}
 
-      {/* ---- CARDS: responsive grid — 2 cols on mobile, up to 5 on desktop ---- */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+      {/* ---- CARDS: responsive grid — up to 5 cols on desktop, 2 on a phone,
+           and one below 340px, where half of a 320px screen leaves ~95px for a
+           label like "Total Open Work Orders" and it wrapped a word per line.
+           Full width it fits on one line, so the single column is the shorter
+           card, not the taller one. ---- */}
+      <div className="mb-6 grid grid-cols-1 gap-3 min-[340px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         {CARDS.map((c) => {
           const shaped = c.format ? c.format(cards) : { value: cards?.[c.key] ?? 0 };
           return (
@@ -246,8 +250,11 @@ export default function DashboardModule() {
         )}
       </div>
 
-      {/* ---- CHARTS: 1 column on mobile, 2 columns on desktop ---- */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* ---- CHARTS: 1 column on mobile, 2 columns on desktop. `min-w-0` on the
+           children because recharts' ResponsiveContainer measures its parent:
+           without it a grid track can only shrink to its content's min width and
+           the chart keeps a width the phone does not have. ---- */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <MonthlyWorkOrdersChart data={charts?.monthly_work_orders} />
         <DepartmentBreakdownChart data={charts?.department_breakdown} />
         <MachineBreakdownChart data={charts?.machine_breakdown} />
