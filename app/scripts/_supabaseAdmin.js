@@ -65,6 +65,35 @@ function projectLabel() {
   }
 }
 
+/**
+ * Names the key kind if it is the wrong one, or returns null if it looks like a
+ * service role key.
+ *
+ * The previous version of this check tested `key.includes('"role":"anon"')`,
+ * which only matches decoded JSON — a legacy JWT carries its claims base64
+ * encoded, so pasting the legacy *anon* key here sailed straight past the guard
+ * the guard exists to be. Decode the payload and read the claim.
+ *
+ * Never logs or returns key material, only the kind.
+ */
+function describeWrongKey(key) {
+  if (key.startsWith("sb_secret_")) return null;
+  if (key.startsWith("sb_publishable_")) return "a publishable (anon) key";
+
+  if (key.startsWith("eyJ")) {
+    let role;
+    try {
+      role = JSON.parse(Buffer.from(key.split(".")[1], "base64url").toString("utf8")).role;
+    } catch {
+      return "a JWT whose payload will not decode";
+    }
+    if (role === "service_role") return null;
+    return role ? `a legacy JWT for the '${role}' role` : "a JWT with no role claim";
+  }
+
+  return "not a shape this script recognises (expected sb_secret_... or a legacy JWT)";
+}
+
 let cached = null;
 
 function admin() {
@@ -84,10 +113,17 @@ function admin() {
         "  be committed, never be prefixed NEXT_PUBLIC_, and never be set in Vercel."
     );
   }
-  if (SERVICE_KEY.startsWith("sb_publishable_") || SERVICE_KEY.includes('"role":"anon"')) {
+  const wrongKey = describeWrongKey(SERVICE_KEY);
+  if (wrongKey) {
     throw new Error(
-      "SUPABASE_SERVICE_ROLE_KEY looks like a publishable/anon key, not the service role key.\n" +
-        "  These scripts write past Row Level Security and need the service_role secret."
+      `SUPABASE_SERVICE_ROLE_KEY is ${wrongKey}, not the service role key.\n` +
+        "  These scripts write past Row Level Security and need the service_role secret:\n" +
+        "  Supabase Dashboard -> Project Settings -> API Keys -> secret (sb_secret_...),\n" +
+        "  or under Legacy API keys, the row labelled service_role.\n" +
+        "\n" +
+        "  Symptom if this slips through: every read comes back empty and every write is\n" +
+        "  denied, because RLS is being applied instead of bypassed. Empty is not an error,\n" +
+        "  so scripts report 'no rows' rather than 'wrong key'."
     );
   }
 
