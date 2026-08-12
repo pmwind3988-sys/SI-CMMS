@@ -29,6 +29,20 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Installed as a home-screen app (iOS "Add to Home Screen", or an Android /
+   desktop install) there is no browser chrome above the page, so the whole
+   document rubber-banding on an over-scroll reads as the app itself coming
+   loose from the top of the screen rather than as a browser gesture. Scoped to
+   standalone: in a tab the bounce is the platform's, and pull-to-refresh is
+   still how people reload. Scroll containers inside the page are unaffected —
+   this constrains the document's own overscroll only. */
+@media (display-mode: standalone) {
+  html,
+  body {
+    overscroll-behavior-y: none;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

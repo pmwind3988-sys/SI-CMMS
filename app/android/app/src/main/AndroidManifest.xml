@@ -38,4 +38,16 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      Status-bar alerts (@capacitor/local-notifications, src/lib/osNotifications.js).
+
+      The plugin's own manifest declares this too and the merger would supply it,
+      but it is stated here because it is the one permission this app asks the
+      user for at runtime: on Android 13+ POST_NOTIFICATIONS is a dialog, shown
+      once, and a dismissal is remembered. The prompt is behind the button in
+      NotificationBell rather than fired on launch, so a refusal costs a
+      deliberate choice rather than a mis-tap on first open.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

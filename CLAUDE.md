@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 SI — Service Inside: a CMMS work order module. Next.js 14 (static export, every page
-`"use client"`) + Supabase (Postgres) + Vercel for web, Capacitor for Android.
+`"use client"`) + Supabase (Postgres) + Vercel for web, Capacitor for Android, and an
+installable home-screen web app on iOS.
 
 The runnable app lives in `app/`. `docs/` holds the specs, `prototypes/` standalone HTML
 click-throughs, `archive/` superseded iterations (never use as reference).
@@ -71,6 +72,7 @@ Components **never import `supabase` directly**. They call `listenX(args, cb, on
 | `lib/supabase.js` | client, Remember-Me storage adapter, `liveQuery`/`liveRow` |
 | `lib/workOrders.js` | every work order read and write |
 | `lib/notifications.js` | in-app notifications |
+| `lib/osNotifications.js` | presenting one of those in the OS — status bar / notification centre |
 | `lib/dashboard.js` | the two precomputed stat rows |
 | `lib/referenceData.js` | `ReferenceDataProvider` / `useReferenceData()` |
 | `lib/admin.js` | user and reference-data administration |
@@ -185,6 +187,44 @@ equipment are **editable tables**, not literals. The first six are keyed on Post
 migration 0009 grants UPDATE only — they can be relabelled but not added to. Departments and
 assets can be added freely and appear on the raise form immediately.
 
+### Notification delivery outside the app
+
+`notifications` rows are written server-side and read by `listenNotifications`.
+`lib/osNotifications.js` is the presentation half: Android status bar via
+`@capacitor/local-notifications` on a high-importance channel, the Notification API plus a
+synthesised Web Audio chime on the web. `NotificationBell` drives it off the subscription it
+already owns, so there is no second websocket.
+
+Delivery reaches exactly as far as that websocket. App backgrounded → status-bar notification
+with sound; app in the foreground → chime only, because the badge on the bell is already the
+notification and duplicating it is what gets alerts muted; **app swiped away or browser
+closed → nothing.** That last case needs a server to push to the device and `output: "export"`
+means there isn't one — the FCM/Web Push path is written up in `app/DATA_AND_STORAGE.md` §5.
+
+On the web the notification is shown through `public/sw.js` when a registration is available
+and falls back to the `new Notification()` constructor. That is not preference, it is iOS:
+WebKit implements `registration.showNotification()` and **not** the constructor, so without
+the worker an iPhone throws instead of notifying. The worker is registered lazily, on opt-in
+rather than on mount, and **has no `fetch` handler on purpose** — a cache in front of a Next
+static export serves last week's chunks against this week's HTML and fails as a blank screen.
+It also has no `push` handler, for the same reason there is no push at all.
+
+WebKit gives an *uninstalled* iOS site no Notification API whatsoever, so the bell's opt-in
+button cannot appear in a Safari tab. `iosNeedsInstallForAlerts()` separates that fixable
+"unsupported" from a genuinely incapable browser, and the panel shows Add-to-Home-Screen
+instructions in its place.
+
+Two things that fail silently if changed carelessly. The permission request must originate in
+a user gesture on both platforms, which is why the opt-in is a button in the bell panel rather
+than a call on mount. And the Web Audio context must be resumed while the page has had a
+gesture or the chime plays nothing, with no error — hence `primeNotificationSound()` on the
+first `pointerdown`.
+
+The first batch from the subscription is a baseline, never announced: it is whatever was
+already waiting at sign-in. New rows are identified by created_at watermark **plus** an id
+set, because `si_notify()` fans one event out to several recipients in a single transaction
+and those rows share an identical `created_at`.
+
 ### Attachments
 
 The `attachments` bucket is private. `attachments.file_url` stores the **object key**;
@@ -250,6 +290,28 @@ routes, no `next/image` optimization, no middleware. The same `out/` is served b
 packaged into the APK, so web and Android ship identical UI — rebuild the APK after any web
 change. Adding a server-side feature means giving up the Android build path.
 
+### Installing on iOS
+
+iOS has no APK equivalent here: a native build needs a Mac, Xcode and a paid Apple Developer
+account, so the iPhone install is **the same export, added to the Home Screen from Safari**.
+That is `public/manifest.webmanifest` (`display: standalone`, the three PNGs `npm run icons`
+writes into `public/icons/`) plus the `appleWebApp` block in `app/layout.jsx`.
+
+Three things there are load-bearing and look redundant if you don't know why:
+
+- `apple-mobile-web-app-capable` is set by hand through `metadata.other`. Next 16 renders
+  only the standardised `mobile-web-app-capable` for `appleWebApp.capable`, and that is the
+  one iOS below 16.4 — which also ignores the manifest — does not read. Without it those
+  versions install an icon that opens inside Safari's chrome.
+- `statusBarStyle` is `"default"`, not `"black-translucent"`. Translucent draws the clock in
+  white over AppShell's white header.
+- `src/app/apple-icon.png` is flattened onto the brand navy. iOS composites a touch icon over
+  black, so `icon.svg`'s rounded corners would come out as four black notches.
+
+Unlike the APK, nothing needs re-packaging: an installed web app fetches `out/` over the
+network, so a Vercel deploy reaches every iPhone on next launch. Full walkthrough and the
+Safari-vs-installed storage differences are in `app/BUILD_AND_DEPLOY.md` §6.
+
 ## Adding a feature — sequence that works
 
 1. Migration first (schema + RLS policy + any trigger), applied via `npm run db:push`.
@@ -272,6 +334,10 @@ explicitly and run the Supabase security advisor after any migration that adds a
   still describe the model in Firestore terms. Entities/fields/relationships carried over
   unchanged; mechanisms did not (collections → tables, rules → RLS + triggers). Design intent
   only; migrations are the implementation.
+- `app/DATA_AND_STORAGE.md` — plan quotas and which one fills first (storage and egress, not
+  the database), the SQL to check each, what grows unbounded (`notifications` has no retention
+  and no client may delete it), cleanup that reclaims space rather than just marking it dead,
+  and the backup/export commands. **Free includes no backups at all.**
 - `app/BUILD_AND_DEPLOY.md` — includes three machine-specific Gradle problems on this PC.
 - `app/GO_LIVE.md` — env values, migrations, the access-token hook, seeding users.
 

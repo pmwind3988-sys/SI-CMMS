@@ -1,7 +1,8 @@
 # SI — Service Inside · Build & Deploy
 
-How this app becomes a live site on Vercel and an Android APK. Read `README.md`
-first for what the app *is*; this file is only about shipping it.
+How this app becomes a live site on Vercel, an Android APK, and an installable
+app on iPhone. Read `README.md` first for what the app *is*; this file is only
+about shipping it.
 
 The backend is Supabase (project `iclphobvhjwdinxnqexw`). Firebase was removed
 entirely on 2026-08-07 — if you find a Firebase reference anywhere outside a
@@ -272,7 +273,66 @@ update the app under the same identity.
 
 ---
 
-## 6. Machine-specific Gradle problems
+## 6. Installing on iPhone and iPad
+
+There is no `npm run ipa`, and the absence is deliberate. A native iOS build
+needs macOS, Xcode and a paid Apple Developer account, and installing the result
+on anyone's phone needs either the App Store, TestFlight, or an enrolled device
+list — none of which this repo builds on. What iOS gets instead is the **same
+static export, installed from Safari**, which needs none of those things.
+
+On the phone, against the deployed URL (`NEXT_PUBLIC_SITE_URL`, not localhost —
+Safari installs only over HTTPS):
+
+1. Open the site in **Safari**. Chrome and Firefox on iOS cannot install a web
+   app; they are Safari with a different wrapper and no share-sheet entry for it.
+2. Share → **Add to Home Screen** → Add.
+
+It lands on the springboard as **SI CMMS** with the app icon, and opens full
+screen with no address bar and no browser toolbar. `display: standalone` in
+`public/manifest.webmanifest` is what makes it full screen on iOS 16.4 and up;
+`apple-mobile-web-app-capable` in `layout.jsx` is what does it below that.
+
+What installing actually changes, beyond the icon:
+
+- **Notifications work.** WebKit exposes no Notification API at all to an
+  ordinary Safari tab, so the bell's "turn on alerts" offer cannot appear there —
+  it shows Add-to-Home-Screen instructions instead. Installed, on iOS 16.4+, the
+  offer appears and alerts land in the notification centre. Delivery is via
+  `public/sw.js`, because iOS implements `registration.showNotification()` and
+  not the `new Notification()` constructor the desktop path uses.
+- **"Remember me" stops expiring.** Safari's tracking prevention clears
+  script-writable storage for a site not visited in seven days, which includes
+  the `localStorage` the remembered session lives in. Installed web apps are not
+  subject to that sweep.
+- **Sign in once more.** An installed iOS web app has its own cookie and storage
+  jar, separate from Safari's, so the first launch is signed out even if Safari
+  was signed in. Password-reset links open in Safari for the same reason — set
+  the password there, then sign in inside the installed app.
+
+Two differences from the APK worth knowing:
+
+- **No rebuild step.** The APK embeds a snapshot of `out/`; the installed web app
+  fetches it, so a Vercel deploy reaches every iPhone on the next launch. `sw.js`
+  caches nothing precisely so that this stays true — see the comment at the top
+  of that file.
+- **Icons are build input, not a sync step.** `npm run icons` writes
+  `src/app/apple-icon.png` and `public/icons/*`; they ship on the next
+  `npm run build`. No `cap sync` equivalent is involved.
+
+### If a native iOS app is actually required
+
+Capacitor supports it and the plugins this app uses (`local-notifications`) are
+cross-platform, so the work is real but not large. It needs, and this machine has
+none of them: a Mac running Xcode, CocoaPods, and an Apple Developer Program
+membership. The sequence there is `npm i @capacitor/ios`, `npx cap add ios`,
+`npm run build && npx cap sync ios`, then signing and distribution in Xcode.
+Anything added to `capacitor.config.json` for it applies to Android too, so make
+that change on the Mac where it can be tested.
+
+---
+
+## 7. Machine-specific Gradle problems
 
 All diagnosed here so nobody re-derives them. Each one stops the APK build
 outright, and none has an error message that points at its real cause.
@@ -530,7 +590,7 @@ Angry IP Scanner (`C:\Program Files\Angry IP Scanner\jre`). It is a JRE — no
 
 ---
 
-## 7. Everyday commands
+## 8. Everyday commands
 
 | Command | What it does |
 |---|---|
@@ -544,6 +604,7 @@ Angry IP Scanner (`C:\Program Files\Angry IP Scanner\jre`). It is a JRE — no
 | `npm run bootstrap:users` | Create the six role users (needs the service-role key) |
 | `npm run seed:demo` | Seed one demo work order (needs the service-role key) |
 | `npm run apk:record` | Record the built APK into `apk_builds` |
+| `npm run icons` | Re-render the launcher, favicon and iOS/PWA icons from `resources/*.svg` |
 
 **Do not run `npm run build` while `npm run dev` is running.** They share
 `.next`, and the production build corrupts the dev server's cache — every chunk
@@ -552,7 +613,7 @@ first, or `rm -rf .next` afterwards.
 
 ---
 
-## 8. Known gaps
+## 9. Known gaps
 
 - The status change and its `work_order_history` row are now atomic
   (`si_transition_work_order`, migration 0010), but **editing** a work order's
