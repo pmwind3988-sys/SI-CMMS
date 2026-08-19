@@ -295,6 +295,19 @@ these rows in Admin → Users, in any count, or in any picker — including the 
 on the assign panel. Deliberate: a fixture that appears in a live picker is one somebody
 eventually assigns real work to.
 
+*Invisible means the `users` row, not the name.* Measured as an ordinary Administrator going
+straight at PostgREST with a fixture's exact uuid: `users?id=eq.<uuid>` returns `[]`, both
+PATCHes return `[]`, and `users?select=name` returns two rows. But `technicians?select=name`
+returns all three fixtures, because `technicians_select` is `using (si_signed_in())` and 0028
+touched only `users`. The name is also denormalised onto `work_orders.requester_name` /
+`assigned_to_name`, `work_order_history.actor_name` and `comments.author_name`.
+
+None of that is a privilege — the uuid buys nothing, as the empty PATCHes show — but the claim
+is "cannot be seen or administered as an account", not "the name appears nowhere". The
+history columns *must* keep the name; an audit trail that hides who acted is not an audit
+trail. `technicians` is the one that is arguably wrong rather than necessary, and it is not
+fixed: it is a live roster row, not a record of something that happened.
+
 *Switchable by nobody else.* `users_update` excludes them from non-Superusers, and
 `si_guard_test_account` (BEFORE UPDATE, SECURITY DEFINER) refuses a `status` change and refuses
 any change to the mark itself. Two enforcement points rather than one because the policy does
