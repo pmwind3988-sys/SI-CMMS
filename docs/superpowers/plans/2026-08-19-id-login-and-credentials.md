@@ -152,7 +152,7 @@ Adds two columns and the rules that stop the wrong people writing them. Observab
 - Consumes: `si_protected_override()` (migration 0013; EXECUTE granted to `postgres` only, callable here because every guard on this schema is SECURITY DEFINER and owned by `postgres`); `si_guard_user_self_update()` as migration 0020 left it; `si_sync_auth_user_activity()` as migration 0016 left it.
 - Produces: `public.users.employee_id text` nullable; `public.users.must_change_password boolean not null default false`; unique index `users_employee_id_key on users (upper(btrim(employee_id))) where employee_id is not null`.
 
-- [ ] **Step 1: Write the failing assertion**
+- [x] **Step 1: Write the failing assertion**
 
 Run this in the SQL Editor and keep it — step 4 re-runs it unchanged.
 
@@ -189,11 +189,11 @@ begin
 end $$;
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
 Expected: `ERROR: FAIL: users.employee_id missing, or not nullable text`.
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 Create `app/supabase/migrations/0025_employee_id_and_credentials.sql`:
 
@@ -367,7 +367,7 @@ already say the right thing. `users_update`'s non-self branch is gated on
 above stops them touching either new column on it. Widening or restating a policy
 here would add a second place for the rule to drift from.
 
-- [ ] **Step 4: Apply it, then re-run the step 1 assertion**
+- [x] **Step 4: Apply it, then re-run the step 1 assertion**
 
 ```bash
 cd app && npm run db:push
@@ -377,7 +377,7 @@ If Docker is down, paste the file into the SQL Editor and add a comment at the t
 
 Expected from the assertion: `NOTICE: PASS: 0025 columns, index and defaults`, no error.
 
-- [ ] **Step 5: Prove the uniqueness index rejects a case variant**
+- [x] **Step 5: Prove the uniqueness index rejects a case variant**
 
 ```sql
 do $$
@@ -404,7 +404,7 @@ end $$;
 
 Expected: `NOTICE: PASS: case- and whitespace-insensitive uniqueness holds`.
 
-- [ ] **Step 6: Prove a non-admin cannot clear the flag — in the app, not in SQL**
+- [x] **Step 6: Prove a non-admin cannot clear the flag — in the app, not in SQL**
 
 The SQL Editor runs as `postgres` and bypasses RLS, so this has to go through PostgREST. First, as `postgres`, give the Requester something to move:
 
@@ -433,7 +433,7 @@ Expected: an error containing `You may only change your own name, phone, and pho
 
 Note: after 0026 lands, this account will not be able to sign in while the flag is set — which is why this check belongs here, in Task 1, and not later. Clear the flag again when done.
 
-- [ ] **Step 7: Regenerate types and confirm the compile**
+- [x] **Step 7: Regenerate types and confirm the compile**
 
 ```bash
 cd app && npm run db:types && npm run build
@@ -441,7 +441,7 @@ cd app && npm run db:types && npm run build
 
 Expected: the `database.types.ts` diff shows `employee_id` and `must_change_password` on `users`; the build succeeds. Nothing reads them yet, so no other file changes.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add app/supabase/migrations/0025_employee_id_and_credentials.sql app/src/lib/database.types.ts
@@ -461,7 +461,7 @@ git commit -m "Users: employee_id and must_change_password, with their guards"
 - Consumes: `users.status`, `users.must_change_password`, `users.roles`, `users.department_id`, `users.plant_ids`, `users.is_protected`; `si_role_rank(text)`.
 - Produces: for an account that is `status <> 'active'` **or** `must_change_password`, an access token carrying **neither** `user_roles` **nor** `user_role`; and in every case a `must_change_password: true|false` claim.
 
-- [ ] **Step 1: Write the failing assertion**
+- [x] **Step 1: Write the failing assertion**
 
 `custom_access_token_hook` takes the event jsonb, so it can be called directly as `postgres` — no sign-in needed to test its logic. Keep this block; step 4 re-runs it.
 
@@ -530,11 +530,11 @@ begin
 end $$;
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
 Expected: `ERROR: FAIL(b): user_roles is still present (["admin"]) …`. That is today's hook behaving correctly for today's rules.
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 Create `app/supabase/migrations/0026_account_state_claims.sql`:
 
@@ -661,7 +661,7 @@ revoke execute on function public.custom_access_token_hook(jsonb) from authentic
 grant  select  on public.users to supabase_auth_admin;
 ```
 
-- [ ] **Step 4: List the accounts this will cut off, then apply**
+- [x] **Step 4: List the accounts this will cut off, then apply**
 
 ```sql
 select id, name, email, status, must_change_password from public.users where status <> 'active';
@@ -675,11 +675,11 @@ cd app && npm run db:push
 
 Re-run the step 1 assertion. Expected: `NOTICE: PASS: hook withholds both role claims in both states`.
 
-- [ ] **Step 5: Confirm the hook is still enabled in the dashboard**
+- [x] **Step 5: Confirm the hook is still enabled in the dashboard**
 
 Supabase Dashboard → Authentication → Hooks → Customize Access Token. It must still name `public.custom_access_token_hook`. `create or replace` does not disturb this, but the failure if it is off is silent and total, so look rather than assume.
 
-- [ ] **Step 6: THE GATE — verify a freshly minted token in the running app**
+- [x] **Step 6: THE GATE — verify a freshly minted token in the running app**
 
 `npm run dev`, sign out completely, sign in as an ordinary active user, decode the token as described in the verification model.
 
@@ -697,7 +697,7 @@ Expected: **no `user_roles` key and no `user_role` key**; `must_change_password:
 
 **Do not begin Task 3 until this step passes.**
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add app/supabase/migrations/0026_account_state_claims.sql
@@ -707,6 +707,29 @@ git commit -m "Hook: an inactive or flagged account carries no role claims"
 - [ ] **Step 8: Run the Supabase security advisor**
 
 Dashboard → Advisors → Security. CLAUDE.md requires it after any migration touching functions. `custom_access_token_hook` must not appear as anon-callable — the revoke above is restated for exactly this.
+
+#### What 0025 and 0026 were verified against (executed 2026-08-19)
+
+Recorded here rather than in the migration files, because the CLI keeps each
+applied migration's statements in `supabase_migrations.schema_migrations` and
+editing a pushed file invites a history mismatch on the next push.
+
+| Check | Result |
+|---|---|
+| 0025 columns present, defaulted, no row touched | pass |
+| ` e1042 ` then `E1042` on a second row | `23505 … users_employee_id_key` |
+| Requester clears own `must_change_password` | `403 42501` "You cannot clear your own password-change requirement." |
+| Requester sets own `employee_id` | `403 42501` "You may only change your own name, phone, and photo." |
+| Requester writes own `phone` | `200` — the guard is not a blanket refusal (cf. 0013) |
+| **Pre-0026**, inactive account, fresh token | `user_roles ["requester"]`, `user_role "requester"` — status granted nothing |
+| Post-0026, inactive | both role claims **absent**, claim `false` |
+| Post-0026, active + unflagged | `["requester"]` / `"requester"`, claim `false` |
+| Post-0026, active + flagged | both role claims **absent**, claim `true` |
+| Roleless token: `work_orders`, `notifications` | `0` rows each |
+| Roleless token: `users` | `1` row — its own, **still exposing `roles`**. This is the hole Task 3 closes. |
+| Protected Superuser, fresh token | `user_roles ["admin"]`, `is_protected: true` — the 0017 failure mode ruled out |
+| `role_permissions` no-op write as Superuser | `200`, 1 row — `si_is_superuser()` still true |
+| Admin → Settings → Permissions | renders |
 
 ---
 
