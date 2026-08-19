@@ -24,6 +24,7 @@ import {
   FlaskConical,
   BadgeCheck,
   Mail,
+  FlaskRound,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useReferenceData } from "../../lib/referenceData";
@@ -34,6 +35,7 @@ import {
   createUser,
   setUserRoles,
   setUserStatus,
+  setTestAccount,
   updateUserProfile,
   setUserEmail,
   clearDemoMark,
@@ -46,6 +48,7 @@ import {
   canEditUser,
   canSetUserPassword,
   canSendRecoveryLink,
+  canMarkTestAccount,
   canChangeUserEmail,
   assignableRoles,
 } from "../../lib/constants";
@@ -53,6 +56,7 @@ import { ROLES, ROLE_LABELS, ALL_ROLES, rolesLabel, accountRank, roleRank } from
 import { RoleBadge } from "../ui/Badges";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
+import PasswordInput from "../ui/PasswordInput";
 import { Card, ErrorBanner, EmptyState, Toast, ModalOverlay } from "../ui/Surfaces";
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -112,6 +116,21 @@ export default function UsersAdmin() {
       // "that address is a placeholder" and "you cannot reach that account" are
       // different problems with different fixes.
       setError(describeError(e, "Couldn't send that reset link."));
+    }
+  }
+
+  async function handleToggleTestAccount(u) {
+    const next = !u.is_test_account;
+    setError(null);
+    try {
+      await setTestAccount(u.id, next);
+      flash(
+        next
+          ? `${u.name} is now a test account — nobody but you can see or switch it.`
+          : `${u.name} is no longer a test account and is visible to Administrators again.`,
+      );
+    } catch (e) {
+      setError(describeError(e, "Couldn't change that."));
     }
   }
 
@@ -229,6 +248,7 @@ export default function UsersAdmin() {
                 {u.employee_id && <span> · #{u.employee_id}</span>}
               </div>
               {u.must_change_password && <MustChangePassword />}
+              {u.is_test_account && <TestAccountMark />}
               <DemoFlags user={u} />
             </div>
             <div className="flex-[1.5]">
@@ -246,6 +266,7 @@ export default function UsersAdmin() {
                 onToggleStatus={handleToggleStatus}
                 onClearDemoMark={handleClearDemoMark}
                 onSendRecoveryLink={handleSendRecoveryLink}
+                onToggleTestAccount={handleToggleTestAccount}
               />
             </div>
           </div>
@@ -272,6 +293,7 @@ export default function UsersAdmin() {
                 </div>
                 <div className="mt-1 text-[12px] text-ink-soft">{u.department_id || "No department"}</div>
                 {u.must_change_password && <MustChangePassword />}
+                {u.is_test_account && <TestAccountMark />}
                 <DemoFlags user={u} />
               </div>
               <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
@@ -287,6 +309,7 @@ export default function UsersAdmin() {
                 onToggleStatus={handleToggleStatus}
                 onClearDemoMark={handleClearDemoMark}
                 onSendRecoveryLink={handleSendRecoveryLink}
+                onToggleTestAccount={handleToggleTestAccount}
               />
             </div>
           </Card>
@@ -392,6 +415,20 @@ function StatusText({ status }) {
  * reach anything (migration 0026 withholds their roles), and if they are an
  * Administrator they cannot administer anyone either.
  */
+/**
+ * Only the Superuser ever renders this, because only the Superuser can see the
+ * row at all (migration 0028). It is a reminder of what the account is FOR —
+ * these are the fixtures the app gets tested against, and switching one on makes
+ * it a working account for as long as it stays on.
+ */
+function TestAccountMark() {
+  return (
+    <div className="mt-1 inline-flex items-center gap-1 rounded bg-[#EEF2FF] px-1.5 py-0.5 text-[11px] font-semibold text-[#3730A3]">
+      <FlaskRound size={11} /> Test account — only you can see or switch this
+    </div>
+  );
+}
+
 function MustChangePassword() {
   return (
     <div className="mt-1 text-[11.5px] text-[#92400E]">Must change password at next sign-in</div>
@@ -424,7 +461,15 @@ function DemoFlags({ user }) {
  * predicates only decide what to *show*; migration 0015's policies decide what
  * is allowed, and a disagreement surfaces as the database's own error message.
  */
-function UserActions({ user, me, setPanel, onToggleStatus, onClearDemoMark, onSendRecoveryLink }) {
+function UserActions({
+  user,
+  me,
+  setPanel,
+  onToggleStatus,
+  onClearDemoMark,
+  onSendRecoveryLink,
+  onToggleTestAccount,
+}) {
   const editable = canEditUser(user, me);
   const isSelf = user.id === me?.uid;
   const maySetPassword = canSetUserPassword(user, me);
@@ -454,6 +499,20 @@ function UserActions({ user, me, setPanel, onToggleStatus, onClearDemoMark, onSe
   const canClearMark = Boolean(user.seed_source);
   return (
     <>
+      {canMarkTestAccount(user, me) && (
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={FlaskRound}
+          aria-label={user.is_test_account ? "Stop treating as a test account" : "Make this a test account"}
+          title={
+            user.is_test_account
+              ? "Stop treating this as a test account — Administrators will see it again"
+              : "Make this a test account — it disappears from every other Administrator's view, on or off"
+          }
+          onClick={() => onToggleTestAccount(user)}
+        />
+      )}
       {canClearMark && (
         <Button
           size="sm"
@@ -578,22 +637,10 @@ function PasswordDialog({ user, onClose, onDone }) {
       {error && <ErrorBanner message={error} />}
       <form onSubmit={submit}>
         <Field label="New password" required>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={inputClass}
-            autoComplete="new-password"
-          />
+          <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
         <Field label="Confirm new password" required>
-          <input
-            type="password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            className={inputClass}
-            autoComplete="new-password"
-          />
+          <PasswordInput value={confirm} onChange={(e) => setConfirm(e.target.value)} />
         </Field>
         <p className="text-[12px] text-ink-soft mb-4">
           They are not told automatically — pass the new password on yourself. They will have to
@@ -926,13 +973,7 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
           </select>
         </Field>
         <Field label="Initial password" required>
-          <input
-            type="password"
-            value={form.password}
-            onChange={set("password")}
-            className={inputClass}
-            autoComplete="new-password"
-          />
+          <PasswordInput value={form.password} onChange={set("password")} />
         </Field>
         <p className="mb-4 text-[12px] text-ink-soft">
           A starting password — pass it on yourself. They will be asked to choose their own the

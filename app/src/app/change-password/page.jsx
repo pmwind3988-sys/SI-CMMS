@@ -32,13 +32,14 @@
  */
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Loader2, KeyRound, Eye, EyeOff } from "lucide-react";
+import { Check, Loader2, KeyRound } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../lib/supabase";
 import { dashboardPathForRole, highestRole } from "../../lib/roles";
 import { describeError } from "../../lib/errors";
 import RequireAuth from "../../components/RequireAuth";
-import Field, { inputClass } from "../../components/ui/Field";
+import Field from "../../components/ui/Field";
+import PasswordInput from "../../components/ui/PasswordInput";
 import { ErrorBanner } from "../../components/ui/Surfaces";
 import Button from "../../components/ui/Button";
 
@@ -60,7 +61,6 @@ function ChangePasswordForm() {
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [showPw, setShowPw] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -132,32 +132,16 @@ function ChangePasswordForm() {
 
       <form onSubmit={submit}>
         <Field label="New password" required>
-          <div className="relative">
-            <input
-              type={showPw ? "text" : "password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={`${inputClass} pr-10`}
-              autoComplete="new-password"
-              required
-            />
-            <button
-              type="button"
-              onClick={() => setShowPw((s) => !s)}
-              className="absolute right-3 top-2.5 text-ink-soft"
-              aria-label="Toggle password visibility"
-            >
-              {showPw ? <EyeOff size={17} /> : <Eye size={17} />}
-            </button>
-          </div>
+          <PasswordInput
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
         </Field>
         <Field label="Confirm new password" required>
-          <input
-            type="password"
+          <PasswordInput
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
-            className={inputClass}
-            autoComplete="new-password"
             required
           />
         </Field>

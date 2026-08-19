@@ -41,8 +41,8 @@ import { supabase, liveQuery } from "./supabase";
 // honest rather than relying on that.
 const USER_SELECT =
   "id, name, email, phone, employee_id, must_change_password, roles, department_id, " +
-  "plant_ids, status, created_at, last_login_at, is_protected, seed_source, " +
-  "password_changed_at, si_dummy_flags";
+  "plant_ids, status, created_at, last_login_at, is_protected, is_test_account, " +
+  "seed_source, password_changed_at, si_dummy_flags";
 
 /** Every user, live. The users_select policy already limits who sees this. */
 export function listenUsers(cb, onError) {
@@ -263,6 +263,34 @@ export async function setUserRoles(userId, roles, departmentId, plantIds) {
 export async function setUserStatus(userId, status) {
   const { error } = await supabase.from("users").update({ status }).eq("id", userId);
   if (error) throw error;
+}
+
+/**
+ * Mark an account as a test fixture, or stop.
+ *
+ * Superuser only, and enforced in two places rather than here: the users_update
+ * policy, and si_guard_test_account, which catches the SECURITY DEFINER path the
+ * policy never sees (migration 0028). This is a plain UPDATE precisely so the
+ * policy is what decides — nothing needs restating client-side.
+ *
+ * A marked account vanishes from this list for everybody else, on or off. That
+ * is the point, and it is also why the flag itself is Superuser-only: an
+ * Administrator able to set it could hide an account from every other
+ * Administrator.
+ */
+export async function setTestAccount(userId, isTestAccount) {
+  const { data, error } = await supabase
+    .from("users")
+    .update({ is_test_account: isTestAccount })
+    .eq("id", userId)
+    .select("id");
+  if (error) throw error;
+  // RLS refusing an UPDATE removes no rows and raises nothing, so an empty
+  // result is a refusal wearing a success's clothes — the same check
+  // deleteWorkOrder() makes, for the same reason.
+  if (!data?.length) {
+    throw new Error("That account wasn't changed — only the Superuser can mark a test account.");
+  }
 }
 
 /**

@@ -700,6 +700,7 @@ export type Database = {
           employee_id: string | null
           id: string
           is_protected: boolean
+          is_test_account: boolean
           last_login_at: string | null
           must_change_password: boolean
           name: string
@@ -722,6 +723,7 @@ export type Database = {
           employee_id?: string | null
           id: string
           is_protected?: boolean
+          is_test_account?: boolean
           last_login_at?: string | null
           must_change_password?: boolean
           name: string
@@ -744,6 +746,7 @@ export type Database = {
           employee_id?: string | null
           id?: string
           is_protected?: boolean
+          is_test_account?: boolean
           last_login_at?: string | null
           must_change_password?: boolean
           name?: string

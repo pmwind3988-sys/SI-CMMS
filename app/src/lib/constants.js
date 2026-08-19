@@ -142,7 +142,26 @@ export function canEditUser(target, me) {
   if (!me || !target) return false;
   if (target.is_protected) return false;
   if (target.id === me.uid) return true;
+  // A test account is the Superuser's alone (migration 0028). Mirroring the
+  // policy rather than relying on it: users_select already hides these rows from
+  // everyone else, so in practice nobody else has one to pass in — and a
+  // predicate that would say "yes" if they did is the kind that survives into a
+  // screen that reads differently one day.
+  if (target.is_test_account && me.isSuperuser !== true) return false;
   return hasRole(me, ROLES.ADMIN) && accountRank(target) < accountRank(me);
+}
+
+/**
+ * May `me` mark this account as a test fixture, or unmark it?
+ *
+ * Superuser only, and never your own row — an account that can mark itself can
+ * hide itself, which is the same objection as everywhere else in this schema.
+ */
+export function canMarkTestAccount(target, me) {
+  if (!me || !target) return false;
+  if (target.is_protected) return false;
+  if (target.id === me.uid) return false;
+  return me.isSuperuser === true;
 }
 
 /**
