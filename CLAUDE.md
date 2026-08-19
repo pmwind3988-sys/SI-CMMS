@@ -535,6 +535,31 @@ Any new function in `public` is an anon-callable RPC by default (Postgres grants
 PUBLIC, PostgREST publishes it). Migrations 0007, 0008 and 0011 exist because of this. Revoke
 explicitly and run the Supabase security advisor after any migration that adds a function.
 
+Two traps if you ever audit this statically instead of running the advisor — both were hit,
+and both produced findings that did not exist:
+
+- **`search_path` is often pinned by `alter function`, not in the `create` header.** 0007
+  pins eleven functions that way (lines 65-75). Grepping the `create function` body alone
+  reports them as unpinned. Order matters too: a later `create or replace` resets options an
+  earlier `alter` set, so the two have to be replayed in sequence, per file, in filename order.
+- **`revoke` statements here are schema-qualified inconsistently.** The token hook is
+  `revoke execute on function public.custom_access_token_hook(jsonb)`, while most others omit
+  the `public.`. A pattern that does not allow the prefix reports the single most
+  security-critical function in the schema as world-callable, which it has never been.
+
+And the deliberate exemptions are documented in 0007's own header comment, not inferable from
+the statements: `si_role()`, `si_department_id()`, `si_is_*()`, `si_in_same_department()` and
+`si_signed_in()` stay granted to `authenticated` **because policy expressions are evaluated
+with the querying user's privileges**. Revoking `si_signed_in()` would break ten policies in
+0002 alone. Read that comment before "fixing" a grant.
+
+Measured 2026-08-20, all 29 migrations: 54 functions, 28 SECURITY DEFINER, **zero** without a
+pinned `search_path`; 23 tables, all RLS-enabled; no views. The dashboard advisor agrees —
+no issues, warnings and info only. What the files still cannot show, and the advisor can:
+auth configuration (leaked-password protection, MFA, OTP expiry), extensions in `public`,
+live grants rather than intended ones, and anything changed directly in the dashboard — which
+has happened on this project, and is what 0013 exists to fix.
+
 ## Docs worth reading
 
 - `docs/SI_WorkOrder_FSD.md` — authoritative functional spec. **Where it and the code disagree
@@ -567,11 +592,12 @@ explicitly and run the Supabase security advisor after any migration that adds a
   accounts the *only* credential route is the Superuser issuing a temporary password. That
   is the accepted trade-off of Superuser-only resets working as designed, but it is more
   absolute than intended until real addresses are set. Not a code gap; a data one.
-- `send_recovery_link` is configured but **has never delivered a message**. `SITE_URL` and
-  `NEXT_PUBLIC_SITE_URL` are both set to `https://si-cmms.vercel.app`, so the function no
-  longer refuses — but the only account with a real address is Amirul's, so the first
-  successful send will also be the first test of it. Two things are still unconfirmed until
-  then: that `https://si-cmms.vercel.app/reset-password/` is listed under Authentication →
-  URL Configuration → Redirect URLs (Supabase refuses the redirect otherwise, and the link
-  dies *after* the mail arrives), and that the project's SMTP actually sends — the built-in
-  sender is rate-limited to a handful of messages an hour.
+- `send_recovery_link` is fully configured but **has never delivered a message**. `SITE_URL`
+  and `NEXT_PUBLIC_SITE_URL` are both `https://si-cmms.vercel.app`, and
+  `https://si-cmms.vercel.app/reset-password/` is listed under Authentication → URL
+  Configuration → Redirect URLs (added 2026-08-20), so nothing is known to be missing. One
+  thing is still unconfirmed and cannot be confirmed except by sending: that the project's
+  SMTP actually delivers. The built-in sender is rate-limited to a handful of messages an
+  hour and drops the rest, and `ok: true` from the function only means Supabase accepted the
+  request. Amirul's is the only account with a real address, so the first real send is also
+  the first test.
