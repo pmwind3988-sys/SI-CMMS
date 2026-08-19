@@ -9,7 +9,7 @@ export default function DashboardPage() {
   return (
     <RequireAuth>
       <RequireRole allow={[ROLES.REQUESTER]}>
-        <RoleDashboard />
+        <RoleDashboard viewRole={ROLES.REQUESTER} />
       </RequireRole>
     </RequireAuth>
   );

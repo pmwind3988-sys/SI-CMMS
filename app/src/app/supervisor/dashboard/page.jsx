@@ -9,7 +9,7 @@ export default function SupervisorDashboardPage() {
   return (
     <RequireAuth>
       <RequireRole allow={[ROLES.SUPERVISOR]}>
-        <RoleDashboard />
+        <RoleDashboard viewRole={ROLES.SUPERVISOR} />
       </RequireRole>
     </RequireAuth>
   );

@@ -18,7 +18,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { listenDashboardCards, listenDashboardCharts, listenDashboardCardRows, refreshDashboardStatsNow } from "../../lib/dashboard";
 import { listenDemoAccounts, DEMO_FLAGS, demoFlagsOf } from "../../lib/admin";
-import { ELEVATED_ROLES, ROLES, ROLE_LABELS } from "../../lib/roles";
+import { ELEVATED_ROLES, ROLES, ROLE_LABELS, hasRole, hasAnyRole } from "../../lib/roles";
 import { describeError } from "../../lib/errors";
 import StatCard from "./StatCard";
 import CardDetail, { rowFromRpc } from "./CardDetail";
@@ -26,6 +26,7 @@ import MonthlyWorkOrdersChart from "./MonthlyWorkOrdersChart";
 import DepartmentBreakdownChart from "./DepartmentBreakdownChart";
 import MachineBreakdownChart from "./MachineBreakdownChart";
 import TechnicianPerformanceChart from "./TechnicianPerformanceChart";
+import RoleSwitcher from "./RoleSwitcher";
 import { ErrorBanner } from "../ui/Surfaces";
 
 function fmtMinutes(mins) {
@@ -138,7 +139,7 @@ export default function DashboardModule() {
 
   // System administration stays Admin-only, Manager's elevation notwithstanding
   // — so does noticing that the demo accounts are still live.
-  const isAdmin = user?.role === ROLES.ADMIN;
+  const isAdmin = hasRole(user, ROLES.ADMIN);
   const [demoAccounts, setDemoAccounts] = useState(null);
 
   useEffect(() => {
@@ -157,7 +158,7 @@ export default function DashboardModule() {
     );
   }, [isAdmin]);
 
-  const canRefresh = ELEVATED_ROLES.includes(user?.role);
+  const canRefresh = hasAnyRole(user, ELEVATED_ROLES);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -179,6 +180,9 @@ export default function DashboardModule() {
 
   return (
     <div>
+      {/* Manager and Admin land here; a Manager+Supervisor reaches their other
+          queue from this strip. Renders nothing for a single-role account. */}
+      <RoleSwitcher current={user?.role} />
       <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold text-ink mb-0.5">Dashboard</h1>

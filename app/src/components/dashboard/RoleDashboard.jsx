@@ -34,6 +34,7 @@ import { useReferenceData } from "../../lib/referenceData";
 import { listenWorkOrderList } from "../../lib/workOrders";
 import { fmtDue } from "../../lib/constants";
 import { ROLES, ROLE_LABELS } from "../../lib/roles";
+import RoleSwitcher from "./RoleSwitcher";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, EmptyState } from "../ui/Surfaces";
 import { describeError } from "../../lib/errors";
@@ -71,7 +72,13 @@ const HEADINGS = {
 // Statuses where a technician is actively working the job.
 const IN_PROGRESS = ["accepted", "on_the_way", "on_site", "repairing", "testing"];
 
-export default function RoleDashboard() {
+/**
+ * @param viewRole  Which role this screen is presenting. An account may hold
+ *   several (migration 0020) and has a distinct queue under each, so the page
+ *   says which one it is rather than this component assuming the highest.
+ *   Defaults to the highest held, which is what a single-role account has.
+ */
+export default function RoleDashboard({ viewRole }) {
   const { user } = useAuth();
   const { slaForPriority, ready } = useReferenceData();
   const router = useRouter();
@@ -89,8 +96,9 @@ export default function RoleDashboard() {
     return unsub;
   }, [user]);
 
-  const attention = ATTENTION[user?.role] ?? ATTENTION[ROLES.REQUESTER];
-  const headings = HEADINGS[user?.role] ?? HEADINGS[ROLES.REQUESTER];
+  const view = viewRole ?? user?.role;
+  const attention = ATTENTION[view] ?? ATTENTION[ROLES.REQUESTER];
+  const headings = HEADINGS[view] ?? HEADINGS[ROLES.REQUESTER];
 
   const stats = useMemo(() => {
     const rows = workOrders ?? [];
@@ -198,11 +206,12 @@ export default function RoleDashboard() {
 
   return (
     <div className="max-w-6xl">
+      <RoleSwitcher current={view} />
       <div className="mb-5">
         <h1 className="text-xl font-bold text-ink mb-0.5">{headings.title}</h1>
         <p className="text-[13px] text-ink-soft">
           {headings.sub}
-          {user?.role === ROLES.SUPERVISOR && user?.departmentId ? ` · ${user.departmentId}` : ""}
+          {view === ROLES.SUPERVISOR && user?.departmentId ? ` · ${user.departmentId}` : ""}
         </p>
       </div>
 
@@ -307,9 +316,9 @@ export default function RoleDashboard() {
 
         {!loading && stats.recent.length === 0 && (
           <EmptyState>
-            {user?.role === ROLES.REQUESTER
+            {view === ROLES.REQUESTER
               ? "You haven't raised any work orders yet."
-              : user?.role === ROLES.TECHNICIAN
+              : view === ROLES.TECHNICIAN
                 ? "No tasks have been assigned to you yet."
                 : "No work orders in your department yet."}
           </EmptyState>
@@ -345,7 +354,7 @@ export default function RoleDashboard() {
       </Card>
 
       <p className="text-[11.5px] text-ink-soft mt-4">
-        Signed in as {user?.name} · {ROLE_LABELS[user?.role] || user?.role}. These figures are your
+        Signed in as {user?.name} · {ROLE_LABELS[view] || view}. These figures are your
         own scope — Row Level Security means you only ever see work orders your role covers.
       </p>
     </div>

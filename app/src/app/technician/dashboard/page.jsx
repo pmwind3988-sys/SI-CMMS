@@ -9,7 +9,7 @@ export default function TechnicianDashboardPage() {
   return (
     <RequireAuth>
       <RequireRole allow={[ROLES.TECHNICIAN]}>
-        <RoleDashboard />
+        <RoleDashboard viewRole={ROLES.TECHNICIAN} />
       </RequireRole>
     </RequireAuth>
   );
