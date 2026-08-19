@@ -41,6 +41,37 @@ TDD survives in the form the repo supports, and every task below follows it:
 Where each kind of check runs:
 
 - **SQL assertions** — Supabase Dashboard → SQL Editor, or `psql`. Both connect as `postgres`, which **bypasses RLS**: an assertion that must exercise a *policy* has to run in the app as a signed-in user instead, and every such step below says so explicitly.
+
+  **On this machine there is no way to run one from the terminal.** No `psql`, no Docker, and no stored Supabase access token, so the `do $ … $` blocks below are for the SQL Editor only — paste them there, or substitute the behavioural equivalent. Tasks 1 and 2 were executed the second way and it turned out better, not worse:
+
+  | Instead of | Do this | Why it is stronger |
+  |---|---|---|
+  | reading `pg_indexes` for `users_employee_id_key` | write two case/whitespace variants of one number and require `23505` on the second | proves the index *normalises*, not merely that it exists |
+  | calling `custom_access_token_hook()` directly | mint a real token (below) and read its claims | tests what GoTrue actually issues, hook-enabled state included |
+  | reading `information_schema` for a column | `select` it through PostgREST | a column PostgREST cannot see does not exist as far as the app is concerned |
+
+  `supabase db push` **does** work here — it connects straight to the linked remote. It is `db diff` that needs Docker, for its shadow database.
+
+- **Minting a fresh token without a password** — the refresh grant re-runs the hook, so it produces a genuinely freshly minted token from a session that is *already* signed in. This is how to test a claims change across several account states without anyone re-entering credentials, and without a service-role key. Paste once, then call `await window.__mint()` after each state change:
+  ```js
+  window.__mint = async () => {
+    const K = Object.keys(localStorage).concat(Object.keys(sessionStorage))
+      .find((k) => k.includes("auth-token"));
+    const store = localStorage.getItem(K) ? localStorage : sessionStorage;
+    const sess = JSON.parse(store.getItem(K));
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { apikey: ANON_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: sess.refresh_token }),
+    });
+    const body = await res.json();
+    if (!res.ok) return { error: `${res.status} ${JSON.stringify(body)}` };
+    // Refresh tokens ROTATE. Write the new session back or the next call fails.
+    store.setItem(K, JSON.stringify({ ...sess, ...body }));
+    return JSON.parse(atob(body.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+  };
+  ```
+  It cannot replace a real sign-out/sign-in for testing the *login page*, and it cannot mint for an account nobody is signed in as.
 - **Compile** — `npm run build` from `app/`, with the dev server stopped.
 - **Behaviour** — `npm run dev` from `app/`, signed in as the role the step names. **The person running the plan signs in themselves. Never ask for, type, or store anybody else's password.**
 - **Claims** — **the app exposes no `supabase` client on `window`**, by design: components reach it only through `lib/*`. So read the session out of storage, where the adapter in `lib/supabase.js` puts it — `localStorage` when Remember Me was ticked, `sessionStorage` otherwise. In the browser console of the running app:
