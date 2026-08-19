@@ -18,7 +18,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { listenDashboardCards, listenDashboardCharts, listenDashboardCardRows, refreshDashboardStatsNow } from "../../lib/dashboard";
 import { listenDemoAccounts, DEMO_FLAGS, demoFlagsOf } from "../../lib/admin";
-import { ELEVATED_ROLES, ROLES, ROLE_LABELS, hasRole, hasAnyRole } from "../../lib/roles";
+import { ELEVATED_ROLES, ROLES, hasRole, hasAnyRole, rolesLabel } from "../../lib/roles";
 import { describeError } from "../../lib/errors";
 import StatCard from "./StatCard";
 import CardDetail, { rowFromRpc } from "./CardDetail";
@@ -295,7 +295,9 @@ function demoAccountRow(u) {
     href: null,
     title: u.email,
     subtitle: u.name,
-    meta: `${ROLE_LABELS[u.role] || u.role} · ${u.status === "active" ? "Active" : "Inactive"}`,
+    // rolesLabel, not ROLE_LABELS[u.role]: listenDemoAccounts selects `roles`
+    // since migration 0020, so the singular column is no longer there to read.
+    meta: `${rolesLabel(u.roles)} · ${u.status === "active" ? "Active" : "Inactive"}`,
     tags: demoFlagsOf(u).map((f) => DEMO_FLAGS[f]?.short || f),
     metricKind: "none",
   };

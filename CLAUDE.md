@@ -85,15 +85,53 @@ local cache — one extra round trip per change, always exactly what RLS returns
 ### The role claim
 
 `role` is reserved by Supabase for the Postgres role PostgREST switches into. The application
-role travels as **`user_role`**, injected by `public.custom_access_token_hook`. That hook must
-be enabled (Authentication → Hooks → Customize Access Token) or every policy silently denies
-and users sign in to an empty app. Consequence: **a role change takes effect only when the
-token is next issued** (~hourly, or sign out/in).
+roles travel as **`user_roles`** (the set) and **`user_role`** (the highest of them), injected
+by `public.custom_access_token_hook`. That hook must be enabled (Authentication → Hooks →
+Customize Access Token) or every policy silently denies and users sign in to an empty app.
+Consequence: **a role change takes effect only when the token is next issued** (~hourly, or
+sign out/in).
+
+`si_roles()` falls back to `array[user_role]` when `user_roles` is absent. That is not
+defensiveness: tokens live an hour, so when migration 0020 was applied every signed-in user
+was carrying one minted by the old hook. Without the fallback all of them would have been
+denied by every policy until their token refreshed — silently, the way the missing
+`is_protected` claim failed before 0017.
 
 Roles are lowercase snake_case, matching the `si_role` enum: `requester`, `technician`,
 `supervisor`, `manager`, `admin`. Supervisor, Manager and Admin are all system-wide on work
 orders; Technician sees what is assigned to them and Requester what they raised. Admin
 screens are Admin-only, including for Managers.
+
+### Multi-role (migration 0020)
+
+**An account holds a set of roles, not one.** `users.roles si_role[]` replaced `users.role`,
+any combination is allowed, and four rules follow:
+
+- **Authorization is their union, always.** Every `si_is_*()` is a membership test over
+  `si_roles()`. On the client, `hasRole()`/`hasAnyRole()` from `lib/roles.js` — never
+  `user.role`, which is only the highest and exists for landing pages and badges.
+- **Rank is the maximum held**, so every hierarchy rule in 0015 carries over untouched: a
+  Supervisor+Technician ranks 3, Administrators still cannot edit each other, only a
+  Superuser still makes an Administrator. `si_set_user_roles` additionally requires *every*
+  role granted to be below the caller, not just the highest — otherwise `admin` could ride
+  along beside `requester` and the pair would pass as rank 5.
+- **Nobody assigns work to themselves.** `si_guard_work_order_transition` refuses it, and the
+  check sits *above* the admin bypass so it holds for Administrators and Superusers too — the
+  same placement 0015 used for the self-role-change lock. Consequence, accepted deliberately:
+  if one person is the only active Supervisor *and* the only active Technician, a Manager or
+  Admin has to do the assigning.
+- **The dashboard switcher is a view control, never a security control.** It changes which
+  queue you are looking at; the database grants the union regardless. Nothing may gate a
+  capability on it, or a security boundary ends up living in `localStorage`.
+
+The transition guard no longer asks "what is this person" — it computes which of the caller's
+roles authorise the move (`si_eligible_roles`), so a Supervisor+Technician acting on someone
+else's job qualifies as supervisor where the old technician check refused them. That same set
+stamps `work_order_history.actor_role`, which now records **the role acted under** rather than
+the account's identity.
+
+`actor_role`, `author_role`, `uploaded_by_role` and `recipient_role` stay singular. They
+record a role in a moment, and a moment still has exactly one.
 
 Supervisor **was** scoped to their `department_id` and is not any more (migration 0019).
 `department_id` survives on every table — it routes notifications and is what the dashboard
@@ -110,7 +148,9 @@ requester(1) → technician(2) → supervisor(3) → manager(4) → admin(5) →
 **You may write a `users` row if it is your own, or if its rank is strictly below yours.**
 `si_account_rank()` / `si_caller_rank()` are the SQL side, `accountRank()` in `lib/roles.js`
 the client mirror. The comparison needs no subquery because the row being checked carries
-both the role and the flag being compared.
+both the roles and the flag being compared — which is why 0020 made `roles` an array column
+on `users` rather than a join table. A join table would put a read of `users` inside a policy
+on `users`, which is the recursion this schema avoids everywhere.
 
 **Superuser is not a sixth enum value.** It is `role='admin'` plus `users.is_protected`,
 injected into the JWT as the `is_protected` claim by `custom_access_token_hook` (migration
@@ -134,10 +174,10 @@ Consequences that are deliberate, not gaps:
 - The rank rule is uniform at every level, but it does not hand out screens: `users_update`
   still gates its non-self branch on `si_is_admin()`, so Managers and Supervisors write no
   row but their own and `/admin/users` stays Admin-only. Where the uniform rule reaches them
-  is `si_set_user_role`, which they have always been able to call.
+  is `si_set_user_roles`, which they have always been able to call.
 
 Three enforcement points, because two of them bypass RLS: the `users_*` policies; the
-`si_set_user_role` RPC (SECURITY DEFINER); and `supabase/functions/admin-users` (service
+`si_set_user_roles` RPC (SECURITY DEFINER); and `supabase/functions/admin-users` (service
 role). A rule added to one and not the others is a hole — the loosest path wins.
 
 ### Protected accounts
@@ -268,7 +308,7 @@ rejected write.
 ### Admin operations
 
 Three mechanisms by need: plain UPDATE for profile fields and status (column guard limits
-non-admins to their own name/phone/photo); RPC `si_set_user_role` for role changes (also
+non-admins to their own name/phone/photo); RPC `si_set_user_roles` for role changes (also
 enforces supervisor department scoping); Edge Function `supabase/functions/admin-users` for
 password changes, **sign-in address changes** and account creation, since all three write
 `auth.users` and need the service-role key. That function re-checks the caller is an active

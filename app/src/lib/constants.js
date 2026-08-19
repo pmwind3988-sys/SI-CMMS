@@ -142,7 +142,7 @@ export function canEditUser(target, me) {
   if (!me || !target) return false;
   if (target.is_protected) return false;
   if (target.id === me.uid) return true;
-  return me.role === ROLES.ADMIN && accountRank(target) < accountRank(me);
+  return hasRole(me, ROLES.ADMIN) && accountRank(target) < accountRank(me);
 }
 
 /**
