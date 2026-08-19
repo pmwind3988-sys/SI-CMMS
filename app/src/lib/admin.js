@@ -26,6 +26,10 @@ import { supabase, liveQuery } from "./supabase";
 -------------------------------------------------------------------*/
 
 /**
+ * NOTE: employee_id and must_change_password join this select because the Users
+ * screen shows both — the number beside the address, and a marker on any account
+ * that owes a password change. Neither decides anything on the client.
+ *
  * si_dummy_flags is a computed column, not a stored one — PostgREST calls
  * si_dummy_flags(users) per row (migration 0012). Selecting it here rather than
  * re-deriving "does this still look like demo data?" in the client keeps one
@@ -36,8 +40,9 @@ import { supabase, liveQuery } from "./supabase";
 // 0015), so in practice it arrives false — carrying it keeps the predicate
 // honest rather than relying on that.
 const USER_SELECT =
-  "id, name, email, phone, roles, department_id, plant_ids, status, created_at, " +
-  "last_login_at, is_protected, seed_source, password_changed_at, si_dummy_flags";
+  "id, name, email, phone, employee_id, must_change_password, roles, department_id, " +
+  "plant_ids, status, created_at, last_login_at, is_protected, seed_source, " +
+  "password_changed_at, si_dummy_flags";
 
 /** Every user, live. The users_select policy already limits who sees this. */
 export function listenUsers(cb, onError) {
@@ -163,9 +168,32 @@ async function invokeAdminFunction(body) {
   return data;
 }
 
-/** Set any user's password directly. Admin only, enforced server-side. */
+/**
+ * Set a user's password directly.
+ *
+ * Superuser only, for anyone but yourself, and enforced server-side — an
+ * Administrator who can set a subordinate's password holds that person's
+ * credential. It also marks the account as owing a change, so the password you
+ * hand over stops working as soon as they have replaced it.
+ */
 export async function setUserPassword(userId, password) {
   return invokeAdminFunction({ action: "set_password", user_id: userId, password });
+}
+
+/**
+ * Email someone a password-recovery link — what an Administrator uses instead of
+ * setting a password.
+ *
+ * Not `supabase.auth.resetPasswordForEmail` from here, even though that would
+ * work and is what /forgot-password does. The Edge Function adds the three things
+ * this screen needs and the public endpoint cannot give: the rank check, a
+ * refusal on an address that cannot receive mail, and a message saying which of
+ * those happened. A silent success on a placeholder address is the failure this
+ * exists to prevent — the mail is accepted and delivered nowhere, and the
+ * administrator believes the person has been helped.
+ */
+export async function sendRecoveryLink(userId) {
+  return invokeAdminFunction({ action: "send_recovery_link", user_id: userId });
 }
 
 /**
@@ -187,7 +215,9 @@ export async function setUserEmail(userId, email) {
  * hook reads users.role when minting a token — so the function writes both, and
  * rolls the auth account back if the profile insert fails.
  */
-export async function createUser({ email, password, name, roles, departmentId, plantIds, phone }) {
+export async function createUser({
+  email, password, name, roles, departmentId, plantIds, phone, employeeId,
+}) {
   return invokeAdminFunction({
     action: "create_user",
     email,
@@ -197,6 +227,7 @@ export async function createUser({ email, password, name, roles, departmentId, p
     department_id: departmentId || null,
     plant_ids: plantIds || [],
     phone: phone || "",
+    employee_id: employeeId?.trim() || null,
   });
 }
 
@@ -234,11 +265,21 @@ export async function setUserStatus(userId, status) {
   if (error) throw error;
 }
 
-/** Edit the display fields on someone else's profile. */
-export async function updateUserProfile(userId, { name, phone }) {
+/**
+ * Edit the display fields on someone else's profile.
+ *
+ * employee_id is admin-only, and the column guard is what enforces it: it sits in
+ * si_guard_user_self_update's non-admin deny list (migration 0025), so a
+ * non-admin patching their own row is refused rather than silently ignored.
+ */
+export async function updateUserProfile(userId, { name, phone, employeeId }) {
   const patch = {};
   if (name !== undefined) patch.name = name;
   if (phone !== undefined) patch.phone = phone;
+  // An empty string is a deliberate clear, so `undefined` is the only skip. The
+  // column is nullable and its unique index is partial, so null is how an account
+  // has no number — rather than an empty string competing with every other one.
+  if (employeeId !== undefined) patch.employee_id = employeeId?.trim() ? employeeId.trim() : null;
   if (Object.keys(patch).length === 0) return;
   const { error } = await supabase.from("users").update(patch).eq("id", userId);
   if (error) throw error;

@@ -153,20 +153,54 @@ export function canChangeUserRole(target, me) {
   return canEditUser(target, me) && target.id !== me?.uid;
 }
 
-/** Same rule; the Edge Function re-checks it server-side. */
+/**
+ * Setting somebody else's password is SUPERUSER ONLY, so that no Administrator
+ * ever holds a credential belonging to another person. The rank rule was not
+ * enough: it stopped an Administrator taking over a *peer*, and said nothing
+ * about their subordinates.
+ *
+ * Your own is not restricted — that is /change-password, and the Edge Function
+ * allows the self case.
+ *
+ * `isSuperuser` is true only when the account carries is_protected AND holds
+ * 'admin' (see AuthContext), which is exactly what si_is_superuser() computes.
+ * So a Superuser who is inactive or owes a password change is offered nothing,
+ * because their token grants nothing.
+ */
 export function canSetUserPassword(target, me) {
-  return canEditUser(target, me);
+  if (!me || !target) return false;
+  if (target.id === me.uid) return true;
+  return me.isSuperuser === true && canEditUser(target, me);
 }
 
 /**
- * Same rule again, and it has to be: a sign-in address you can repoint at a
- * mailbox you control is an account takeover, so changing one is exactly as
- * privileged as setting a password. Your own is included — an Administrator
- * correcting their own address needs no Superuser — and a peer Administrator's
- * is not, which is the whole point of the rank rule.
+ * What an Administrator uses instead: Supabase emails the person a link and they
+ * choose their own password. Ordinary rank rule, because nothing about it puts a
+ * credential in the sender's hands.
+ *
+ * A placeholder address is excluded here as well as refused server-side. The
+ * refusal is the boundary; this only avoids offering a button whose one possible
+ * outcome is that refusal. si_dummy_flags is a computed column (migration 0012)
+ * and already on every row this screen reads.
+ */
+export function canSendRecoveryLink(target, me) {
+  if (!canEditUser(target, me)) return false;
+  return !(target.si_dummy_flags ?? []).includes("placeholder_email");
+}
+
+/**
+ * Paired with canSetUserPassword, and it has to be: repoint a subordinate's
+ * sign-in address at a mailbox you control, run the PUBLIC self-service reset at
+ * /forgot-password, and you have their password without ever setting it.
+ * Restricting one without the other would have been theatre.
+ *
+ * Your own is included — an Administrator correcting their own address needs no
+ * Superuser, and changing your own address is not an escalation.
  */
 export function canChangeUserEmail(target, me) {
-  return canEditUser(target, me);
+  if (!me || !target) return false;
+  if (target.id === me.uid) return canEditUser(target, me);
+  return me.isSuperuser === true && canEditUser(target, me);
 }
 
 /**

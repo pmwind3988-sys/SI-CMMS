@@ -38,6 +38,22 @@ const INTERNAL_FALLBACKS = {
 };
 
 /**
+ * Named stand-ins for specific constraints, because the SQLSTATE alone is not
+ * enough to say anything useful. "That already exists" on a form with four
+ * fields makes the reader guess which one — so a constraint whose name
+ * identifies the field gets a message that names it too.
+ *
+ * Keyed on the constraint name as it appears in the raw text, which is the only
+ * part of that text worth reading.
+ */
+const NAMED_CONSTRAINTS = [
+  [
+    /users_employee_id_key/i,
+    "That employee ID already belongs to another account. Numbers are matched ignoring case and spaces, so “E1042” and “e1042” are the same ID.",
+  ],
+];
+
+/**
  * Turn anything thrown by supabase-js into a sentence worth showing a user.
  * `fallback` is used only when there is genuinely nothing presentable.
  */
@@ -57,6 +73,12 @@ export function describeError(e, fallback = "Something went wrong — try again.
   }
 
   if (msg && !isInternalMessage(msg)) return msg;
+
+  // Checked before the SQLSTATE table: the constraint name is more specific than
+  // the class of error it belongs to.
+  for (const [pattern, text] of NAMED_CONSTRAINTS) {
+    if (pattern.test(msg) || pattern.test(String(e.details || ""))) return text;
+  }
 
   return INTERNAL_FALLBACKS[Number(e.code)] || INTERNAL_FALLBACKS[e.code] || fallback;
 }

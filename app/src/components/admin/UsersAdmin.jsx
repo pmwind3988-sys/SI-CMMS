@@ -23,12 +23,14 @@ import {
   Pencil,
   FlaskConical,
   BadgeCheck,
+  Mail,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useReferenceData } from "../../lib/referenceData";
 import {
   listenUsers,
   setUserPassword,
+  sendRecoveryLink,
   createUser,
   setUserRoles,
   setUserStatus,
@@ -40,7 +42,13 @@ import {
   DEMO_FLAGS,
 } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
-import { canEditUser, canChangeUserEmail, assignableRoles } from "../../lib/constants";
+import {
+  canEditUser,
+  canSetUserPassword,
+  canSendRecoveryLink,
+  canChangeUserEmail,
+  assignableRoles,
+} from "../../lib/constants";
 import { ROLES, ROLE_LABELS, ALL_ROLES, rolesLabel, accountRank, roleRank } from "../../lib/roles";
 import { RoleBadge } from "../ui/Badges";
 import Button from "../ui/Button";
@@ -84,12 +92,28 @@ export default function UsersAdmin() {
       return (
         u.name?.toLowerCase().includes(needle) ||
         u.email?.toLowerCase().includes(needle) ||
+        // An administrator holding a badge is the reason the column exists, so
+        // the number has to be searchable by it.
+        u.employee_id?.toLowerCase().includes(needle) ||
         u.department_id?.toLowerCase().includes(needle)
       );
     });
   }, [users, q, fRole, demoOnly]);
 
   const demoCount = (users ?? []).filter(isDemoAccount).length;
+
+  async function handleSendRecoveryLink(u) {
+    setError(null);
+    try {
+      const res = await sendRecoveryLink(u.id);
+      flash(res?.message || `Reset link sent to ${u.email}.`);
+    } catch (e) {
+      // describeError surfaces the function's own message, which is the point:
+      // "that address is a placeholder" and "you cannot reach that account" are
+      // different problems with different fixes.
+      setError(describeError(e, "Couldn't send that reset link."));
+    }
+  }
 
   async function handleClearDemoMark(u) {
     setError(null);
@@ -161,7 +185,7 @@ export default function UsersAdmin() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Name, email or department…"
+            placeholder="Name, email, employee ID or department…"
             className="w-full min-w-0 bg-transparent text-[13.5px] outline-none"
           />
         </div>
@@ -200,7 +224,11 @@ export default function UsersAdmin() {
                 {u.name}
                 {u.id === me?.uid && <span className="text-ink-soft font-normal"> · you</span>}
               </div>
-              <div className="text-[12px] text-ink-soft truncate">{u.email}</div>
+              <div className="text-[12px] text-ink-soft truncate">
+                {u.email}
+                {u.employee_id && <span> · #{u.employee_id}</span>}
+              </div>
+              {u.must_change_password && <MustChangePassword />}
               <DemoFlags user={u} />
             </div>
             <div className="flex-[1.5]">
@@ -217,6 +245,7 @@ export default function UsersAdmin() {
                 setPanel={setPanel}
                 onToggleStatus={handleToggleStatus}
                 onClearDemoMark={handleClearDemoMark}
+                onSendRecoveryLink={handleSendRecoveryLink}
               />
             </div>
           </div>
@@ -237,8 +266,12 @@ export default function UsersAdmin() {
                   {u.name}
                   {u.id === me?.uid && <span className="font-normal text-ink-soft"> · you</span>}
                 </div>
-                <div className="truncate text-[12px] text-ink-soft">{u.email}</div>
+                <div className="truncate text-[12px] text-ink-soft">
+                  {u.email}
+                  {u.employee_id && <span> · #{u.employee_id}</span>}
+                </div>
                 <div className="mt-1 text-[12px] text-ink-soft">{u.department_id || "No department"}</div>
+                {u.must_change_password && <MustChangePassword />}
                 <DemoFlags user={u} />
               </div>
               <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
@@ -253,6 +286,7 @@ export default function UsersAdmin() {
                 setPanel={setPanel}
                 onToggleStatus={handleToggleStatus}
                 onClearDemoMark={handleClearDemoMark}
+                onSendRecoveryLink={handleSendRecoveryLink}
               />
             </div>
           </Card>
@@ -350,6 +384,20 @@ function StatusText({ status }) {
  * completely different responses, and lumping them together is what makes a
  * flag get ignored.
  */
+/**
+ * This account was given its password by somebody else and has not replaced it.
+ *
+ * Worth surfacing here rather than only in the token, because it explains two
+ * things an administrator would otherwise report as faults: the person cannot
+ * reach anything (migration 0026 withholds their roles), and if they are an
+ * Administrator they cannot administer anyone either.
+ */
+function MustChangePassword() {
+  return (
+    <div className="mt-1 text-[11.5px] text-[#92400E]">Must change password at next sign-in</div>
+  );
+}
+
 function DemoFlags({ user }) {
   const flags = demoFlagsOf(user);
   if (flags.length === 0) return null;
@@ -376,9 +424,12 @@ function DemoFlags({ user }) {
  * predicates only decide what to *show*; migration 0015's policies decide what
  * is allowed, and a disagreement surfaces as the database's own error message.
  */
-function UserActions({ user, me, setPanel, onToggleStatus, onClearDemoMark }) {
+function UserActions({ user, me, setPanel, onToggleStatus, onClearDemoMark, onSendRecoveryLink }) {
   const editable = canEditUser(user, me);
   const isSelf = user.id === me?.uid;
+  const maySetPassword = canSetUserPassword(user, me);
+  const maySendLink = canSendRecoveryLink(user, me);
+  const placeholderEmail = (user.si_dummy_flags ?? []).includes("placeholder_email");
 
   if (!editable) {
     return (
@@ -413,9 +464,39 @@ function UserActions({ user, me, setPanel, onToggleStatus, onClearDemoMark }) {
           onClick={() => onClearDemoMark(user)}
         />
       )}
-      <Button size="sm" variant="ghost" icon={KeyRound} onClick={() => setPanel({ kind: "password", user })}>
-        Password
-      </Button>
+      {/* Superuser only, for anyone but yourself. An Administrator who can set a
+          subordinate's password holds that person's credential — so the button
+          is simply absent for them, rather than present and refused. */}
+      {maySetPassword && (
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={KeyRound}
+          title="Set a temporary password. They must change it the first time they sign in."
+          onClick={() => setPanel({ kind: "password", user })}
+        >
+          Password
+        </Button>
+      )}
+      {/* What an Administrator uses instead: the person sets their own. */}
+      {maySendLink && (
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={Mail}
+          title={`Email ${user.email} a link to set their own password`}
+          onClick={() => onSendRecoveryLink(user)}
+        >
+          Send reset link
+        </Button>
+      )}
+      {/* Neither route is available, and the reason is worth saying rather than
+          leaving a gap where two buttons were. It is also fixable, via Edit. */}
+      {!maySetPassword && !maySendLink && placeholderEmail && (
+        <span className="text-[11.5px] text-ink-soft">
+          No real email address — ask the Superuser for a temporary password
+        </span>
+      )}
       {/* Role and status both move someone within the hierarchy, so neither may
           be aimed at yourself — si_guard_user_self_update raises on both. */}
       {!isSelf && (
@@ -515,8 +596,9 @@ function PasswordDialog({ user, onClose, onDone }) {
           />
         </Field>
         <p className="text-[12px] text-ink-soft mb-4">
-          They are not told automatically — pass the new password on yourself. Their existing
-          sessions stay signed in until the token expires.
+          They are not told automatically — pass the new password on yourself. They will have to
+          replace it the first time they sign in, and until they do they can reach nothing else in
+          the app. Their existing sessions stay signed in until the token expires.
         </p>
         <div className="flex gap-2 justify-end">
           <Button variant="ghost" onClick={onClose} type="button">
@@ -638,6 +720,7 @@ function ProfileDialog({ user, me, onClose, onDone }) {
   const [name, setName] = useState(user.name || "");
   const [phone, setPhone] = useState(user.phone || "");
   const [email, setEmail] = useState(user.email || "");
+  const [employeeId, setEmployeeId] = useState(user.employee_id || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -661,8 +744,16 @@ function ProfileDialog({ user, me, onClose, onDone }) {
     // change then fails, the message says so explicitly rather than leaving the
     // admin to guess which parts of the form were applied.
     try {
-      await updateUserProfile(user.id, { name: name.trim(), phone: phone.trim() });
+      await updateUserProfile(user.id, {
+        name: name.trim(),
+        phone: phone.trim(),
+        employeeId,
+      });
     } catch (e) {
+      // A duplicate number arrives as a unique-violation on
+      // users_employee_id_key. describeError surfaces the server's own text
+      // rather than replacing it, which is what tells the administrator that the
+      // number is taken instead of that "something went wrong".
       setError(describeError(e, "Couldn't save those details."));
       setBusy(false);
       return;
@@ -694,6 +785,18 @@ function ProfileDialog({ user, me, onClose, onDone }) {
         <Field label="Phone">
           <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} />
         </Field>
+        <Field label="Employee ID">
+          <input
+            value={employeeId}
+            onChange={(e) => setEmployeeId(e.target.value)}
+            className={inputClass}
+            autoComplete="off"
+          />
+        </Field>
+        <p className="mb-4 text-[12px] text-ink-soft">
+          Their existing HR or payroll number. Optional, and it becomes a second way for them to
+          sign in — case and spaces do not matter. Leave it blank if they do not have one.
+        </p>
         <Field label="Email" required={mayChangeEmail}>
           <input
             type="email"
@@ -707,7 +810,7 @@ function ProfileDialog({ user, me, onClose, onDone }) {
         </Field>
         <p id="email-note" className="text-[12px] text-ink-soft mb-4">
           {!mayChangeEmail
-            ? "You can only change the sign-in address of your own account, or of someone below you in the hierarchy."
+            ? "Only the Superuser can change someone else's sign-in address — an address pointed at a mailbox you control, plus the self-service reset, is a password reset. You can change your own."
             : emailChanged
               ? `This is how they sign in. From now on they will use ${nextEmail}, not ${originalEmail} — tell them, and their existing sessions stay signed in until the token expires.`
               : "This is how they sign in. Changing it takes effect immediately; the new address is marked confirmed, so there is no email to click."}
@@ -735,6 +838,7 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
     roles: [ROLES.REQUESTER],
     departmentId: "",
     password: "",
+    employeeId: "",
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -769,6 +873,7 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
         departmentId: form.departmentId || null,
         plantIds: ["PLT001"],
         phone: form.phone.trim(),
+        employeeId: form.employeeId,
       });
       onDone(res?.message || `${form.name.trim()} created.`);
     } catch (e) {
@@ -789,6 +894,9 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
         </Field>
         <Field label="Phone">
           <input value={form.phone} onChange={set("phone")} className={inputClass} />
+        </Field>
+        <Field label="Employee ID">
+          <input value={form.employeeId} onChange={set("employeeId")} className={inputClass} autoComplete="off" />
         </Field>
         <Field label="Roles" required>
           {/* An account holds a set and gets the union of what those roles
@@ -826,6 +934,10 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
             autoComplete="new-password"
           />
         </Field>
+        <p className="mb-4 text-[12px] text-ink-soft">
+          A starting password — pass it on yourself. They will be asked to choose their own the
+          first time they sign in, and until they do, they can reach nothing else.
+        </p>
         {form.roles.includes(ROLES.TECHNICIAN) && (
           <p className="text-[12px] text-ink-soft mb-4">
             A technician record is created too, so they can be assigned work straight away. Add
