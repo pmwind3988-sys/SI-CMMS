@@ -1,0 +1,19 @@
+# Per-function settings. This file exists for exactly one line of it.
+#
+# The CLI defaults verify_jwt to true, which is right for every function that
+# acts on behalf of a signed-in user. auth-signin is the exception: its caller has
+# no session yet, because obtaining one is the entire point.
+#
+# Nothing else belongs here. Project settings live in the dashboard; this repo
+# reaches the remote project with `db push` and `functions deploy` and has never
+# needed a local Supabase stack (which would need Docker, which is not installed
+# on the machine this was written on).
+
+[functions.admin-users]
+verify_jwt = true
+
+# MUST be false. Deployed with verification on, every sign-in attempt is rejected
+# with a 401 before a line of the function runs — and the symptom looks nothing
+# like the cause, because the response never comes from our code.
+[functions.auth-signin]
+verify_jwt = false
