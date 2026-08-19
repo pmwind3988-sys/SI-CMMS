@@ -41,22 +41,44 @@ import { describeError } from "../../lib/errors";
 import StatCard from "./StatCard";
 import CardDetail, { rowFromWorkOrder } from "./CardDetail";
 
-/** The one status where work is sitting on this role's desk. */
+/**
+ * The one status where work is sitting on this role's desk, and `scope` — which
+ * rows count as this role's at all.
+ *
+ * `scope` is not optional, and it applies to the whole dashboard rather than
+ * only the attention card. It was implicit while RLS did the narrowing: a
+ * Technician received only their own rows, so "status === assigned" could not
+ * have matched anyone else's job and "Open" could not have counted anyone else's
+ * work. A multi-role account (migration 0020) breaks that — listenWorkOrderList
+ * gives a Supervisor+Technician the whole plant — so the Technician view
+ * reported every unaccepted job in the plant as waiting on them personally and
+ * every card under "Jobs assigned to you" counted jobs that were not.
+ *
+ * This narrows what is *displayed* and nothing else. The account still holds the
+ * union server-side; scoping a view is not a permission, which is the line the
+ * switcher must never cross.
+ *
+ * Supervisor scopes to everything on purpose. The unassigned queue is owned by
+ * nobody yet — having no technician is precisely what puts it on their desk.
+ */
 const ATTENTION = {
   [ROLES.REQUESTER]: {
     status: "completed",
+    scope: (w, uid) => w.requester_id === uid,
     heading: "Waiting for you to verify",
     blurb: "The technician says these are fixed. Confirm, or send them back.",
     cta: "Verify",
   },
   [ROLES.TECHNICIAN]: {
     status: "assigned",
+    scope: (w, uid) => w.assigned_to_id === uid,
     heading: "Waiting for you to accept",
     blurb: "Accept to start, or decline with a reason so the Supervisor can reassign.",
     cta: "Open",
   },
   [ROLES.SUPERVISOR]: {
     status: "open",
+    scope: () => true,
     heading: "Waiting for assignment",
     blurb: "These have no technician yet.",
     cta: "Assign",
@@ -66,7 +88,10 @@ const ATTENTION = {
 const HEADINGS = {
   [ROLES.REQUESTER]: { title: "My Work Orders", sub: "Everything you've raised, and what's happening with it." },
   [ROLES.TECHNICIAN]: { title: "My Tasks", sub: "Jobs assigned to you, newest first." },
-  [ROLES.SUPERVISOR]: { title: "Department Dashboard", sub: "Your department's queue, assignments and SLA health." },
+  // Not "Department Dashboard" since migration 0019 — a Supervisor covers the
+  // whole plant, and listenWorkOrderList gives them every row a Manager sees.
+  // Naming a department here claimed a filter these figures do not apply.
+  [ROLES.SUPERVISOR]: { title: "Supervisor Dashboard", sub: "The plant's queue, assignments and SLA health." },
 };
 
 // Statuses where a technician is actively working the job.
@@ -101,7 +126,10 @@ export default function RoleDashboard({ viewRole }) {
   const headings = HEADINGS[view] ?? HEADINGS[ROLES.REQUESTER];
 
   const stats = useMemo(() => {
-    const rows = workOrders ?? [];
+    // Scoped to the role being viewed, not to everything this account may read.
+    // Every card, the recent list and each drill-down are built from this one
+    // array, so none of them can disagree with the heading above them.
+    const rows = (workOrders ?? []).filter((w) => attention.scope(w, user?.uid));
     const open = rows.filter((w) => w.status !== "closed");
 
     const remainMs = (w) => {
@@ -141,7 +169,7 @@ export default function RoleDashboard({ viewRole }) {
       recent: [...rows].slice(0, 8),
       remainMs,
     };
-  }, [workOrders, slaForPriority, attention.status]);
+  }, [workOrders, slaForPriority, attention, user?.uid]);
 
   const loading = workOrders === null || !ready;
 
@@ -211,7 +239,6 @@ export default function RoleDashboard({ viewRole }) {
         <h1 className="text-xl font-bold text-ink mb-0.5">{headings.title}</h1>
         <p className="text-[13px] text-ink-soft">
           {headings.sub}
-          {view === ROLES.SUPERVISOR && user?.departmentId ? ` · ${user.departmentId}` : ""}
         </p>
       </div>
 
