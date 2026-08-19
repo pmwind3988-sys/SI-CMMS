@@ -16,7 +16,9 @@ import { inputClass } from "../ui/Field";
 const TITLES = {
   [ROLES.REQUESTER]: "My Work Orders",
   [ROLES.TECHNICIAN]: "My Tasks",
-  [ROLES.SUPERVISOR]: "Work Orders — My Department",
+  // Not "My Department" since migration 0019 — a Supervisor now gets the same
+  // system-wide list a Manager does.
+  [ROLES.SUPERVISOR]: "Work Orders",
   [ROLES.MANAGER]: "Work Orders",
   [ROLES.ADMIN]: "Work Orders — All",
 };
@@ -24,7 +26,10 @@ const TITLES = {
 const EMPTY_MESSAGES = {
   [ROLES.REQUESTER]: "You haven't raised any work orders yet.",
   [ROLES.TECHNICIAN]: "No tasks assigned to you right now.",
-  [ROLES.SUPERVISOR]: "No work orders match these filters in your department.",
+  // Not "in your department" any more — migration 0019 gave Supervisors the
+  // whole plant, and an empty state that names a scope the policy no longer
+  // applies sends someone looking for a filter that is not there.
+  [ROLES.SUPERVISOR]: "No work orders match these filters.",
   [ROLES.MANAGER]: "No work orders match these filters.",
   [ROLES.ADMIN]: "No work orders match these filters.",
 };
@@ -53,7 +58,14 @@ export default function WorkOrderList() {
     return workOrders.filter((w) => {
       if (fPriority !== "All" && w.priority !== fPriority) return false;
       if (fStatus !== "All" && w.status !== fStatus) return false;
-      if (q && !(w.asset_name?.toLowerCase().includes(q.toLowerCase()) || w.wo_number?.toLowerCase().includes(q.toLowerCase()))) return false;
+      if (q) {
+        const needle = q.toLowerCase();
+        // area joins WO# and equipment rather than getting its own filter: it is
+        // free text, so a dropdown of every value anyone ever typed is not a
+        // control worth having.
+        const haystack = [w.asset_name, w.wo_number, w.area];
+        if (!haystack.some((v) => v?.toLowerCase().includes(needle))) return false;
+      }
       return true;
     });
   }, [workOrders, fPriority, fStatus, q]);
@@ -98,7 +110,7 @@ export default function WorkOrderList() {
       <div className="mb-3.5 grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap sm:gap-3">
         <div className="col-span-2 flex items-center gap-2 rounded border border-border bg-white px-3 py-1.5 sm:w-64">
           <Search size={14} className="flex-shrink-0 text-ink-soft" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search WO# or equipment…" className="w-full min-w-0 outline-none text-[13px]" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={"Search WO#, equipment or area…"} className="w-full min-w-0 outline-none text-[13px]" />
         </div>
         <select value={fPriority} onChange={(e) => setFPriority(e.target.value)} className={`${inputClass} min-w-0 sm:w-36`}>
           <option>All</option>

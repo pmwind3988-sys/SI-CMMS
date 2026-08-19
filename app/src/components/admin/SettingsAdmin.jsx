@@ -21,10 +21,11 @@
  * supervisor's board without them reloading.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Check, X, Pencil, Plus, Loader2, Info, ShieldAlert, Lock } from "lucide-react";
+import { Check, X, Pencil, Plus, Trash2, Loader2, Info, ShieldAlert, Lock } from "lucide-react";
 import { useReferenceData, updateReferenceRow } from "../../lib/referenceData";
 import {
   upsertDepartment,
+  deleteDepartment,
   upsertAsset,
   updateSlaTargets,
   updatePriority,
@@ -238,7 +239,7 @@ export default function SettingsAdmin() {
 
       {ref.ready && tab === "departments" && (
         <EditableTable
-          note="Departments scope what a Supervisor can see, so an id here must match the department on their user record."
+          note="Departments no longer scope who sees a work order — every Supervisor sees all of them. This is the dimension the dashboard breaks down by, and anyone raising a work order can add one from the form, so it is worth tidying."
           rows={ref.departments}
           rowKey="id"
           columns={[
@@ -271,6 +272,11 @@ export default function SettingsAdmin() {
             });
             flash(`${values.name} added.`);
           }}
+          onDelete={async (row) => {
+            await deleteDepartment(row.id);
+            flash(`${row.name} deleted.`);
+          }}
+          deleteWarning="Departments still referenced by a work order, a piece of equipment or a user can't be deleted — you'll be told which. This can't be undone."
         />
       )}
 
@@ -545,11 +551,23 @@ function EditableTable({
   addLabel,
   addFields,
   onAdd,
+  /**
+   * Optional. Only the tables holding real operational records get one — the
+   * enum-keyed lookups (statuses, priorities, impacts, types, severities) have
+   * no delete policy at all, because their row set is the enum's and a status
+   * with no transition rows would be a broken status (migration 0009).
+   *
+   * One row at a time, with a confirmation. Checkbox multi-select arrives with
+   * the rest of the admin CRUD work and will absorb this button.
+   */
+  onDelete,
+  deleteWarning,
 }) {
   const [editing, setEditing] = useState(null); // row key
   const [draft, setDraft] = useState({});
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [confirming, setConfirming] = useState(null); // row pending deletion
 
   function startEdit(row) {
     setEditing(row[rowKey]);
@@ -604,14 +622,17 @@ function EditableTable({
           nothing on a phone. */}
       <Card className="overflow-hidden">
         <div className="overflow-x-auto scroll-touch">
-          <div className="min-w-[46rem]">
+          {/* Widened when there is a delete column: the action cell grows from
+              w-24 to w-32, and a min-width that did not grow with it left the
+              delete button outside the scrollable area entirely. */}
+          <div className={onDelete ? "min-w-[49rem]" : "min-w-[46rem]"}>
             <div className="flex items-center px-4 py-2.5 bg-canvas text-[11.5px] font-bold text-ink-soft uppercase tracking-wide">
               {columns.map((c) => (
                 <div key={c.key} className={c.width}>
                   {c.label}
                 </div>
               ))}
-              <div className="w-24 text-right">Edit</div>
+              <div className={`${onDelete ? "w-32" : "w-24"} text-right`}>{onDelete ? "Actions" : "Edit"}</div>
             </div>
 
             {rows.map((row, i) => {
@@ -634,7 +655,7 @@ function EditableTable({
                       )}
                     </div>
                   ))}
-                  <div className="w-24 flex justify-end gap-1.5">
+                  <div className={`${onDelete ? "w-32" : "w-24"} flex justify-end gap-1.5`}>
                     {isEditing ? (
                       <>
                         <Button size="sm" variant="ghost" icon={X} aria-label="Cancel edit" onClick={() => setEditing(null)} />
@@ -647,7 +668,18 @@ function EditableTable({
                         />
                       </>
                     ) : (
-                      <Button size="sm" variant="ghost" icon={Pencil} aria-label="Edit row" onClick={() => startEdit(row)} />
+                      <>
+                        <Button size="sm" variant="ghost" icon={Pencil} aria-label="Edit row" onClick={() => startEdit(row)} />
+                        {onDelete && (
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            icon={Trash2}
+                            aria-label="Delete row"
+                            onClick={() => setConfirming(row)}
+                          />
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -657,6 +689,19 @@ function EditableTable({
         </div>
       </Card>
       <p className="mt-2 text-[11.5px] text-ink-soft lg:hidden">Scroll the table sideways to reach every column.</p>
+
+      {confirming && (
+        <ConfirmDeleteDialog
+          label={confirming.name || confirming.label || confirming[rowKey]}
+          warning={deleteWarning}
+          onClose={() => setConfirming(null)}
+          onConfirm={async () => {
+            await onDelete(confirming);
+            setConfirming(null);
+          }}
+          onError={onError}
+        />
+      )}
 
       {adding && (
         <AddRowDialog
@@ -737,6 +782,59 @@ function CellInput({ column, value, onChange }) {
       onChange={(e) => onChange(e.target.value)}
       className={base}
     />
+  );
+}
+
+/**
+ * Deleting reference data is not undoable and not a status change, so it asks
+ * first — the only other place in this module that does is deleting a work
+ * order.
+ *
+ * The failure is shown in the dialog AND passed to onError for the page banner,
+ * matching AddRowDialog below. Both are wanted: deleteDepartment() reports what
+ * is still pointing at the row, which only reads properly next to the name, and
+ * the banner keeps that sentence on screen after the dialog is dismissed.
+ */
+function ConfirmDeleteDialog({ label, warning, onClose, onConfirm, onError }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function confirm() {
+    setError(null);
+    setBusy(true);
+    try {
+      await onConfirm();
+    } catch (err) {
+      setError(describeError(err, "Couldn't delete that."));
+      onError?.(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ModalOverlay className="p-4">
+      <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
+        <div className="mb-4 flex items-start justify-between">
+          <h2 className="text-[15.5px] font-bold text-ink">Delete {label}?</h2>
+          <button onClick={onClose} aria-label="Close" className="text-ink-soft hover:text-ink">
+            <X size={18} />
+          </button>
+        </div>
+        {error && <ErrorBanner message={error} />}
+        <p className="mb-5 text-[13px] text-ink-soft">
+          {warning || "This can't be undone."}
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" type="button" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="danger" icon={busy ? Loader2 : Trash2} disabled={busy} onClick={confirm}>
+            {busy ? "Deleting…" : "Delete"}
+          </Button>
+        </div>
+      </Card>
+    </ModalOverlay>
   );
 }
 

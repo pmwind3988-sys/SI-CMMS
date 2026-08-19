@@ -53,8 +53,16 @@ export function isAssigneeOf(wo, currentUser) {
 export function isRequesterOf(wo, currentUser) {
   return currentUser?.role === ROLES.REQUESTER && wo.requester_id === currentUser.uid;
 }
-export function isSupervisorOfDept(wo, currentUser) {
-  return currentUser?.role === ROLES.SUPERVISOR && wo.department_id === currentUser.departmentId;
+/**
+ * A Supervisor reaches every work order, not just their own department's
+ * (migration 0019). Equipment is pickable from anywhere, so the department a
+ * work order carries is the machine's, not the raiser's — it identifies who
+ * maintains the asset and what the dashboard groups by, and no longer decides
+ * who may look. The `wo` argument is kept so the call sites read the same as
+ * the other two scope predicates beside it.
+ */
+export function isSupervisor(wo, currentUser) {
+  return currentUser?.role === ROLES.SUPERVISOR;
 }
 export function isManagerOrAdmin(currentUser) {
   return currentUser?.role === ROLES.MANAGER || currentUser?.role === ROLES.ADMIN;
@@ -65,7 +73,7 @@ export function canAssign(currentUser) {
 export function canEditWhileOpen(wo, currentUser) {
   return (
     (currentUser?.role === ROLES.REQUESTER && wo.requester_id === currentUser.uid) ||
-    isSupervisorOfDept(wo, currentUser) ||
+    isSupervisor(wo, currentUser) ||
     isManagerOrAdmin(currentUser)
   );
 }
@@ -95,7 +103,7 @@ export function canDeleteWorkOrder(wo, currentUser, roleCan) {
   if (!canDeleteWorkOrders(currentUser, roleCan)) return false;
   return (
     isManagerOrAdmin(currentUser) ||
-    isSupervisorOfDept(wo, currentUser) ||
+    isSupervisor(wo, currentUser) ||
     isAssigneeOf(wo, currentUser) ||
     isRequesterOf(wo, currentUser)
   );

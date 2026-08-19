@@ -6,8 +6,10 @@ import { ArrowLeft, Factory, Image as ImageIcon, Video, X, Sparkles, AlertTriang
 import { useAuth } from "../../context/AuthContext";
 import { createWorkOrder, updateWorkOrderFields, addAttachment } from "../../lib/workOrders";
 import { useReferenceData } from "../../lib/referenceData";
+import { createDepartment } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
 import Field, { inputClass } from "../ui/Field";
+import Combobox from "../ui/Combobox";
 import Button from "../ui/Button";
 import { Card, ErrorBanner } from "../ui/Surfaces";
 import { PriorityBadge } from "../ui/Badges";
@@ -29,7 +31,7 @@ export default function RaiseWorkOrderForm({ existing }) {
     types,
     severities,
     assetById,
-    assetsForDepartment,
+    departmentName,
     priorityColor,
     slaForPriority,
     suggestPriority,
@@ -39,6 +41,8 @@ export default function RaiseWorkOrderForm({ existing }) {
 
   const [departmentId, setDepartmentId] = useState(existing?.department_id || "");
   const [assetId, setAssetId] = useState(existing?.asset_id || "");
+  const [area, setArea] = useState(existing?.area || "");
+  const [creatingDept, setCreatingDept] = useState(false);
   const [type, setType] = useState(existing?.type || "breakdown");
   const [complaint, setComplaint] = useState(existing?.description || "");
   const [priority, setPriority] = useState(existing?.priority || "");
@@ -66,23 +70,54 @@ export default function RaiseWorkOrderForm({ existing }) {
   const suggestion = suggestPriority(impact, safety, env);
   const effectivePriority = priorityTouched ? priority : suggestion;
 
-  // Once a department is chosen, only its equipment is offered — with the asset
-  // list coming from the table this can be a real filter rather than a full dump.
-  const assetChoices = assetsForDepartment(departmentId);
+  /**
+   * Every asset, from every department (migration 0019). The department filter
+   * that used to be here assumed the person raising a work order only ever
+   * reported faults on their own department's machines, which is not how a
+   * plant works — whoever notices the fault files it.
+   */
+  const assetOptions = assets.map((m) => ({
+    value: m.id,
+    label: m.name,
+    hint: `${m.asset_code || m.id} · ${departmentName(m.department_id)}`,
+  }));
 
+  const departmentOptions = departments.map((d) => ({ value: d.id, label: d.name, hint: d.code }));
+
+  /**
+   * Picking equipment sets the department to whoever maintains that machine —
+   * every time, not only when the field is empty. The asset is the more specific
+   * choice of the two, so it wins; the field stays editable afterwards for the
+   * case where the machine's registered owner is not who should handle it.
+   */
   function handleAssetChange(id) {
     setAssetId(id);
     const a = assetById(id);
-    if (a && !departmentId) setDepartmentId(a.department_id);
+    if (a?.department_id) setDepartmentId(a.department_id);
   }
 
+  /**
+   * No longer clears a mismatched asset. The pair is *allowed* to disagree now:
+   * department says who triages, the asset says which machine, and a lathe
+   * handled this once by Toolroom is a real situation rather than a data error.
+   */
   function handleDepartmentChange(id) {
     setDepartmentId(id);
-    // Drop a selection that no longer belongs to the chosen department, rather
-    // than silently submitting a mismatched asset/department pair.
-    if (assetId) {
-      const a = assetById(assetId);
-      if (a && a.department_id !== id) setAssetId("");
+  }
+
+  async function handleCreateDepartment(name) {
+    setCreatingDept(true);
+    setSubmitError(null);
+    try {
+      const created = await createDepartment({ name });
+      // Realtime will deliver the new row to every open session including this
+      // one, but selecting it here rather than waiting for that round trip keeps
+      // the picker from appearing to have done nothing.
+      setDepartmentId(created.id);
+    } catch (e) {
+      setSubmitError(describeError(e, "Couldn't add that department."));
+    } finally {
+      setCreatingDept(false);
     }
   }
 
@@ -111,6 +146,7 @@ export default function RaiseWorkOrderForm({ existing }) {
           department_id: departmentId,
           asset_id: asset.id,
           asset_name: asset.name,
+          area: area.trim() || null,
           type,
           priority: effectivePriority || "P3",
           impact,
@@ -131,6 +167,7 @@ export default function RaiseWorkOrderForm({ existing }) {
         departmentId,
         assetId: asset.id,
         assetName: asset.name,
+        area,
         type,
         priority: effectivePriority || "P3",
         impact,
@@ -183,32 +220,51 @@ export default function RaiseWorkOrderForm({ existing }) {
       <div className="flex flex-col gap-5 lg:flex-row lg:gap-6">
         <div className="min-w-0 lg:flex-[2]">
           <Card className="p-4 sm:p-5">
-            <Field label="Department" required hint={errors.department}>
-              <select value={departmentId} onChange={(e) => handleDepartmentChange(e.target.value)} className={inputClass}>
-                <option value="">{ready ? "Select department…" : "Loading…"}</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
+            {/* Equipment first, department second: choosing the machine fills
+                the department in, so asking for the department first would have
+                the form overwrite an answer the moment it was given. */}
+            <Field label="Equipment" required hint={errors.asset}>
+              <Combobox
+                value={assetId}
+                onChange={handleAssetChange}
+                options={assetOptions}
+                loading={!ready}
+                placeholder="Search equipment by name, asset code or department…"
+                emptyLabel="No equipment registered yet"
+                noMatchLabel="No equipment matches that"
+              />
             </Field>
 
-            <Field label="Equipment" required hint={errors.asset}>
-              <select value={assetId} onChange={(e) => handleAssetChange(e.target.value)} className={inputClass}>
-                <option value="">
-                  {!ready
-                    ? "Loading…"
-                    : assetChoices.length === 0
-                      ? "No equipment registered for this department"
-                      : "Select equipment…"}
-                </option>
-                {assetChoices.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} · {m.asset_code || m.id}
-                  </option>
-                ))}
-              </select>
+            <Field
+              label="Department"
+              required
+              hint={errors.department}
+            >
+              <Combobox
+                value={departmentId}
+                onChange={handleDepartmentChange}
+                options={departmentOptions}
+                loading={!ready || creatingDept}
+                loadingLabel={creatingDept ? "Adding…" : "Loading…"}
+                placeholder="Search departments…"
+                emptyLabel="No departments yet"
+                onCreate={handleCreateDepartment}
+                createLabel="Add department"
+              />
+              <p className="mt-1.5 text-[11.5px] text-ink-soft">
+                Filled in from the equipment you picked. Change it if someone else should handle
+                this, or type a name that isn&apos;t listed to add it.
+              </p>
+            </Field>
+
+            <Field label="Area">
+              <input
+                value={area}
+                onChange={(e) => setArea(e.target.value)}
+                maxLength={120}
+                placeholder="Where in the plant — line, bay, floor"
+                className={inputClass}
+              />
             </Field>
             {asset && (
               <div className="flex items-center gap-2 bg-canvas rounded px-3 py-2 mb-4 text-[12.5px] text-ink-soft">

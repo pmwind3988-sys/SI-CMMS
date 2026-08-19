@@ -244,8 +244,13 @@ function DeleteDialog({ wo, onClose, onDeleted }) {
 function OverviewTab({ wo }) {
   const { departmentName, impactLabel, typeLabel, slaForPriority } = useReferenceData();
   const sla = wo.priority ? slaForPriority(wo.priority) : null;
+  // Area is omitted rather than shown as "—" when blank: every work order
+  // raised before migration 0019 has none, and a column of dashes down an
+  // otherwise complete overview reads as missing data rather than as a field
+  // that did not exist yet.
   const rows = [
     ["Equipment", wo.asset_name],
+    ...(wo.area ? [["Area", wo.area]] : []),
     ["Department", departmentName(wo.department_id)],
     ["Type", typeLabel(wo.type)],
     ["Production impact", impactLabel(wo.impact)],

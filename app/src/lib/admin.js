@@ -282,6 +282,97 @@ export async function upsertDepartment({ id, name, code, plantId }) {
   if (error) throw error;
 }
 
+/**
+ * Create a department, for the "+ Add new" row in the raise form's picker.
+ *
+ * INSERT rather than upsert, unlike upsertDepartment above: this one is reached
+ * by any signed-in user (migration 0019 opened departments_insert), and an
+ * upsert would let a Requester silently rewrite an existing department's name by
+ * guessing its id. A collision has to come back as a collision.
+ *
+ * The id is derived from the name rather than typed, because the person filing a
+ * work order should not have to know that DEPT-* is a business key printed on
+ * things. `code` is `unique not null`, so it gets the same treatment and the
+ * same de-duplicating suffix.
+ */
+export async function createDepartment({ name, plantId }) {
+  const clean = String(name || "").trim();
+  if (!clean) throw new Error("Give the department a name.");
+
+  const slug = clean.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
+  if (!slug) throw new Error("That name has no letters or numbers in it.");
+
+  const { data, error } = await supabase
+    .from("departments")
+    .insert({
+      id: `DEPT-${slug}`,
+      name: clean,
+      code: slug.slice(0, 12),
+      plant_id: plantId || "PLT001",
+    })
+    .select("id, name, code, plant_id")
+    .single();
+
+  // 23505 is either id or code — both mean the same thing to the person typing,
+  // and both are worth saying plainly rather than as "duplicate key value".
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error(`"${clean}" already exists — pick it from the list instead.`);
+    }
+    throw error;
+  }
+  return data;
+}
+
+/**
+ * Delete a department.
+ *
+ * Three tables carry a FK onto it, so the useful failure is not the constraint
+ * violation — it is knowing what is still pointing at it. Those counts are read
+ * first and reported; without that, Postgres raises 23503 and describeError
+ * turns it into "That refers to something that no longer exists", which is both
+ * unhelpful and the opposite of true.
+ *
+ * The count read races against a concurrent insert, so the constraint is still
+ * the thing that guarantees correctness — this only makes the common case
+ * legible.
+ *
+ * departments_delete is `si_is_admin()`, and RLS refusing a DELETE removes no
+ * rows and raises nothing, so the deleted row is selected back and its absence
+ * turned into an error. Same pattern as deleteWorkOrder().
+ */
+export async function deleteDepartment(departmentId) {
+  const inUse = await Promise.all([
+    supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("department_id", departmentId),
+    supabase.from("assets").select("id", { count: "exact", head: true }).eq("department_id", departmentId),
+    supabase.from("users").select("id", { count: "exact", head: true }).eq("department_id", departmentId),
+  ]);
+
+  const [woCount, assetCount, userCount] = inUse.map((r) => r.count ?? 0);
+  const blockers = [
+    woCount && `${woCount} work order${woCount === 1 ? "" : "s"}`,
+    assetCount && `${assetCount} piece${assetCount === 1 ? "" : "s"} of equipment`,
+    userCount && `${userCount} user${userCount === 1 ? "" : "s"}`,
+  ].filter(Boolean);
+
+  if (blockers.length) {
+    throw new Error(
+      `This department is still used by ${blockers.join(", ")}. Move them elsewhere first — deleting it would orphan their records.`
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("departments")
+    .delete()
+    .eq("id", departmentId)
+    .select("id");
+
+  if (error) throw error;
+  if (!data?.length) {
+    throw new Error("Only an Administrator can delete a department.");
+  }
+}
+
 export async function upsertAsset({ id, assetCode, name, departmentId, criticality, category, plantId }) {
   const { error } = await supabase.from("assets").upsert(
     {

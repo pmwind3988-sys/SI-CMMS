@@ -91,8 +91,15 @@ and users sign in to an empty app. Consequence: **a role change takes effect onl
 token is next issued** (~hourly, or sign out/in).
 
 Roles are lowercase snake_case, matching the `si_role` enum: `requester`, `technician`,
-`supervisor`, `manager`, `admin`. Supervisor is scoped to their `department_id`; Manager and
-Admin are system-wide. Admin screens are Admin-only, including for Managers.
+`supervisor`, `manager`, `admin`. Supervisor, Manager and Admin are all system-wide on work
+orders; Technician sees what is assigned to them and Requester what they raised. Admin
+screens are Admin-only, including for Managers.
+
+Supervisor **was** scoped to their `department_id` and is not any more (migration 0019).
+`department_id` survives on every table — it routes notifications and is what the dashboard
+breaks down by — but it decides nothing about access. The policy and the transition trigger
+were changed together; changing only one of them is the failure this migration documents.
+`si_in_same_department()` still exists and nothing calls it.
 
 ### The role hierarchy (migration 0015)
 
@@ -185,7 +192,9 @@ generic "try again" copy.
 Statuses, priorities, SLA, impact levels, WO types, safety severities, departments and
 equipment are **editable tables**, not literals. The first six are keyed on Postgres enums, so
 migration 0009 grants UPDATE only — they can be relabelled but not added to. Departments and
-assets can be added freely and appear on the raise form immediately.
+assets can be added freely and appear on the raise form immediately. Since 0019 *any* signed-in
+user may insert a department, because the raise form offers "+ Add new" in its picker; renaming
+and deleting one stay Manager+/Admin, which is the half that could damage existing records.
 
 ### Notification delivery outside the app
 

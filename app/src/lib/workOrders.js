@@ -34,6 +34,7 @@ export async function createWorkOrder({
   departmentId,
   assetId,
   assetName,
+  area,
   type,
   priority,
   impact,
@@ -52,6 +53,9 @@ export async function createWorkOrder({
       department_id: departmentId,
       asset_id: assetId,
       asset_name: assetName,
+      // Blank is "not recorded", not an empty string — the detail view hides the
+      // row on null and would otherwise print an empty label.
+      area: area?.trim() || null,
       plant_id: "PLT001",
       type,
       priority,
@@ -99,8 +103,10 @@ export async function updateWorkOrderFields(woId, fields) {
  *
  * Who may do this is data, not code: role_permissions.can_delete_work_orders,
  * which only a Superuser writes (migration 0018). The work_orders_delete policy
- * additionally holds the caller to the rows their role can already see, so a
- * granted Supervisor reaches their own department and not the plant.
+ * additionally holds the caller to the rows their role can already see — which
+ * since migration 0019 means a granted Supervisor reaches every work order, the
+ * same set they can now read. The capability half is what still holds them back:
+ * no role but Admin has it by default.
  *
  * The database handles the rest of it: a BEFORE DELETE trigger snapshots the row
  * into work_order_deletions and removes the comments, attachments and
@@ -170,9 +176,15 @@ export function listenWorkOrder(woId, cb, onError) {
 /**
  * Role-scoped list. RLS would scope this on its own, but the explicit filters
  * are kept for the same reason the Firestore version had them: they let Postgres
- * use the (requester_id, created_at) / (assigned_to_id, created_at) /
- * (department_id, created_at) indexes instead of scanning and then discarding
- * rows in the policy.
+ * use the (requester_id, created_at) / (assigned_to_id, created_at) indexes
+ * instead of scanning and then discarding rows in the policy.
+ *
+ * Supervisor lost its filter in migration 0019 and now falls through to the
+ * system-wide branch. That filter was `.eq("department_id", …)`, and leaving it
+ * would have made the widened work_orders_select policy invisible: the policy
+ * permits every row, and the query would still have asked for one department's.
+ * A client filter narrower than the policy is not defence in depth, it is a
+ * feature that silently does not work.
  */
 export function listenWorkOrderList(currentUser, cb, onError) {
   const base = () => supabase.from("work_orders").select(WO_SELECT).order("created_at", { ascending: false });
@@ -182,10 +194,8 @@ export function listenWorkOrderList(currentUser, cb, onError) {
     run = () => base().eq("requester_id", currentUser.uid);
   } else if (currentUser.role === ROLES.TECHNICIAN) {
     run = () => base().eq("assigned_to_id", currentUser.uid);
-  } else if (currentUser.role === ROLES.SUPERVISOR) {
-    run = () => base().eq("department_id", currentUser.departmentId);
   } else {
-    // manager / admin — system-wide.
+    // supervisor / manager / admin — system-wide.
     run = () => base().limit(300);
   }
 
