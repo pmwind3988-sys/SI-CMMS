@@ -23,11 +23,16 @@ export default function AssignPanel({ wo }) {
   const allowed = canAssign(user);
 
   useEffect(() => {
+    // The roster is an inner join onto `users`, and only Supervisor+ may read
+    // that table (users_select, migration 0020). For a Requester or Technician
+    // the query would come back empty and read as "no technicians exist" — and
+    // they cannot assign anyway, so don't ask the question.
+    if (!allowed) return undefined;
     const unsub = listenTechnicians(setTechnicians, () =>
       setError("Couldn't load the technician roster.")
     );
     return unsub;
-  }, []);
+  }, [allowed]);
 
   // You cannot assign a work order to yourself — si_guard_work_order_transition
   // refuses it (migration 0020), above the admin bypass, so this holds for every
@@ -88,13 +93,14 @@ export default function AssignPanel({ wo }) {
         </div>
       )}
       {error && <div className="text-danger text-[12.5px] mb-3">{error}</div>}
-      {technicians === null && (
+      {allowed && technicians === null && (
         <div className="text-[12.5px] text-ink-soft">Loading technicians…</div>
       )}
-      {technicians !== null && roster.length === 0 && (
+      {allowed && technicians !== null && roster.length === 0 && (
         <div className="bg-canvas rounded px-3.5 py-2.5 text-[12.5px] text-ink-soft">
-          No technicians have been provisioned yet. An Administrator needs to create technician
-          accounts before work orders can be assigned.
+          Nobody is available to assign. An account has to hold the Technician role and be active
+          to appear here — check Admin → Users. Someone whose Technician role was revoked keeps
+          their skills on file but can no longer be assigned work.
         </div>
       )}
       <div className="flex flex-col gap-2">
