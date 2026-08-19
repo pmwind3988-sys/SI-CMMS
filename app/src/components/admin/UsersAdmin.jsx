@@ -383,7 +383,16 @@ function UserActions({ user, me, setPanel, onToggleStatus, onClearDemoMark }) {
   if (!editable) {
     return (
       <span className="text-[11.5px] text-ink-soft">
-        {accountRank(user) === accountRank(me) ? "Same rank — not editable here" : "Not editable here"}
+        {/* Protected is checked first because it is the reason that actually
+            applies. users_select hides a protected account from everyone but
+            its own holder, so the only person who ever reads this line is that
+            holder looking at their own row — and "same rank" is trivially true
+            of your own row while explaining nothing. The flag is the reason. */}
+        {user.is_protected
+          ? "Protected — administered only from Supabase"
+          : accountRank(user) === accountRank(me)
+            ? "Same rank — not editable here"
+            : "Not editable here"}
       </span>
     );
   }
