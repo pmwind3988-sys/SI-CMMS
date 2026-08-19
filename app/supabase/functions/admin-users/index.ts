@@ -117,7 +117,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: callerRow, error: roleError } = await admin
     .from("users")
-    .select("roles, status, name, is_protected")
+    .select("roles, status, name, is_protected, must_change_password")
     .eq("id", caller.user.id)
     .maybeSingle();
 
@@ -125,6 +125,34 @@ Deno.serve(async (req: Request) => {
   // Membership, not equality: an account holds a set of roles (migration 0020).
   if (!callerRow || !(callerRow.roles ?? []).includes("admin") || callerRow.status !== "active") {
     return json({ error: "Only an active Administrator can manage user accounts." }, 403);
+  }
+
+  /* must_change_password HAS TO BE CHECKED HERE, and it is the one place it is
+     easy to miss.
+
+     Migration 0026 enforces the flag by withholding role claims at token issue,
+     which denies the account everywhere the claims are what is read: every RLS
+     policy, and si_set_user_roles via si_caller_rank()/si_is_admin(). This
+     function is the exception BY DESIGN — it re-reads roles from the database
+     precisely so a stale token cannot be used — and that same design walks
+     straight past the withholding.
+
+     Left unchecked, an Administrator holding a password somebody else chose for
+     them could set other people's passwords and create accounts before ever
+     changing their own. That is the account whose credential is least trusted in
+     the whole system, and this is the most privileged code in it.
+
+     Three enforcement points, and the loosest wins. This was the loosest. */
+  if (callerRow.must_change_password) {
+    return json(
+      {
+        error:
+          "Change your own password first. This account was given a password by " +
+          "somebody else, so it cannot administer other accounts until you have " +
+          "replaced it.",
+      },
+      403,
+    );
   }
 
   let payload: Record<string, unknown>;
