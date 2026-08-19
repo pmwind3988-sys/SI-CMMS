@@ -283,7 +283,7 @@ calling a helper granted only to `postgres`, so it raised `permission denied for
 si_protected_override` on *every* write to `users` for *every* role. Migration 0013 fixes it.
 Every other guard on this schema is `SECURITY DEFINER`; that is not optional styling.
 
-### Test accounts (migration 0028)
+### Test accounts (migrations 0028, 0029)
 
 `users.is_test_account` marks a fixture: an account that exists to be signed into while a
 change is being tried, not to do work. The five bootstrap users carry it (backfilled from
@@ -298,15 +298,25 @@ eventually assigns real work to.
 *Invisible means the `users` row, not the name.* Measured as an ordinary Administrator going
 straight at PostgREST with a fixture's exact uuid: `users?id=eq.<uuid>` returns `[]`, both
 PATCHes return `[]`, and `users?select=name` returns two rows. But `technicians?select=name`
-returns all three fixtures, because `technicians_select` is `using (si_signed_in())` and 0028
-touched only `users`. The name is also denormalised onto `work_orders.requester_name` /
+*used to return* all three fixtures, because `technicians_select` was `using (si_signed_in())`
+and 0028 touched only `users`. The name is also denormalised onto `work_orders.requester_name` /
 `assigned_to_name`, `work_order_history.actor_name` and `comments.author_name`.
 
-None of that is a privilege — the uuid buys nothing, as the empty PATCHes show — but the claim
-is "cannot be seen or administered as an account", not "the name appears nowhere". The
+None of that was a privilege — the uuid buys nothing, as the empty PATCHes show — but the
+claim is "cannot be seen or administered as an account", not "the name appears nowhere". The
 history columns *must* keep the name; an audit trail that hides who acted is not an audit
-trail. `technicians` is the one that is arguably wrong rather than necessary, and it is not
-fixed: it is a live roster row, not a record of something that happened.
+trail. `technicians` was the one that was wrong rather than necessary, and **migration 0029
+fixes it**: `technicians_select` gained the same three-branch shape, so that table now returns
+`[]` to an Administrator and all three fixtures to a Superuser — both measured, the second
+against the assign panel itself.
+
+0029 is worth reading for the trap in it. The obvious policy inlines the test as
+`not exists (select 1 from users u where u.id = technicians.user_id and u.is_test_account)`,
+and that does **nothing**: a policy expression evaluates with the querying user's privileges,
+so the subquery is filtered by `users_select`, which already hides test accounts from this
+exact caller. It finds no row, `not exists` is true, and the row stays visible to precisely
+the people it was meant to be hidden from. It fails open, silently, and reads as correct.
+Hence `si_is_test_account()`, SECURITY DEFINER — the same reason every other guard here is.
 
 *Switchable by nobody else.* `users_update` excludes them from non-Superusers, and
 `si_guard_test_account` (BEFORE UPDATE, SECURITY DEFINER) refuses a `status` change and refuses
