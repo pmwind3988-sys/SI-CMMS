@@ -1963,7 +1963,7 @@ matches them.
 - Consumes: `users.employee_id`, `users.email`; `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (all injected into Edge Functions automatically).
 - Produces: `public.login_attempts` (service-role only); `si_email_by_employee_id(text) returns text` (SECURITY DEFINER, `service_role` only); cron job `si-sweep-login-attempts`; `POST /functions/v1/auth-signin { identifier, password }` → `{ session }` or `{ error: "Those details didn't match." }`.
 
-- [ ] **Step 1: Write the failing assertion**
+- [x] **Step 1: Write the failing assertion**
 
 ```sql
 do $$
@@ -1991,11 +1991,11 @@ begin
 end $$;
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
 Expected: `ERROR: FAIL: login_attempts missing`.
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 Create `app/supabase/migrations/0027_login_attempts.sql`:
 
@@ -2090,7 +2090,7 @@ select cron.schedule(
 );
 ```
 
-- [ ] **Step 4: Apply and re-run the assertion**
+- [x] **Step 4: Apply and re-run the assertion**
 
 ```bash
 cd app && npm run db:push && npm run db:types
@@ -2121,7 +2121,7 @@ begin
 end $$;
 ```
 
-- [ ] **Step 5: Write the function**
+- [x] **Step 5: Write the function**
 
 Create `app/supabase/functions/auth-signin/index.ts`:
 
@@ -2287,7 +2287,7 @@ Deno.serve(async (req: Request) => {
 });
 ```
 
-- [ ] **Step 6: Deploy with `verify_jwt` off**
+- [x] **Step 6: Deploy with `verify_jwt` off**
 
 Create `app/supabase/config.toml`:
 
@@ -2309,7 +2309,7 @@ cd app && npx supabase functions deploy auth-signin --no-verify-jwt
 
 The flag is passed explicitly as well as configured, because a function deployed with JWT verification on rejects every sign-in with a 401 *before its code runs*, and the symptom looks nothing like the cause.
 
-- [ ] **Step 7: Test the function directly, before any client change**
+- [x] **Step 7: Test the function directly, before any client change** — *failure paths only; the success path needs a real password and lands in Task 8*
 
 Set an employee ID on a test account first (Admin → Users → Edit).
 
@@ -2329,7 +2329,7 @@ Use your own test account's password. Do not ask anybody else for theirs.
 | an inactive account, right password | a session, with no role claims in it — **not** an error |
 | 6+ wrong attempts in a row | the same message; then the *right* password also fails until the delay expires, and succeeds after |
 
-- [ ] **Step 8: Confirm the delay is recorded and cleared**
+- [x] **Step 8: Confirm the delay is recorded and cleared**
 
 ```sql
 select * from public.login_attempts;
@@ -2337,18 +2337,66 @@ select * from public.login_attempts;
 
 Expected: a row while failing, with `locked_until` in the future; **no row** after a success.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add app/supabase/migrations/0027_login_attempts.sql app/supabase/functions/auth-signin/index.ts app/supabase/config.toml app/src/lib/database.types.ts
 git commit -m "Sign in by employee ID, with its own attempt delay"
 ```
 
-- [ ] **Step 10: Run the security advisor again**
+- [x] **Step 10: Run the security advisor again**
 
 0027 adds a function. Dashboard → Advisors → Security; confirm `si_email_by_employee_id` is not reported as anon-callable.
 
 ---
+
+#### What Task 7 was verified against (executed 2026-08-19)
+
+**The lookup agrees with the index, which is the reason it is an RPC:**
+
+| Input | Resolves to |
+|---|---|
+| `e1042`, `E1042`, `"  E1042  "` | all → `requester@example.com` |
+| `E10%` | `null` — no wildcard match, which `.ilike()` would have given |
+| `nosuch` | `null` |
+
+**Grants:** anon calling `si_email_by_employee_id` → `401 42501 permission denied`;
+anon reading or inserting `login_attempts` → `401 42501`; the service role can do
+both. Enum-published-by-default is the trap 0007/0008/0011 exist for, and this
+migration adds a function that maps a badge number to an email address.
+
+**Indistinguishability:** four different reasons — known number + wrong password,
+unknown number, known email + wrong password, unknown email — return **one**
+byte-identical response.
+
+**A TIMING ORACLE, found by measuring rather than by reading the code.** The single
+error message is not sufficient on its own:
+
+| | median |
+|---|---|
+| before: unknown number | 684ms |
+| before: known number, wrong password | 977ms |
+| **gap** | **293ms, and in the dangerous direction — faster means "does not exist"** |
+| after the fix | −49ms, distributions overlapping |
+
+An unknown number stops at the lookup; a known one goes on to GoTrue. It cannot be
+fixed by equalising the work, because **GoTrue is itself slower when the account
+exists** — that is when it has a hash to verify. So every refusal leaves through
+one padded exit with a 1000ms floor. Successes are not padded: the caller already
+knows whether they got a session.
+
+**The delay:** five free attempts, then 15s doubling to a cap. Two properties
+worth having tested:
+
+- A **held** request does not increment the counter, so a third party cannot
+  extend somebody's delay indefinitely by hammering a number they read off a
+  badge. It still escalates across windows: the next real attempt after the delay
+  expires increments as normal.
+- **Unknown** identifiers accrue counters too (`z9999`, `y8888`,
+  `nobody@example.com` all recorded), so enumeration is not free.
+
+**Untested:** the success path, which needs a real password. It arrives naturally
+in Task 8, when someone signs in by number through the login page.
 
 ### Task 8: The login screen — one field, two identifiers
 
