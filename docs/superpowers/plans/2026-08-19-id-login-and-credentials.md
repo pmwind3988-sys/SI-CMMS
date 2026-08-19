@@ -2769,7 +2769,7 @@ git commit -m "Docs: account state, the two sign-in paths, and the SITE_URL secr
 
 Run this after Task 9. Sign in yourself for each role.
 
-- [ ] A fresh token for an active, unflagged account carries `user_roles`, `user_role`, `is_protected`, `must_change_password: false`. **Sign out and in — a cached token proves nothing.**
+- [x] A fresh token for an active, unflagged account carries `user_roles`, `user_role`, `is_protected`, `must_change_password: false`. **Sign out and in — a cached token proves nothing.**
 - [x] Deactivate an account, sign it out and in: an empty app, not its dashboard. **Read the claims, not the screen** — an empty dashboard can be empty for other reasons. Reactivate; access returns.
 - [x] Flag an account by hand, sign out and in: no role claims, the claim true, redirected to `/change-password`. Clear it; roles return. This is the step that catches a hook which handles `status` and forgets the flag.
 - [x] Two accounts, the same number in different case: the second is refused.
