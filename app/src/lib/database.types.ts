@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.15"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       apk_builds: {
@@ -349,6 +374,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      login_attempts: {
+        Row: {
+          failed_count: number
+          first_failed: string
+          identifier: string
+          locked_until: string | null
+        }
+        Insert: {
+          failed_count?: number
+          first_failed?: string
+          identifier: string
+          locked_until?: string | null
+        }
+        Update: {
+          failed_count?: number
+          first_failed?: string
+          identifier?: string
+          locked_until?: string | null
+        }
+        Relationships: []
       }
       notifications: {
         Row: {
@@ -1141,6 +1187,10 @@ export type Database = {
         }
         Returns: Database["public"]["Enums"]["si_role"][]
       }
+      si_email_by_employee_id: {
+        Args: { p_employee_id: string }
+        Returns: string
+      }
       si_has_role: { Args: { p_role: string }; Returns: boolean }
       si_in_same_department: { Args: { dept: string }; Returns: boolean }
       si_is_admin: { Args: never; Returns: boolean }
@@ -1207,6 +1257,7 @@ export type Database = {
         Returns: Record<string, unknown>
       }
       si_sla_warning_sweep: { Args: never; Returns: number }
+      si_sweep_login_attempts: { Args: never; Returns: undefined }
       si_terminal_statuses: {
         Args: never
         Returns: Database["public"]["Enums"]["si_wo_status"][]
@@ -1426,6 +1477,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       si_asset_status: [
