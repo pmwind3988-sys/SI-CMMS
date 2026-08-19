@@ -10,16 +10,16 @@
  *
  * Everything else an admin needs is already possible directly from the client and
  * is deliberately NOT duplicated here:
- *   - role / department / plant changes -> si_set_user_role() RPC (migration 0004)
+ *   - role / department / plant changes -> si_set_user_roles() RPC (migration 0020)
  *   - activate / deactivate            -> UPDATE users SET status, allowed to
  *                                         admins by the users_update policy
  *
  * Authorization is checked twice over:
  *   1. verify_jwt is on, so Supabase rejects anything without a valid token
  *      before this code runs.
- *   2. The caller's row in public.users must be role='admin' AND status='active'.
- *      That's read from the database rather than taken from the JWT's user_role
- *      claim — a token issued before an admin was demoted is still validly
+ *   2. The caller's row in public.users must HOLD 'admin' among its roles and be
+ *      status='active'. That's read from the database rather than taken from the
+ *      JWT's user_roles claim — a token issued before an admin was demoted is still validly
  *      signed for up to an hour, and the database is the current truth.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -55,13 +55,17 @@ const SUPERUSER_RANK = 6;
 /** The rank of a role name. */
 const rankOfRole = (role: string | null | undefined) => ROLE_RANK[role ?? ""] ?? 0;
 
+/** The rank of a set of roles: the highest of them. Mirrors si_roles_rank(). */
+const rankOfRoles = (roles: string[] | null | undefined) =>
+  (roles ?? []).reduce((max, r) => Math.max(max, rankOfRole(r)), 0);
+
 /**
- * The rank of an actual account. A Superuser is role='admin' with is_protected,
+ * The rank of an actual account. A Superuser holds 'admin' plus is_protected,
  * outranking every role — which is what lets them, and only them, create an
  * Administrator here.
  */
-const rankOfAccount = (row: { role?: string | null; is_protected?: boolean | null } | null) =>
-  row?.is_protected ? SUPERUSER_RANK : rankOfRole(row?.role);
+const rankOfAccount = (row: { roles?: string[] | null; is_protected?: boolean | null } | null) =>
+  row?.is_protected ? SUPERUSER_RANK : rankOfRoles(row?.roles);
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -92,12 +96,13 @@ Deno.serve(async (req: Request) => {
 
   const { data: callerRow, error: roleError } = await admin
     .from("users")
-    .select("role, status, name, is_protected")
+    .select("roles, status, name, is_protected")
     .eq("id", caller.user.id)
     .maybeSingle();
 
   if (roleError) return json({ error: "Couldn't verify your account." }, 500);
-  if (!callerRow || callerRow.role !== "admin" || callerRow.status !== "active") {
+  // Membership, not equality: an account holds a set of roles (migration 0020).
+  if (!callerRow || !(callerRow.roles ?? []).includes("admin") || callerRow.status !== "active") {
     return json({ error: "Only an active Administrator can manage user accounts." }, 403);
   }
 
@@ -130,7 +135,7 @@ Deno.serve(async (req: Request) => {
     if (userId !== caller.user.id) {
       const { data: targetRow, error: targetError } = await admin
         .from("users")
-        .select("role, is_protected, name")
+        .select("roles, is_protected, name")
         .eq("id", userId)
         .maybeSingle();
 
@@ -183,7 +188,7 @@ Deno.serve(async (req: Request) => {
     if (userId !== caller.user.id) {
       const { data: targetRow, error: targetError } = await admin
         .from("users")
-        .select("role, is_protected, name")
+        .select("roles, is_protected, name")
         .eq("id", userId)
         .maybeSingle();
 
@@ -236,15 +241,15 @@ Deno.serve(async (req: Request) => {
 
   /* ---------------------------------------------------------------
      create_user — an auth account plus its public.users row. Writing the
-     users row IS what provisions the role: custom_access_token_hook reads
-     users.role when it mints a token, so without the row the account signs
-     in with no role and can see nothing.
+     users row IS what provisions the roles: custom_access_token_hook reads
+     users.roles when it mints a token, so without the row the account signs
+     in with no roles and can see nothing.
   ----------------------------------------------------------------*/
   if (action === "create_user") {
     const email = String(payload.email ?? "").trim().toLowerCase();
     const password = String(payload.password ?? "");
     const name = String(payload.name ?? "").trim();
-    const role = String(payload.role ?? "");
+    const roles: string[] = Array.isArray(payload.roles) ? payload.roles.map(String) : [];
     const departmentId = payload.department_id ? String(payload.department_id) : null;
     const plantIds = Array.isArray(payload.plant_ids) ? payload.plant_ids.map(String) : [];
     const phone = payload.phone ? String(payload.phone) : "";
@@ -252,7 +257,10 @@ Deno.serve(async (req: Request) => {
     const VALID_ROLES = ["requester", "technician", "supervisor", "manager", "admin"];
     if (!email) return json({ error: "An email address is required." }, 400);
     if (!name) return json({ error: "A name is required." }, 400);
-    if (!VALID_ROLES.includes(role)) return json({ error: "Pick a valid role." }, 400);
+    if (roles.length === 0) return json({ error: "Pick at least one role." }, 400);
+    if (!roles.every((r) => VALID_ROLES.includes(r))) {
+      return json({ error: "Pick valid roles." }, 400);
+    }
     if (password.length < MIN_PASSWORD_LENGTH) {
       return json({ error: `Use at least ${MIN_PASSWORD_LENGTH} characters.` }, 400);
     }
@@ -260,9 +268,13 @@ Deno.serve(async (req: Request) => {
     // path would otherwise sail straight past on the service-role key — and
     // means a new Administrator is made from the Supabase dashboard, alongside
     // the protected accounts.
-    if (rankOfRole(role) >= rankOfAccount(callerRow)) {
+    // EVERY role granted must be below the caller, not merely the highest of
+    // them — otherwise 'admin' could ride along beside 'requester' and the pair
+    // would pass as rank 5. Same check si_set_user_roles makes.
+    const tooHigh = roles.find((r) => rankOfRole(r) >= rankOfAccount(callerRow));
+    if (tooHigh) {
       return json(
-        { error: "You cannot create an account at or above your own rank." },
+        { error: `You cannot grant the role "${tooHigh}" — it is at or above your own rank.` },
         403,
       );
     }
@@ -281,7 +293,7 @@ Deno.serve(async (req: Request) => {
       name,
       email,
       phone,
-      role,
+      roles,
       department_id: departmentId,
       plant_ids: plantIds,
       status: "active",
@@ -289,13 +301,13 @@ Deno.serve(async (req: Request) => {
 
     if (profileError) {
       // Roll the auth account back rather than leaving an account that can sign
-      // in but has no role and therefore no access to anything.
+      // in but has no roles and therefore no access to anything.
       await admin.auth.admin.deleteUser(created.user.id);
       return json({ error: `Couldn't create the profile: ${profileError.message}` }, 400);
     }
 
     // A technician also needs a technicians row before they can be assigned work.
-    if (role === "technician") {
+    if (roles.includes("technician")) {
       const { error: techError } = await admin.from("technicians").insert({
         user_id: created.user.id,
         name,
