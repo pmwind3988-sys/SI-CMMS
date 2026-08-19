@@ -198,6 +198,12 @@ export const supabase = createClient(url, anonKey, {
  *
  * Realtime respects RLS on postgres_changes, so a technician subscribed to
  * work_orders is still only woken for rows their SELECT policy allows.
+ *
+ * `table` accepts an array when the result depends on more than one table, so
+ * that a change to any of them re-runs the query. listenTechnicians() is the
+ * case that needs it: it reads the roster from `technicians` but decides
+ * membership from `users`, and watching only the former left a revoked
+ * technician on screen for as long as the panel stayed open.
  */
 let channelSeq = 0;
 
@@ -216,14 +222,21 @@ export function liveQuery({ table, filter, run, cb, onError }) {
 
   refresh();
 
-  const channel = supabase
-    .channel(`si-${table}-${++channelSeq}`)
-    .on(
+  // One channel, one binding per table. `filter` describes the first table
+  // only — it is a column predicate, and there is no caller that wants the same
+  // one applied to a second, differently-shaped table.
+  const tables = Array.isArray(table) ? table : [table];
+  const channel = supabase.channel(`si-${tables.join("-")}-${++channelSeq}`);
+
+  tables.forEach((t, i) => {
+    channel.on(
       "postgres_changes",
-      { event: "*", schema: "public", table, ...(filter ? { filter } : {}) },
+      { event: "*", schema: "public", table: t, ...(filter && i === 0 ? { filter } : {}) },
       refresh
-    )
-    .subscribe();
+    );
+  });
+
+  channel.subscribe();
 
   return () => {
     cancelled = true;

@@ -286,14 +286,39 @@ export function listenAttachments(woId, cb, onError) {
   });
 }
 
-/** The assignment picker's roster — replaces the frozen TECHNICIANS array. */
+/**
+ * The assignment picker's roster — replaces the frozen TECHNICIANS array.
+ *
+ * `technicians` on its own answers "who has ever been a technician", not "who is
+ * one now". si_set_user_roles() creates the row when the role is granted and
+ * deliberately LEAVES IT IN PLACE when the role is revoked, because it holds
+ * skills and certifications — facts about the person rather than their current
+ * role (migration 0020, behaviour dating to 0004). Offering that as the roster
+ * produced a work order nobody could move: si_eligible_roles() computes
+ * eligibility from the assignee's OWN roles, so someone no longer holding
+ * `technician` can never accept, and the job sits at `assigned` until a Manager
+ * or Admin reassigns it. An inactive account is the same story — hence both
+ * filters here. The skills row is left untouched; only the roster is narrowed.
+ *
+ * `users!inner` is load-bearing: without `!inner` PostgREST nulls the embed for
+ * a non-matching user instead of dropping the technicians row, which would put
+ * every revoked technician straight back in the list.
+ *
+ * Only Supervisor+ may read `users` (users_select), which is exactly who may
+ * assign — so AssignPanel subscribes only when canAssign() holds. For anyone
+ * else the inner join would return nothing and read as "no technicians exist".
+ *
+ * Both tables are watched: revoking a role writes `users`, not `technicians`.
+ */
 export function listenTechnicians(cb, onError) {
   return liveQuery({
-    table: "technicians",
+    table: ["technicians", "users"],
     run: () =>
       supabase
         .from("technicians")
-        .select("user_id, name, skills, current_load, availability_status")
+        .select("user_id, name, skills, current_load, availability_status, users!inner(roles, status)")
+        .contains("users.roles", ["technician"])
+        .eq("users.status", "active")
         .order("name", { ascending: true }),
     cb,
     onError,
