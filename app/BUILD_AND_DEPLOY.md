@@ -205,22 +205,54 @@ Migrations live in `supabase/migrations/` and are applied in filename order.
 cd app && npx supabase db push
 ```
 
-That needs Docker for local work; on this machine migrations have been applied
-through the Supabase MCP server (`apply_migration`) instead, which talks to the
-hosted project directly and needs no Docker.
+**`db push` needs no Docker.** It connects straight to the linked remote project.
+Verified on this machine, which has no Docker installed at all: `db push` applied
+migrations 0025–0027 over the network. It is `db diff` that needs it, because that
+command provisions a shadow database to compare against — and it fails here with
+"Docker Desktop is a prerequisite".
 
 Either way: **migrations are the source of truth.** Don't change the schema in
 the dashboard SQL editor without writing the migration too, or the next clone
-won't match.
+won't match. If a migration ever *is* applied by hand, say so in a comment at the
+top of the file, as 0024 does.
 
-Edge Functions deploy separately:
+Edge Functions deploy separately, and there are two:
 
 ```bash
 cd app && npx supabase functions deploy admin-users
+cd app && npx supabase functions deploy auth-signin --no-verify-jwt
 ```
 
-`admin-users` is the only one, and it exists because setting another user's
-password requires the service-role key. See `supabase/functions/admin-users/`.
+`admin-users` exists because setting another user's password requires the
+service-role key. `auth-signin` exists because resolving an employee number to a
+sign-in address does too — published to `anon` that lookup would be a staff
+directory. Its `--no-verify-jwt` is not optional and is also recorded in
+`supabase/config.toml`: deployed with verification on, every sign-in is rejected
+with a 401 *before a line of the function runs*, and the symptom looks nothing
+like the cause because the response never comes from our code.
+
+### Edge Function secrets
+
+Set in the dashboard under Edge Functions → Secrets, or:
+
+```bash
+cd app && npx supabase secrets set SITE_URL=https://<the deployed origin>
+```
+
+| Secret | Why |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | injected automatically; nothing to do |
+| `SITE_URL` | **must be set by hand.** Where a password-recovery link points. |
+
+`SITE_URL` holds the same value as `NEXT_PUBLIC_SITE_URL`, but it is a *function*
+secret, not a Vercel variable — an Edge Function has no `window` to read an origin
+from, and `window.location.origin` would be wrong anyway in the APK, where
+Capacitor serves the same export from `https://localhost`. It must also be listed
+under Authentication → URL Configuration → Redirect URLs, or the link is rejected
+when it arrives.
+
+`send_recovery_link` refuses to send while it is unset, rather than emailing a link
+that points nowhere.
 
 ---
 

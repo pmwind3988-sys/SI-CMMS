@@ -1,7 +1,7 @@
 # Employee-ID sign-in and credential handling — design
 
 **Date:** 2026-08-19
-**Status:** approved, not yet implemented
+**Status:** implemented (migrations 0025-0027), except send_recovery_link, which needs SITE_URL set
 **Scope:** sub-project 3 of 4 (see "Sequence" at the end)
 
 ---

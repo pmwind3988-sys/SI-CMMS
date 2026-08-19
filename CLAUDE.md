@@ -148,6 +148,80 @@ breaks down by — but it decides nothing about access. The policy and the trans
 were changed together; changing only one of them is the failure this migration documents.
 `si_in_same_department()` still exists and nothing calls it.
 
+### Account state (migrations 0025, 0026)
+
+**`users.status` and `users.must_change_password` decide access, and they do it in the
+token rather than in a policy.** `custom_access_token_hook` withholds `user_roles` *and*
+`user_role` from an account that is not `active` or that owes a password change. Every
+policy already denies an account whose `si_roles()` is empty, so one mechanism covers both
+and not a single policy changed.
+
+Before 0026, `status` decided **nothing**. Measured on a freshly minted token for a
+deactivated account: `user_roles: ["requester"]`. "Deactivate" in Admin → Users wrote a
+column that no policy, trigger or client predicate read.
+
+**Both claims, not one.** `si_roles()` aggregates `user_roles` with `array_agg` inside a
+`coalesce`, and `array_agg` over zero rows returns NULL — so `user_roles: []` falls
+through to the `user_role` branch and the role comes straight back. The version that
+emits an empty array looks correct, denies nothing and raises nothing. `AuthContext`
+mirrored the same chain through `profile.roles` and had the same hole from the other side:
+`users_select` lets an account read its own row, so the client refilled exactly what the
+hook withheld. That fallback is gone, and `roles` is no longer even selected there.
+
+Deactivation is not immediate — tokens live about an hour, the same latency a role change
+already has.
+
+`must_change_password` is cleared by `si_sync_auth_user_activity` when the password
+actually changes, so **anything that sets the flag must set it after writing the
+password.** Reversed, the trigger clears it and the account gets a temporary password with
+no obligation attached, silently. `create_user` is the exception and is safe for a
+structural reason instead: that trigger fires on UPDATE of `auth.users`, and account
+creation INSERTs. `si_guard_user_self_update` refuses to let anyone clear their own flag,
+Superuser included, and takes `si_protected_override()`'s door for the trigger's own
+write — the same door 0016 opened on the protection guard.
+
+`/change-password` is the only page a flagged account can use, and it must never sit
+behind `RequireRole`: the account holds no roles, so a role gate would reject it from the
+one thing it is allowed to do. The redirect lives in `RequireAuth` so it takes precedence
+over the inner role gate rather than racing it.
+
+**The claim-withholding does not reach the Edge Functions**, and that is not an oversight
+in them — `admin-users` re-reads roles from the database precisely so a stale token cannot
+be used. It therefore has to check the flag itself, and does. A rule added to one
+enforcement point and not the others is a hole, and the loosest path wins.
+
+### Signing in (migration 0027)
+
+Two identifiers, two paths, deliberately. An email address goes straight to GoTrue from
+the browser. An employee number goes through the `auth-signin` Edge Function, which
+resolves it with `si_email_by_employee_id` on the service-role key — an anon-callable
+lookup would be a public staff directory and a credential-stuffing target list. Splitting
+rather than routing everything through the function means an outage costs employee-ID
+sign-ins only.
+
+Every failure returns one sentence, **on both paths**, from one exported constant. Two
+wordings is itself the oracle: it distinguishes an unknown identifier from a wrong
+password.
+
+Neither the function nor the lookup filters on `status`. Filtering would make an inactive
+account fail at resolution while a wrong password fails at GoTrue, and the two would
+become distinguishable. Inactive accounts authenticate normally and are denied by carrying
+no roles.
+
+**One message is not sufficient on its own.** Before the fix, an unknown number came back
+a median 293ms *faster* than a known number with a wrong password, because it stops at the
+lookup instead of reaching GoTrue — enumeration with a stopwatch. It cannot be fixed by
+equalising the work: GoTrue is itself slower when the account exists, since that is when
+it has a hash to verify. So every refusal leaves through one padded exit with a 1000ms
+floor. Successes are not padded; the caller already knows whether they got a session.
+
+`login_attempts` exists because GoTrue throttles by origin and every ID sign-in shares the
+function's egress address — without it, adding the function would make brute-force
+protection *worse* than not having it. It is a self-expiring delay rather than a lockout,
+because the key is a number anyone can read off a badge: a lockout would be a
+denial-of-service. A held request does not increment the counter, so nobody can extend
+somebody else's delay by hammering it.
+
 ### The role hierarchy (migration 0015)
 
 ```
@@ -188,6 +262,13 @@ Consequences that are deliberate, not gaps:
 Three enforcement points, because two of them bypass RLS: the `users_*` policies; the
 `si_set_user_roles` RPC (SECURITY DEFINER); and `supabase/functions/admin-users` (service
 role). A rule added to one and not the others is a hole — the loosest path wins.
+
+That is not a caution in the abstract. Migration 0026 enforces `must_change_password` by
+withholding role claims, which covers the policies *and* the RPC, because both read
+`si_roles()`. It does not reach the Edge Function, which re-reads roles from the database
+by design — so a flagged Administrator could set other people's passwords before changing
+their own until that function checked the flag itself. Every rule about who may do what to
+a `users` row has to be walked through all three.
 
 ### Protected accounts
 
@@ -323,10 +404,27 @@ password changes, **sign-in address changes** and account creation, since all th
 `auth.users` and need the service-role key. That function re-checks the caller is an active
 admin *from the database*, not from the JWT claim.
 
-An email change is as privileged as a password reset — a sign-in address repointed at a
-mailbox you control is an account takeover — so `set_email` applies the same rank rule: your
-own account, or one strictly below you. An Administrator can therefore fix their own address
-and their subordinates', and not another Administrator's.
+**Setting somebody else's password, and changing somebody else's sign-in address, are
+both Superuser-only** (migration 0025 onwards). The rank rule was not enough: it stopped
+an Administrator taking over a *peer* and said nothing about their subordinates, and an
+Administrator who can set a subordinate's password holds that person's credential.
+
+The two are restricted together, and that pairing is load-bearing rather than tidy.
+Repoint a subordinate's address at a mailbox you control, run the **public** self-service
+reset at `/forgot-password`, and you have their password without ever calling
+`set_password`. Restricting one without the other would have been theatre.
+
+Your own account is exempt from both — correcting your own address is not an escalation,
+and your own password is `/change-password`.
+
+What an Administrator uses instead is `send_recovery_link`: ordinary rank rule, because
+nothing about it puts a credential in the sender's hands. It refuses a placeholder address
+**loudly**, because `resetPasswordForEmail` succeeds against `tech.arun@example.com` and
+delivers nothing — and an administrator told it worked believes the person has been
+helped. It needs `SITE_URL` set as an Edge Function secret and refuses to send without it.
+
+`create_user` marks the new account as owing a password change, for the same reason
+`set_password` does: the password was chosen by whoever created the account.
 
 ### Password reset
 
@@ -409,3 +507,11 @@ explicitly and run the Supabase security advisor after any migration that adds a
   exposes plant selection.
 - `@capacitor/cli` pulls a `tar` version with a critical advisory; fixing it needs a Capacitor
   6 → 8 major upgrade.
+- **Most accounts cannot receive email.** The seeded ones are all `@example.com`, which
+  `si_is_placeholder_email` correctly refuses to send recovery links to — so for those
+  accounts the *only* credential route is the Superuser issuing a temporary password. That
+  is the accepted trade-off of Superuser-only resets working as designed, but it is more
+  absolute than intended until real addresses are set. Not a code gap; a data one.
+- `SITE_URL` is not set as an Edge Function secret, so `send_recovery_link` currently
+  refuses rather than sends. Everything behind it is built and gated; it needs the deployed
+  origin (`app/BUILD_AND_DEPLOY.md` §4).
