@@ -2408,11 +2408,11 @@ in Task 8, when someone signs in by number through the login page.
 - Consumes: `auth-signin` from Task 7; `mustChangePassword` from Task 3; `rememberMe(flag, identifier)` from `lib/supabase.js`, unchanged — its second argument is already documented as "an identifier, not a credential".
 - Produces: `signIn(identifier, password, remember)` accepting either form.
 
-- [ ] **Step 1: State the failing observation**
+- [x] **Step 1: State the failing observation**
 
 The login field is `type="email"`, so the browser's own validation refuses to submit a bare number before any of this code runs. `isCompanyEmail` rejects it too.
 
-- [ ] **Step 2: Widen `signIn` in `AuthContext`**
+- [x] **Step 2: Widen `signIn` in `AuthContext`**
 
 Replace the whole `signIn` callback:
 
@@ -2498,7 +2498,7 @@ Replace the whole `signIn` callback:
   }, []);
 ```
 
-- [ ] **Step 3: Update the login page**
+- [x] **Step 3: Update the login page**
 
 Rename the state, gate the domain check, and change the input:
 
@@ -2614,7 +2614,7 @@ In `friendlyError`, make both credential branches match the function's single me
 
 and the two status-code branches (`400`, `422`) return that same string. Leave the `validation_failed`, `user_banned`, `email_not_confirmed`, rate-limit and `AuthRetryableFetchError` branches exactly as they are: none of them distinguishes a known identifier from an unknown one, and each tells the person something they can act on.
 
-- [ ] **Step 4: Verify both paths and the copy**
+- [x] **Step 4: Verify both paths and the copy**
 
 `npm run dev`, sign out.
 
@@ -2630,7 +2630,7 @@ and the two status-code branches (`400`, `422`) return that same string. Leave t
 | a flagged account, either identifier | lands on `/change-password/` |
 | a deactivated account, right password | the "no access … deactivated" message |
 
-- [ ] **Step 5: Compile and commit**
+- [x] **Step 5: Compile and commit**
 
 ```bash
 cd app && npm run build
@@ -2639,6 +2639,30 @@ git commit -m "Login: accept a company email or an employee ID"
 ```
 
 ---
+
+#### What Task 8 was verified against (executed 2026-08-19)
+
+| Check | Result |
+|---|---|
+| `E1042` (upper) + correct password, stored value `e1042` | → `requester@example.com`, Requester dashboard |
+| employee number + wrong password | "Those details didn't match." |
+| **email** + wrong password | identical |
+| unknown number | identical |
+| Remember Me, signed in by number | session in `localStorage`; identifier remembered **as typed** (`E1042`) |
+| counter after success | deleted — the next typo starts fresh |
+| `last_login_at` | updated, so the function returns a **real GoTrue session** rather than anything it minted |
+
+The upper/lower mismatch was chosen deliberately: it exercises the client, the
+function, `si_email_by_employee_id` and `users_employee_id_key` all agreeing on
+what "the same number" is, in one action.
+
+**The email path was the real risk in this task, not the number path.** GoTrue
+answers a bad address with `invalid_credentials`, which the old copy rendered as
+"check your email and password" — a *different sentence* from the function's. Two
+wordings is itself the oracle: it distinguishes an unknown identifier from a wrong
+password, which is exactly what the function's generic message and its timing
+floor were built to deny. The leak would simply have moved to the other route.
+Both surfaces now read one exported constant, so they cannot drift.
 
 ### Task 9: Documentation, and the two things that ship separately
 
