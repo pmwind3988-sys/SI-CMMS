@@ -1647,11 +1647,11 @@ fails to parse.
 - Consumes: the four actions from Task 5; `si_dummy_flags` (already in `USER_SELECT`), whose `placeholder_email` code is the client mirror of the function's refusal.
 - Produces: `canSetUserPassword(target, me)`, `canSendRecoveryLink(target, me)`, `canChangeUserEmail(target, me)` in `constants.js`; `sendRecoveryLink(userId)` in `admin.js`; `employee_id` readable, searchable and writable.
 
-- [ ] **Step 1: State the failing observation**
+- [x] **Step 1: State the failing observation**
 
 Signed in as an Administrator, Admin → Users still shows a **Password** button on every editable row, and clicking it now fails with Task 5's 403. A predicate that offers a control the server refuses is exactly the mismatch CLAUDE.md forbids. There is no employee ID anywhere, and no way to send a reset link.
 
-- [ ] **Step 2: Rewrite the three predicates**
+- [x] **Step 2: Rewrite the three predicates**
 
 In `app/src/lib/constants.js`, replace `canSetUserPassword` and `canChangeUserEmail`, and add the new one between them:
 
@@ -1699,7 +1699,7 @@ export function canChangeUserEmail(target, me) {
 }
 ```
 
-- [ ] **Step 3: Extend the data layer**
+- [x] **Step 3: Extend the data layer**
 
 In `app/src/lib/admin.js`:
 
@@ -1762,7 +1762,7 @@ export async function createUser({
 }
 ```
 
-- [ ] **Step 4: Update `UserActions` in `UsersAdmin.jsx`**
+- [x] **Step 4: Update `UserActions` in `UsersAdmin.jsx`**
 
 Add `canSetUserPassword` and `canSendRecoveryLink` to the `constants` import, `sendRecoveryLink` to the `admin` import, and `Mail` to the lucide-react import. Then in `UserActions`, above the return:
 
@@ -1820,7 +1820,7 @@ Add `onSendRecoveryLink` to `UserActions`' props, thread it through **both** cal
   }
 ```
 
-- [ ] **Step 5: Show, search and edit the employee ID**
+- [x] **Step 5: Show, search and edit the employee ID**
 
 In `filtered`, add the number to the search — an administrator holding a badge is the reason the column exists:
 
@@ -1889,7 +1889,7 @@ what now happens to it:
 
 A duplicate number arrives as a unique-violation from Postgres, and `describeError` already surfaces the server's message — **verify** that in step 6 rather than assuming it. If the raw constraint text is filtered into the friendly stand-in instead, add a named case for `users_employee_id_key` in `src/lib/errors.js` saying which number is taken.
 
-- [ ] **Step 6: Verify each change in the running app**
+- [x] **Step 6: Verify each change in the running app**
 
 | As | Check | Expected |
 |---|---|---|
@@ -1903,7 +1903,7 @@ A duplicate number arrives as a unique-violation from Postgres, and `describeErr
 | Administrator | a flagged account's row | "Must change password at next sign-in" |
 | any | the mobile card layout at a narrow width | the same buttons and lines as the desktop row |
 
-- [ ] **Step 7: Compile and commit**
+- [x] **Step 7: Compile and commit**
 
 ```bash
 cd app && npm run build
@@ -1912,6 +1912,45 @@ git commit -m "Admin: employee IDs, reset links, and Superuser-only credential c
 ```
 
 ---
+
+#### What Task 6 was verified against (executed 2026-08-19)
+
+As the **Superuser**:
+
+| Check | Result |
+|---|---|
+| Amirul, real `@pmw-group.com` address | `Password` + `Send reset link` |
+| every `@example.com` account | `Password` only — `canSendRecoveryLink` excludes placeholder addresses |
+| ID typed `"  e1042 "` | stored `"e1042"` — client trims, index normalises |
+| search `"E1042"` | matches only Ravi |
+| same number, other case, second account | refused |
+| flagged-row marker | renders |
+| mobile cards at 375px | employee ID, marker and buttons all present, no horizontal overflow |
+
+As an **ordinary Administrator** (the non-protected test admin) — every row a
+different rule:
+
+| Row | Result |
+|---|---|
+| peer Administrator | "Same rank — not editable here" (0015's rank rule) |
+| five subordinates, placeholder addresses | "No real email address — ask the Superuser for a temporary password", plus `Role` and `Edit`. **No `Password`. No `Send reset link`.** |
+| self | `Password` and `Edit`, no `Role` — own password is allowed, own role never is |
+| the protected Superuser | **absent** — `users_select` hides it, which is also why the count reads 7 here and 8 for the Superuser |
+| employee ID | `requester@example.com · #e1042` visible to an ordinary admin |
+
+**One fix the plan only anticipated as a possibility.** The duplicate-ID refusal
+first surfaced as "That already exists." — `describeError`'s generic 23505
+stand-in — which on a four-field form makes the reader guess which field. So
+`describeError` gained a **named-constraint table**, checked before the SQLSTATE
+table because a constraint name is more specific than the class of error it
+belongs to. `users_employee_id_key` now answers with the field *and* the
+normalisation rule. That table is the reusable part; this is its first entry.
+
+**Four pieces of copy were left contradicting the new rules** and are updated:
+the password dialog and the create form now say the recipient must replace the
+password, the email note explains that only the Superuser can change someone
+else's and why, and the search placeholder mentions employee IDs now that it
+matches them.
 
 ### Task 7: Migration 0027 and the `auth-signin` function
 
