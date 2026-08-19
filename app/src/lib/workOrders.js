@@ -23,7 +23,7 @@
  * building remark text; it no longer establishes identity.
  */
 import { supabase, liveQuery, liveRow } from "./supabase";
-import { ROLES } from "./roles";
+import { ROLES, hasRole } from "./roles";
 
 const WO_SELECT = "*";
 
@@ -185,18 +185,32 @@ export function listenWorkOrder(woId, cb, onError) {
  * permits every row, and the query would still have asked for one department's.
  * A client filter narrower than the policy is not defence in depth, it is a
  * feature that silently does not work.
+ *
+ * Since 0020 an account holds a set of roles, so this is a union rather than a
+ * chain of exclusive branches — a Requester+Technician sees what they raised
+ * AND what they were assigned, which the old if/else could not express.
  */
 export function listenWorkOrderList(currentUser, cb, onError) {
   const base = () => supabase.from("work_orders").select(WO_SELECT).order("created_at", { ascending: false });
 
+  // Supervisor, Manager and Admin are all system-wide as of 0019, so holding any
+  // of them means "everything" and no narrower filter can apply on top.
+  const systemWide =
+    hasRole(currentUser, ROLES.SUPERVISOR) ||
+    hasRole(currentUser, ROLES.MANAGER) ||
+    hasRole(currentUser, ROLES.ADMIN);
+
   let run;
-  if (currentUser.role === ROLES.REQUESTER) {
-    run = () => base().eq("requester_id", currentUser.uid);
-  } else if (currentUser.role === ROLES.TECHNICIAN) {
-    run = () => base().eq("assigned_to_id", currentUser.uid);
-  } else {
-    // supervisor / manager / admin — system-wide.
+  if (systemWide) {
     run = () => base().limit(300);
+  } else {
+    const clauses = [];
+    if (hasRole(currentUser, ROLES.REQUESTER)) clauses.push(`requester_id.eq.${currentUser.uid}`);
+    if (hasRole(currentUser, ROLES.TECHNICIAN)) clauses.push(`assigned_to_id.eq.${currentUser.uid}`);
+    // No usable role: show nothing rather than everything. RLS would return an
+    // empty set anyway; this makes the client agree with it instead of asking
+    // for rows it will never be given.
+    run = clauses.length ? () => base().or(clauses.join(",")) : () => base().limit(0);
   }
 
   return liveQuery({ table: "work_orders", run, cb, onError });

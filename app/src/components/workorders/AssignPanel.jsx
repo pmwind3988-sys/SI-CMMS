@@ -29,7 +29,14 @@ export default function AssignPanel({ wo }) {
     return unsub;
   }, []);
 
-  const roster = technicians || [];
+  // You cannot assign a work order to yourself — si_guard_work_order_transition
+  // refuses it (migration 0020), above the admin bypass, so this holds for every
+  // role. Removing yourself from the roster makes the rule visible instead of
+  // something discovered as an error after choosing a name.
+  //
+  // Only ever non-empty for a multi-role account: a plain Supervisor has no
+  // technicians row and was never in this list to begin with.
+  const roster = (technicians || []).filter((t) => t.user_id !== user?.uid);
 
   const bestMatch = roster.filter((t) =>
     (t.skills || []).some(

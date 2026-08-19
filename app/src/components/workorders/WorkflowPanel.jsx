@@ -33,7 +33,7 @@ import {
 } from "../../lib/workOrders";
 import { isAssigneeOf, isRequesterOf, isManagerOrAdmin } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
-import { ROLES } from "../../lib/roles";
+import { ROLES, hasRole } from "../../lib/roles";
 import Button from "../ui/Button";
 import { inputClass } from "../ui/Field";
 
@@ -66,7 +66,7 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
 
   const assignee = isAssigneeOf(wo, user);
   const requester = isRequesterOf(wo, user);
-  const isSupervisorLike = user.role === ROLES.SUPERVISOR || isManagerOrAdmin(user);
+  const isSupervisorLike = hasRole(user, ROLES.SUPERVISOR) || isManagerOrAdmin(user);
   const actor = { uid: user.uid, name: user.name, role: user.role };
 
   async function run(fn, ...args) {
@@ -247,7 +247,7 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
     if (isManagerOrAdmin(user))
       return (
         <div>
-          <InfoBox>Awaiting requester verification. As {user.role === ROLES.ADMIN ? "Admin" : "Manager"} you can override and close directly if the requester is unresponsive.</InfoBox>
+          <InfoBox>Awaiting requester verification. As {hasRole(user, ROLES.ADMIN) ? "Admin" : "Manager"} you can override and close directly if the requester is unresponsive.</InfoBox>
           <Button variant="ghost" icon={ThumbsUp} disabled={busy} onClick={() => run(forceVerifyAndClose)}>Force verify & close</Button>
         </div>
       );

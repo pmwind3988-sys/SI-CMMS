@@ -7,7 +7,7 @@ import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrderList } from "../../lib/workOrders";
 import { fmtDue } from "../../lib/constants";
 import { useReferenceData } from "../../lib/referenceData";
-import { ROLES } from "../../lib/roles";
+import { ROLES, hasRole, hasAnyRole } from "../../lib/roles";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import Button from "../ui/Button";
 import { Card, ErrorBanner, EmptyState } from "../ui/Surfaces";
@@ -71,8 +71,13 @@ export default function WorkOrderList() {
   }, [workOrders, fPriority, fStatus, q]);
 
   const needsAssignment = (workOrders || []).filter((w) => w.status === "open").length;
-  const needsMyResponse = user?.role === ROLES.TECHNICIAN ? (workOrders || []).filter((w) => w.status === "assigned").length : 0;
-  const canTriage = user?.role === ROLES.SUPERVISOR || user?.role === ROLES.MANAGER || user?.role === ROLES.ADMIN;
+  // Assigned to THIS person, not merely assigned. A Supervisor+Technician sees
+  // every work order in the plant (migration 0019), so counting every row at
+  // status "assigned" would report the whole plant's backlog as waiting on them.
+  const needsMyResponse = hasRole(user, ROLES.TECHNICIAN)
+    ? (workOrders || []).filter((w) => w.status === "assigned" && w.assigned_to_id === user.uid).length
+    : 0;
+  const canTriage = hasAnyRole(user, [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN]);
 
   return (
     <div>
@@ -81,7 +86,9 @@ export default function WorkOrderList() {
           <h1 className="text-xl font-bold text-ink">{TITLES[user.role]}</h1>
           <p className="text-[13px] text-ink-soft">{workOrders ? `${filtered.length} of ${workOrders.length} work orders` : "Loading…"}</p>
         </div>
-        {user.role !== ROLES.TECHNICIAN && (
+        {/* A technician-only account does not raise work orders; anyone holding
+            any other role does. */}
+        {hasAnyRole(user, [ROLES.REQUESTER, ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN]) && (
           <Button variant="amber" icon={Plus} onClick={() => router.push("/work-orders/new")}>
             Raise Work Order
           </Button>
@@ -96,7 +103,7 @@ export default function WorkOrderList() {
           <strong>{needsAssignment}</strong> work order{needsAssignment !== 1 ? "s" : ""} need{needsAssignment === 1 ? "s" : ""} a technician assigned.
         </div>
       )}
-      {user.role === ROLES.TECHNICIAN && needsMyResponse > 0 && (
+      {hasRole(user, ROLES.TECHNICIAN) && needsMyResponse > 0 && (
         <div className="flex items-center gap-2 rounded bg-accent-soft border border-accent/40 px-3.5 py-2.5 mb-3.5 text-[13px] text-[#8A5A0A]">
           <AlertTriangle size={15} />
           <strong>{needsMyResponse}</strong> new assignment{needsMyResponse !== 1 ? "s" : ""} awaiting your response.
