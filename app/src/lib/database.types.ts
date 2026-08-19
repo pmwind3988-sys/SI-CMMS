@@ -1204,6 +1204,7 @@ export type Database = {
       si_is_superuser: { Args: never; Returns: boolean }
       si_is_supervisor: { Args: never; Returns: boolean }
       si_is_technician: { Args: never; Returns: boolean }
+      si_is_test_account: { Args: { p_user_id: string }; Returns: boolean }
       si_managers: { Args: never; Returns: string[] }
       si_notify: {
         Args: {
