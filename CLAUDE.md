@@ -544,6 +544,11 @@ explicitly and run the Supabase security advisor after any migration that adds a
   accounts the *only* credential route is the Superuser issuing a temporary password. That
   is the accepted trade-off of Superuser-only resets working as designed, but it is more
   absolute than intended until real addresses are set. Not a code gap; a data one.
-- `SITE_URL` is not set as an Edge Function secret, so `send_recovery_link` currently
-  refuses rather than sends. Everything behind it is built and gated; it needs the deployed
-  origin (`app/BUILD_AND_DEPLOY.md` §4).
+- `send_recovery_link` is configured but **has never delivered a message**. `SITE_URL` and
+  `NEXT_PUBLIC_SITE_URL` are both set to `https://si-cmms.vercel.app`, so the function no
+  longer refuses — but the only account with a real address is Amirul's, so the first
+  successful send will also be the first test of it. Two things are still unconfirmed until
+  then: that `https://si-cmms.vercel.app/reset-password/` is listed under Authentication →
+  URL Configuration → Redirect URLs (Supabase refuses the redirect otherwise, and the link
+  dies *after* the mail arrives), and that the project's SMTP actually sends — the built-in
+  sender is rate-limited to a handful of messages an hour.

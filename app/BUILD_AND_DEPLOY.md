@@ -242,7 +242,7 @@ cd app && npx supabase secrets set SITE_URL=https://<the deployed origin>
 | Secret | Why |
 |---|---|
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | injected automatically; nothing to do |
-| `SITE_URL` | **must be set by hand.** Where a password-recovery link points. |
+| `SITE_URL` | **must be set by hand.** Where a password-recovery link points. Set on 2026-08-20 to `https://si-cmms.vercel.app`. |
 
 `SITE_URL` holds the same value as `NEXT_PUBLIC_SITE_URL`, but it is a *function*
 secret, not a Vercel variable — an Edge Function has no `window` to read an origin
@@ -250,6 +250,13 @@ from, and `window.location.origin` would be wrong anyway in the APK, where
 Capacitor serves the same export from `https://localhost`. It must also be listed
 under Authentication → URL Configuration → Redirect URLs, or the link is rejected
 when it arrives.
+
+Setting the secret is not the same as proving delivery. The function stops refusing
+the moment `SITE_URL` exists, and every remaining failure happens somewhere it cannot
+report: the redirect allow-list rejects the link only when the recipient clicks it, and
+the built-in SMTP sender is rate-limited to a few messages an hour and drops the rest.
+So a green `ok: true` from `send_recovery_link` means *Supabase accepted the request*,
+not that anybody received an email. Confirm the first one out of band.
 
 `send_recovery_link` refuses to send while it is unset, rather than emailing a link
 that points nowhere.
