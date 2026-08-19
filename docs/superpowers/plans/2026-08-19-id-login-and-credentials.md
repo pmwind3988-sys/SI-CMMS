@@ -43,12 +43,36 @@ Where each kind of check runs:
 - **SQL assertions** — Supabase Dashboard → SQL Editor, or `psql`. Both connect as `postgres`, which **bypasses RLS**: an assertion that must exercise a *policy* has to run in the app as a signed-in user instead, and every such step below says so explicitly.
 - **Compile** — `npm run build` from `app/`, with the dev server stopped.
 - **Behaviour** — `npm run dev` from `app/`, signed in as the role the step names. **The person running the plan signs in themselves. Never ask for, type, or store anybody else's password.**
-- **Claims** — a token's payload is base64url in its middle segment. In the browser console of the running app:
+- **Claims** — **the app exposes no `supabase` client on `window`**, by design: components reach it only through `lib/*`. So read the session out of storage, where the adapter in `lib/supabase.js` puts it — `localStorage` when Remember Me was ticked, `sessionStorage` otherwise. In the browser console of the running app:
   ```js
-  const { data } = await window.__sb.auth.getSession();
-  JSON.parse(atob(data.session.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+  const K = Object.keys(localStorage).concat(Object.keys(sessionStorage))
+    .find((k) => k.includes("auth-token"));
+  const raw = localStorage.getItem(K) ?? sessionStorage.getItem(K);
+  const tok = JSON.parse(raw).access_token;
+  JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
   ```
-  If `window.__sb` is not exposed, read the Supabase entry under Application → Local Storage and decode its `access_token` the same way. **A cached token proves nothing — sign out and in first, every time.**
+  **A cached token proves nothing — sign out and in first, every time.**
+
+- **A request as the signed-in user** — for the steps that must go through a policy or a guard rather than round the back of it, call PostgREST directly with that token. The anon key is `NEXT_PUBLIC_` and already in the bundle, so it is not a secret; take it from `app/.env.local`. A helper worth pasting once per session:
+  ```js
+  window.__as = async (path, init = {}) => {
+    const K = Object.keys(localStorage).concat(Object.keys(sessionStorage))
+      .find((k) => k.includes("auth-token"));
+    const tok = JSON.parse(localStorage.getItem(K) ?? sessionStorage.getItem(K)).access_token;
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      ...init,
+      headers: {
+        apikey: ANON_KEY,
+        Authorization: `Bearer ${tok}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+        ...(init.headers ?? {}),
+      },
+    });
+    return { status: res.status, body: await res.text() };
+  };
+  ```
+  Substitute the two constants from `app/.env.local`. **Do not use a service-role key here** — it bypasses RLS, which is the opposite of what these steps test.
 
 ## Applying a migration
 
@@ -367,8 +391,11 @@ end $$;
 Then start the dev server, sign in as that Requester, and in the browser console:
 
 ```js
-const { data: me } = await window.__sb.auth.getUser();
-await window.__sb.from("users").update({ must_change_password: false }).eq("id", me.user.id);
+// uid is in the token's `sub` claim; decode it as the verification model shows.
+await window.__as(`users?id=eq.${uid}`, {
+  method: "PATCH",
+  body: JSON.stringify({ must_change_password: false }),
+});
 ```
 
 Expected: an error containing `You may only change your own name, phone, and photo.`
@@ -769,10 +796,8 @@ Sign out and in with the flag still true.
 
 Expected: you are *not* on a dashboard. `RequireRole` computes `permitted` false and redirects to `dashboardPathForRole(null)`, which is `/login` — so you land back on the sign-in screen holding a live session. Ugly, and Task 4 fixes it. What matters here is that the claims are right; check in the console:
 
-```js
-const { data } = await window.__sb.auth.getSession();
-JSON.parse(atob(data.session.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-```
+Decode the token as the verification model shows, and check `user_roles` is
+absent and `must_change_password` is true.
 
 - [ ] **Step 6: Confirm the normal case is untouched**
 
@@ -1373,9 +1398,20 @@ cd app && npx supabase functions deploy admin-users
 The UI for these lands in Task 6, so call them from the browser console meanwhile:
 
 ```js
-await window.__sb.functions.invoke("admin-users", {
-  body: { action: "set_password", user_id: "<uuid>", password: "<a temp password you choose>" },
-});
+// Same token as the verification model's helper reads.
+await fetch(`${SUPABASE_URL}/functions/v1/admin-users`, {
+  method: "POST",
+  headers: {
+    apikey: ANON_KEY,
+    Authorization: `Bearer ${tok}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    action: "set_password",
+    user_id: "<uuid>",
+    password: "<a temp password you choose>",
+  }),
+}).then((r) => r.json());
 ```
 
 | As | Action | Expected |

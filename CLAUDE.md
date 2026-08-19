@@ -21,11 +21,11 @@ npm run build            # static export into out/
 npm run lint             # next lint
 ```
 
-Database (Supabase CLI; `db:push` needs Docker):
+Database (Supabase CLI; `db:diff` needs Docker, `db:push` does not):
 
 ```bash
-npm run db:push          # apply pending migrations
-npm run db:diff          # diff live schema against migrations
+npm run db:push          # apply pending migrations — connects to the linked remote, no Docker
+npm run db:diff          # diff live schema against migrations — needs Docker (shadow database)
 npm run db:types         # regenerate src/lib/database.types.ts from live schema
 npm run bootstrap:users  # create the 6 role users
 npm run seed:demo        # one demo work order walked through the real workflow
