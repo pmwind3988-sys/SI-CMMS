@@ -23,7 +23,7 @@
 // work_orders.assigned_to_id is a uuid foreign key onto users(id), so its slug
 // ids ("tech-arun") could never have been assigned. AssignPanel reads the real
 // roster via listenTechnicians().
-import { ROLES, ALL_ROLES, roleRank, accountRank } from "./roles";
+import { ROLES, ALL_ROLES, roleRank, accountRank, hasRole } from "./roles";
 
 /** Humanise a millisecond duration for an SLA countdown. */
 export function fmtDue(ms) {
@@ -42,16 +42,17 @@ export function fmtDue(ms) {
 /* ------------------------------------------------------------------
    Client-side role predicates.
 
-   These mirror the RLS policies in migration 0002 — they decide what to
+   These mirror the RLS policies in migrations 0002, 0019 and 0020 — they
+   decide what to
    *show*, never what is *allowed*. The database is the authorization
    boundary; if one of these ever disagrees with a policy, the policy wins
    and the user sees an error rather than a silent success.
 -------------------------------------------------------------------*/
 export function isAssigneeOf(wo, currentUser) {
-  return currentUser?.role === ROLES.TECHNICIAN && wo.assigned_to_id === currentUser.uid;
+  return hasRole(currentUser, ROLES.TECHNICIAN) && wo.assigned_to_id === currentUser.uid;
 }
 export function isRequesterOf(wo, currentUser) {
-  return currentUser?.role === ROLES.REQUESTER && wo.requester_id === currentUser.uid;
+  return hasRole(currentUser, ROLES.REQUESTER) && wo.requester_id === currentUser.uid;
 }
 /**
  * A Supervisor reaches every work order, not just their own department's
@@ -62,17 +63,17 @@ export function isRequesterOf(wo, currentUser) {
  * the other two scope predicates beside it.
  */
 export function isSupervisor(wo, currentUser) {
-  return currentUser?.role === ROLES.SUPERVISOR;
+  return hasRole(currentUser, ROLES.SUPERVISOR);
 }
 export function isManagerOrAdmin(currentUser) {
-  return currentUser?.role === ROLES.MANAGER || currentUser?.role === ROLES.ADMIN;
+  return hasRole(currentUser, ROLES.MANAGER) || hasRole(currentUser, ROLES.ADMIN);
 }
 export function canAssign(currentUser) {
-  return currentUser?.role === ROLES.SUPERVISOR || isManagerOrAdmin(currentUser);
+  return hasRole(currentUser, ROLES.SUPERVISOR) || isManagerOrAdmin(currentUser);
 }
 export function canEditWhileOpen(wo, currentUser) {
   return (
-    (currentUser?.role === ROLES.REQUESTER && wo.requester_id === currentUser.uid) ||
+    (hasRole(currentUser, ROLES.REQUESTER) && wo.requester_id === currentUser.uid) ||
     isSupervisor(wo, currentUser) ||
     isManagerOrAdmin(currentUser)
   );
@@ -91,7 +92,11 @@ export function canEditWhileOpen(wo, currentUser) {
 export function canDeleteWorkOrders(currentUser, roleCan) {
   if (!currentUser) return false;
   if (currentUser.isSuperuser) return true;
-  return roleCan?.(currentUser.role, "can_delete_work_orders") === true;
+  // A union, matching si_can_delete_work_orders(): the capability is held if ANY
+  // role this account holds has been granted it.
+  return (currentUser.roles ?? []).some(
+    (r) => roleCan?.(r, "can_delete_work_orders") === true
+  );
 }
 
 /**
@@ -131,6 +136,9 @@ export function canEditRolePermissions(currentUser) {
  * their own name in Supabase. That is what the flag is for.
  */
 export function canEditUser(target, me) {
+  // No membership test needed here, and that is not an oversight: accountRank()
+  // reads the whole set and returns the highest (migration 0020), so the rank
+  // comparison below already means "below every role they hold".
   if (!me || !target) return false;
   if (target.is_protected) return false;
   if (target.id === me.uid) return true;

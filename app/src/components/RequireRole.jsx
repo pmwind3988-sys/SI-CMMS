@@ -11,13 +11,17 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
-import { ELEVATED_ROLES, dashboardPathForRole } from "../lib/roles";
+import { ELEVATED_ROLES, dashboardPathForRole, hasAnyRole } from "../lib/roles";
 
 export default function RequireRole({ allow, includeElevated = true, children }) {
   const { user } = useAuth();
   const router = useRouter();
 
-  const permitted = user && (allow.includes(user.role) || (includeElevated && ELEVATED_ROLES.includes(user.role)));
+  // Membership, not equality: an account holds a set of roles and any one of
+  // them admitting it is enough (migration 0020). This is what lets a
+  // Supervisor+Technician reach both dashboards.
+  const permitted =
+    user && (hasAnyRole(user, allow) || (includeElevated && hasAnyRole(user, ELEVATED_ROLES)));
 
   useEffect(() => {
     if (user && !permitted) {
