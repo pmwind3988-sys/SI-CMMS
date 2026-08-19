@@ -752,7 +752,7 @@ That fallback was a migration-0020 rollout requirement, and every token predatin
 - Consumes: the `must_change_password` claim from Task 2.
 - Produces: `user.mustChangePassword: boolean`; `user.isSuperuser` now requires the `admin` role as well as the flag; `signIn(email, password, remember)` returning `{ user, roles, role, mustChangePassword }`. Tasks 4, 6 and 8 read these names.
 
-- [ ] **Step 1: Observe the wrong behaviour** — *deferred into Task 4, see note below*
+- [x] **Step 1: Observe the wrong behaviour** — *done during Task 4, see note below*
 
 With `must_change_password = true` on your test account (set as `postgres`), sign out and in with `npm run dev` running.
 
@@ -844,7 +844,7 @@ The header lists the `user` shape. Replace that bullet and add the reason the fa
  * undo that — see the comment on resolvedRoles.
 ```
 
-- [ ] **Step 5: Re-run the step 1 observation** — *deferred into Task 4, see note below*
+- [x] **Step 5: Re-run the step 1 observation** — *done during Task 4, see note below*
 
 Sign out and in with the flag still true.
 
@@ -869,9 +869,17 @@ git commit -m "Auth: roles come from claims only, and carry the password-change 
 
 ---
 
-#### Why steps 1 and 5 are deferred (executed 2026-08-19)
+#### Steps 1 and 5 — deferred, then done during Task 4 (executed 2026-08-19)
 
-Both need a signed-in session for an account that can actually be flagged, and
+**Outcome, recorded during Task 4:** with the flag set and the fix in place, the
+account did *not* land on a dashboard. It stayed on the page it asked for and
+rendered "0 of 0 work orders" above a full filter bar and an Export button, with
+nothing anywhere explaining why — `roles` was `[]`, so the Task 3 fix was working
+and the app had simply nothing to say about it. That screen is what Task 4
+replaces, and it is a better argument for the redirect than the plan's own
+prediction of a bounce to `/login`.
+
+Both needed a signed-in session for an account that can actually be flagged, and
 `si_guard_protected_user` refuses every write to the protected Superuser's row —
 so the account we were signed in as could not be put into the failing state. Task
 4 needs exactly that same setup to test the redirect, so one sign-in as the demo
@@ -905,11 +913,11 @@ half-rendered app, which is the right direction.
 - Consumes: `user.mustChangePassword` from Task 3; `supabase.auth.updateUser`; `highestRole` and `dashboardPathForRole` from `lib/roles.js`; `describeError` from `lib/errors.js`; `Field` / `inputClass` from `components/ui/Field`; `ErrorBanner` from `components/ui/Surfaces`; `Button` from `components/ui/Button`. **Check the exact import shapes against `src/app/reset-password/page.jsx` before writing** — it is the closest existing page and its imports are known-good.
 - Produces: the route `/change-password/` (trailing slash, because `trailingSlash: true`), and a redirect to it from every `RequireAuth` page while the flag is set.
 
-- [ ] **Step 1: State the failing observation**
+- [x] **Step 1: State the failing observation**
 
 With the flag true, signing in leaves you bouncing to `/login` holding a live session and no explanation. `/change-password/` 404s.
 
-- [ ] **Step 2: Write the page**
+- [x] **Step 2: Write the page**
 
 Create `app/src/app/change-password/page.jsx`:
 
@@ -1065,7 +1073,7 @@ export default function ChangePasswordPage() {
 }
 ```
 
-- [ ] **Step 3: Send a flagged account here from anywhere**
+- [x] **Step 3: Send a flagged account here from anywhere**
 
 `RequireAuth` wraps every protected page, which makes it the one place this belongs. In `app/src/components/RequireAuth.jsx`, add to the existing effect:
 
@@ -1110,13 +1118,13 @@ export default function RequireAuth({ children }) {
 }
 ```
 
-- [ ] **Step 4: Verify the forced path end to end**
+- [x] **Step 4: Verify the forced path end to end**
 
 Set the flag as `postgres` on your test account, sign out, sign in.
 
 Expected: you land on `/change-password/` with the "set for you by an administrator" copy. Navigate to `/work-orders/` — you come straight back. The AppShell renders (the page is inside `RequireAuth`) and its lists are empty, because the database grants nothing.
 
-- [ ] **Step 5: Verify the change clears it without a sign-out**
+- [x] **Step 5: Verify the change clears it without a sign-out**
 
 Set a new password in the form.
 
@@ -1128,13 +1136,13 @@ select email, must_change_password, password_changed_at from public.users where 
 
 `must_change_password` false and `password_changed_at` just now. That is Task 1's trigger statement firing, and it is also the proof the `si_protected_override()` door works — the write landed on your own row while you were signed in, which the self branch of the guard otherwise forbids.
 
-- [ ] **Step 6: Verify the voluntary path**
+- [x] **Step 6: Verify the voluntary path**
 
 With the flag false, navigate to `/change-password/` directly.
 
 Expected: the same form with the "Choose a new password" copy, no redirect, and a successful change lands you back on your dashboard.
 
-- [ ] **Step 7: Compile and commit**
+- [x] **Step 7: Compile and commit**
 
 ```bash
 cd app && npm run build
@@ -1143,6 +1151,36 @@ git commit -m "Add /change-password, and route a flagged account to it"
 ```
 
 ---
+
+#### What Task 4 was verified against (executed 2026-08-19)
+
+| Check | Result |
+|---|---|
+| `/work-orders/`, `/dashboard/`, `/admin/users/`, `/notifications/` while flagged | all → `/change-password/` |
+| `/change-password/` itself, sampled repeatedly | stable, no loop |
+| `/admin/users/` specifically | redirects — `RequireAuth` is the outer wrapper, so the flag check takes precedence over the inner role gate rather than racing it |
+| Profile self-read on a roleless token | "Ravi Kumar" renders; role badge `—` |
+| Nav while flagged | one item, "Change password" |
+| Password changed in the form | `must_change_password` false, `password_changed_at` stamped, token re-minted with `user_roles ["requester"]`, landed on the Requester dashboard, **no sign-out** |
+| `password_changed_at` vs new token `iat` | same second — the ordering holds |
+| Voluntary path, flag clear | `/change-password/` reachable, "Choose a new password" copy, full nav, no redirect |
+| Build | clean; `/change-password` present in the static export |
+
+Two additions beyond the plan, both following from the page's claim to be the one
+page a flagged account can use:
+
+- **The home links pointed at `/login`.** `dashboardPathForRole(null)` returns
+  that for a roleless account, and `/login` is not behind `RequireAuth` — so the
+  logo and "Dashboard" would have dropped a flagged user on the sign-in form
+  while their session was live, indistinguishable from being signed out. `AppShell`
+  now routes all three through one `homeHref`.
+- **The nav offered links that bounced.** Work Orders and Notifications rendered
+  and threw you straight back, which is the same "nothing works and nothing says
+  why" the redirect exists to remove.
+
+Also note for Task 5: `npm run bootstrap:users` does **not** reset an existing
+account's password — `password` is only passed on the create branch. Restoring a
+demo account's seeded password means Admin → Users → Password as the Superuser.
 
 ### Task 5: `admin-users` — Superuser-only passwords, recovery links, locked addresses
 
