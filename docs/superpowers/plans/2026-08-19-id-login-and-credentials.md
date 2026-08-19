@@ -752,13 +752,13 @@ That fallback was a migration-0020 rollout requirement, and every token predatin
 - Consumes: the `must_change_password` claim from Task 2.
 - Produces: `user.mustChangePassword: boolean`; `user.isSuperuser` now requires the `admin` role as well as the flag; `signIn(email, password, remember)` returning `{ user, roles, role, mustChangePassword }`. Tasks 4, 6 and 8 read these names.
 
-- [ ] **Step 1: Observe the wrong behaviour**
+- [ ] **Step 1: Observe the wrong behaviour** — *deferred into Task 4, see note below*
 
 With `must_change_password = true` on your test account (set as `postgres`), sign out and in with `npm run dev` running.
 
 Expected today: you land on your role's dashboard as though nothing happened, because `profile.roles` refilled the set, and every list is empty. That is the bug.
 
-- [ ] **Step 2: Replace the role resolution in `resolve()`**
+- [x] **Step 2: Replace the role resolution in `resolve()`**
 
 In `app/src/context/AuthContext.js`, replace the `resolvedRoles` block and the `setUser` call:
 
@@ -810,7 +810,7 @@ In `app/src/context/AuthContext.js`, replace the `resolvedRoles` block and the `
         });
 ```
 
-- [ ] **Step 3: Return the same two facts from `signIn`**
+- [x] **Step 3: Return the same two facts from `signIn`**
 
 Replace the tail of `signIn` (it still takes an email here; Task 8 widens it to an identifier):
 
@@ -829,7 +829,7 @@ Replace the tail of `signIn` (it still takes an email here; Task 8 widens it to 
     };
 ```
 
-- [ ] **Step 4: Update the module docstring**
+- [x] **Step 4: Update the module docstring**
 
 The header lists the `user` shape. Replace that bullet and add the reason the fallback is gone:
 
@@ -844,7 +844,7 @@ The header lists the `user` shape. Replace that bullet and add the reason the fa
  * undo that — see the comment on resolvedRoles.
 ```
 
-- [ ] **Step 5: Re-run the step 1 observation**
+- [ ] **Step 5: Re-run the step 1 observation** — *deferred into Task 4, see note below*
 
 Sign out and in with the flag still true.
 
@@ -853,13 +853,13 @@ Expected: you are *not* on a dashboard. `RequireRole` computes `permitted` false
 Decode the token as the verification model shows, and check `user_roles` is
 absent and `must_change_password` is true.
 
-- [ ] **Step 6: Confirm the normal case is untouched**
+- [x] **Step 6: Confirm the normal case is untouched**
 
 Set the flag back to false, sign out and in.
 
 Expected: your own dashboard, all lists populated, and every admin control that was there before still there — in particular, confirm the Superuser still sees Admin → Settings → Permissions, which is the one screen gated on `isSuperuser` and therefore the one the step 2 conjunction could have broken.
 
-- [ ] **Step 7: Compile and commit**
+- [x] **Step 7: Compile and commit**
 
 ```bash
 cd app && npm run build
@@ -868,6 +868,32 @@ git commit -m "Auth: roles come from claims only, and carry the password-change 
 ```
 
 ---
+
+#### Why steps 1 and 5 are deferred (executed 2026-08-19)
+
+Both need a signed-in session for an account that can actually be flagged, and
+`si_guard_protected_user` refuses every write to the protected Superuser's row —
+so the account we were signed in as could not be put into the failing state. Task
+4 needs exactly that same setup to test the redirect, so one sign-in as the demo
+Requester covers both, and doing it twice would prove nothing extra.
+
+The defect itself is not taken on trust. It was measured in Task 2: on a token
+carrying no role claims, selecting `roles` from `users` returned `["requester"]`
+for the account's own row — precisely what the removed fallback read.
+
+What **was** verified here, as the protected Superuser: the normal path is
+untouched. Admin → Settings → Permissions renders with its toggle grid, which is
+the one screen gated on `isSuperuser` and therefore the thing the new
+`&& roles.includes('admin')` conjunction could have broken. `role_permissions`
+still accepts a write. Build clean.
+
+One incidental finding worth carrying. Mid-task the app bounced to `/login` with a
+valid, unexpired token still in storage — which looked exactly like the edit having
+broken `resolve()`. It was `ERR_NAME_NOT_RESOLVED`, a transient DNS failure, with
+the dev server compiling fine throughout. **A network blip and a broken
+`AuthContext` present identically.** Read the console before believing the latter.
+It did also show the failure path leading to the login screen rather than into a
+half-rendered app, which is the right direction.
 
 ### Task 4: `/change-password` — the one page a flagged account can use
 
