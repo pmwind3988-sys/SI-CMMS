@@ -107,14 +107,42 @@ export default function LoginPage() {
 
     setStatus("checking");
     try {
-      const { role } = await signIn(email, password, rememberMe);
+      const { role, mustChangePassword } = await signIn(email, password, rememberMe);
+
+      /**
+       * Checked BEFORE the no-role branch below, because it is the reason the
+       * roles are missing (migration 0026 withholds them while the flag is set)
+       * and because this branch navigates while that one does not.
+       *
+       * Getting this order wrong strands the account: an admin creates a user,
+       * that user signs in with the password they were given, and the no-role
+       * branch reports a misconfiguration and returns — so they never reach
+       * /change-password, which is the only thing they are allowed to do. That
+       * is not hypothetical; it is what happened the first time an account was
+       * created after admin-users started flagging them.
+       */
+      if (mustChangePassword) {
+        setStatus("success");
+        router.replace("/change-password/");
+        return;
+      }
+
       if (!role) {
-        // Credentials were accepted, but the access-token hook returned no
-        // user_role: either the hook isn't enabled in the Supabase dashboard
-        // (Authentication -> Hooks -> Customize Access Token), or this account
-        // has no row in public.users. Say so, rather than implying a typo.
+        /**
+         * Credentials accepted, no role claims in the token. Three causes, and
+         * the person signing in cannot tell them apart: the account is not
+         * active (migration 0026), it has no row in public.users, or the
+         * access-token hook is not enabled in the Supabase dashboard
+         * (Authentication → Hooks → Customize Access Token).
+         *
+         * All three are an administrator's problem and none of them is a typo,
+         * which is why this does not say "check your password".
+         */
         setStatus("idle");
-        setError("Signed in, but this account has no role assigned. Contact your administrator.");
+        setError(
+          "Signed in, but this account has no access. It may have been deactivated, " +
+            "or it has no role assigned. Contact your administrator.",
+        );
         return;
       }
       setStatus("success");

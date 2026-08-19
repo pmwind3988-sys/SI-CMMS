@@ -1195,7 +1195,7 @@ demo account's seeded password means Admin → Users → Password as the Superus
   - `set_email { user_id, email }` — target is the caller, or the caller is `is_protected`.
   - `create_user { …, employee_id }` — optional, trimmed, uniqueness from the index.
 
-- [ ] **Step 1: Set the new secret, and record the failing observations**
+- [ ] **Step 1: Set the new secret, and record the failing observations** — *SITE_URL still unset; the deployed origin is not recorded anywhere in the repo*
 
 `send_recovery_link` needs an absolute redirect. `window.location.origin` is wrong for the same reason it is wrong in `AuthContext` — Capacitor serves the export from `https://localhost` — and an Edge Function has no window at all. Set a function secret to the deployed web origin:
 
@@ -1207,7 +1207,7 @@ cd app && npx supabase secrets set SITE_URL=https://<the deployed origin>
 
 Then, signed in as an **Administrator** (not the Superuser), record what is wrong today: the **Password** button is offered on a subordinate's row and works; **Edit** lets you change a subordinate's sign-in address; there is no way to send anyone a reset link.
 
-- [ ] **Step 2: Restrict `set_password`, and set the flag after it**
+- [x] **Step 2: Restrict `set_password`, and set the flag after it**
 
 Replace the whole `if (action === "set_password") { … }` block:
 
@@ -1309,7 +1309,7 @@ Replace the whole `if (action === "set_password") { … }` block:
   }
 ```
 
-- [ ] **Step 3: Add `send_recovery_link`**
+- [x] **Step 3: Add `send_recovery_link`**
 
 Insert immediately after the `set_password` block:
 
@@ -1405,7 +1405,7 @@ Insert immediately after the `set_password` block:
   }
 ```
 
-- [ ] **Step 4: Lock other people's addresses to the Superuser**
+- [x] **Step 4: Lock other people's addresses to the Superuser**
 
 Inside the `set_email` block's `if (userId !== caller.user.id) { … }`, keep the `is_protected` refusal and replace the rank check with:
 
@@ -1435,7 +1435,7 @@ Inside the `set_email` block's `if (userId !== caller.user.id) { … }`, keep th
       }
 ```
 
-- [ ] **Step 5: Accept `employee_id` on `create_user`**
+- [x] **Step 5: Accept `employee_id` on `create_user`**
 
 Beside the other payload reads:
 
@@ -1490,7 +1490,7 @@ Then name the collision in the existing rollback branch:
     }
 ```
 
-- [ ] **Step 6: Update the function's header docstring**
+- [x] **Step 6: Update the function's header docstring**
 
 The header enumerates what the function does and why. Replace the "Why this exists at all" list's coverage of these actions:
 
@@ -1507,7 +1507,7 @@ The header enumerates what the function does and why. Replace the "Why this exis
  *                           delivering nothing is the worst outcome available.
 ```
 
-- [ ] **Step 7: Deploy, then test each rule**
+- [ ] **Step 7: Deploy, then test each rule** — *deployed; 4 of 6 rows tested, see below*
 
 ```bash
 cd app && npx supabase functions deploy admin-users
@@ -1542,7 +1542,7 @@ await fetch(`${SUPABASE_URL}/functions/v1/admin-users`, {
 | Superuser | `set_password` on a subordinate | succeeds; message says they must change it |
 | Administrator | `create_user` with a password they chose | account created **and** `must_change_password` true in the database |
 
-- [ ] **Step 8: Prove the ordering trap is closed — this is the whole test**
+- [ ] **Step 8: Prove the ordering trap is closed — this is the whole test** — *needs a Superuser session*
 
 After the Superuser's successful `set_password`:
 
@@ -1552,7 +1552,7 @@ select email, must_change_password, password_changed_at from public.users where 
 
 Expected: `must_change_password` **true**. If it is false, the flag was written before the password and the trigger cleared it — re-read step 2.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add app/supabase/functions/admin-users/index.ts
@@ -1560,6 +1560,67 @@ git commit -m "admin-users: passwords and others' addresses are Superuser-only; 
 ```
 
 ---
+
+#### What Task 5 was verified against (executed 2026-08-19)
+
+**A hole found while working out how to test this, not by looking for it.** 0026
+enforces `must_change_password` by withholding role claims, which covers every
+RLS policy and `si_set_user_roles` (it reads `si_roles()`). This function is the
+deliberate exception — it re-reads roles from the *database* so a stale token
+cannot be used — and that walked straight past the withholding. An Administrator
+holding a password somebody else had just chosen could set other people's
+passwords before changing their own. `status` was already checked here; the new
+flag was not. Three enforcement points, and the loosest wins.
+
+As a **flagged** Administrator (holds `admin`, `status=active`, so the old code
+would have allowed all four):
+
+| Call | Result |
+|---|---|
+| `set_password` | 403 "Change your own password first…" |
+| `set_email` | 403 same |
+| `create_user` | 403 same |
+| `send_recovery_link` | 403 same |
+| Side effects | **none** — no address changed, no account created, no stray `auth.users` row |
+
+As an **ordinary** Administrator (unflagged, active, not protected):
+
+| Call | Result |
+|---|---|
+| `set_password` on someone else | 403 "Only the protected Superuser account can set someone else's password." |
+| `set_email` on someone else | 403 "Only the protected Superuser account can change someone else's sign-in address." |
+| `set_email` on **self** | 200 — self is still allowed, so the lock is not overreach |
+| `create_user` granting `admin` | 403 "…it is at or above your own rank." Nothing created. |
+| `send_recovery_link` | 500 SITE_URL not set — the configuration guard fires |
+| Stray rows | none |
+
+**Not yet verified:** a recovery link actually sending, and the placeholder-address
+refusal (which sits after the SITE_URL check), both blocked on the secret. And
+step 8 — a Superuser `set_password` leaving `must_change_password` **true** —
+which needs a Superuser session. Note that `create_user`'s flagging *is* proven
+(the test account arrived flagged and was confined to `/change-password`), but it
+is a different code path: `create_user` sets the flag in its INSERT, while
+`set_password` writes it separately *after* the password. Step 8 tests the one
+that can be defeated by ordering.
+
+#### How these were run, and why it matters for the rest of the plan
+
+`javascript_tool` executes in an isolated world whose **cross-origin requests are
+blocked here**, so console-driven `fetch` to Supabase fails while the app's own
+requests succeed — the giveaway is the sidebar rendering the account's *name*,
+which only a successful `public.users` read can produce. Diagnosing that as a
+network outage wastes time; there is also a genuine, separate DNS fault in this
+browser where that one Supabase hostname fails to resolve while `example.com` and
+Node both succeed.
+
+The workaround, which the remaining tasks should reuse: a small Node listener on
+`127.0.0.1:8787`, the page POSTs its access token to it, and **Node** makes the
+Supabase calls. Keeps the bearer token off the wire and out of any transcript, and
+sidesteps both faults. Two traps in writing one: a script under the scratchpad
+cannot `require("@supabase/supabase-js")` — Node resolves from the script's own
+directory upward — so reach the project's `scripts/_supabaseAdmin.js` by absolute
+path instead; and `.env.local` values are quoted, so strip the quotes or the URL
+fails to parse.
 
 ### Task 6: The admin client — predicates, data layer, and the Users screen
 
