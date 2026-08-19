@@ -123,6 +123,15 @@ any combination is allowed, and four rules follow:
 - **The dashboard switcher is a view control, never a security control.** It changes which
   queue you are looking at; the database grants the union regardless. Nothing may gate a
   capability on it, or a security boundary ends up living in `localStorage`.
+- **Anything scoped "to you" needs an ownership test of its own now.** `listenWorkOrderList`
+  returns the union, so a Supervisor+Technician receives the whole plant, and every filter that
+  leaned on RLS having already narrowed the rows silently became wrong. `RoleDashboard` scopes
+  its whole row set by the role being viewed (`ATTENTION[view].scope`) and `WorkOrderList`
+  filters its own count; both used to test status alone and both reported other people's jobs
+  as the signed-in user's. Supervisor scopes to everything deliberately — an unassigned queue
+  is owned by nobody, which is what puts it on their desk. This narrows *display* only, which
+  is the sanctioned direction: showing less than the policy allows is fine, and gating a
+  capability on it is the line above.
 
 The transition guard no longer asks "what is this person" — it computes which of the caller's
 roles authorise the move (`si_eligible_roles`), so a Supervisor+Technician acting on someone
