@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { LayoutDashboard, ClipboardList, Bell, Search, LogOut, Users, Settings, Menu, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { RoleBadge } from "./ui/Badges";
-import { ROLES, ROLE_LABELS, dashboardPathForRole } from "../lib/roles";
+import { ROLES, dashboardPathForRole, hasRole, rolesLabel } from "../lib/roles";
 import NotificationBell from "./NotificationBell";
 
 function Logo({ size = 30, variant = "light" }) {
@@ -73,7 +73,7 @@ export default function AppShell({ children }) {
     { href: "/notifications", label: "Notifications", icon: Bell },
     // Administration is Admin-only, matching RequireRole on those pages — a
     // Manager following the link would only be redirected back.
-    ...(user.role === ROLES.ADMIN
+    ...(hasRole(user, ROLES.ADMIN)
       ? [
           { href: "/admin/users", label: "Users", icon: Users },
           { href: "/admin/settings", label: "Settings", icon: Settings },
@@ -148,7 +148,9 @@ export default function AppShell({ children }) {
             </div>
             <div className="min-w-0">
               <div className="truncate text-[12.5px] font-semibold text-white">{user.name}</div>
-              <div className="text-[10.5px] text-[#9FB6E0]">{ROLE_LABELS[user.role] || user.role}</div>
+              {/* Every role held, highest first — "Supervisor · Technician".
+                  The identity block has room for it; the header chip does not. */}
+              <div className="text-[10.5px] text-[#9FB6E0]">{rolesLabel(user.roles)}</div>
             </div>
           </div>
           <button
@@ -199,7 +201,11 @@ export default function AppShell({ children }) {
 
             <div className="ml-auto flex min-w-0 items-center gap-2.5 sm:gap-4">
               <NotificationBell />
-              <RoleBadge role={user.role} compact />
+              {/* The chip shows the highest role only — two will not fit at this
+                  size — with the full set on hover. */}
+              <span title={rolesLabel(user.roles)}>
+                <RoleBadge role={user.role} compact />
+              </span>
             </div>
           </div>
         </header>
