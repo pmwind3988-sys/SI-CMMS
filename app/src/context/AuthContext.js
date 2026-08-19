@@ -10,11 +10,17 @@
  *  - Resolving role + department_id from the JWT's custom claims, enriched with
  *    display fields (name, phone, photo) from public.users
  *  - Exposing a single `user` shape every component in this module reads:
- *      { uid, email, name, phone, role, departmentId, plantIds }
+ *      { uid, email, name, phone, roles, role, departmentId, plantIds }
+ *
+ * `roles` is the set the account holds and is what every permission decision
+ * reads, via hasRole()/hasAnyRole() — authorization is their union (migration
+ * 0020). `role` is the highest of them, and exists only so landing pages and
+ * badges have one value to use. Never decide access on `role`.
  *
  * Claim naming: Supabase reserves the `role` claim for the Postgres role
- * PostgREST switches into, so the application role travels as `user_role`. The
- * access-token hook in migration 0002 populates it from public.users.
+ * PostgREST switches into, so the application roles travel as `user_roles` (the
+ * set) and `user_role` (the highest). The access-token hook populates both from
+ * public.users — see migration 0020.
  *
  * Session management notes:
  *  - Supabase persists the session across reloads by default. "Remember Me"
@@ -31,6 +37,7 @@
  */
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { supabase, rememberMe as persistRememberMe } from "../lib/supabase";
+import { highestRole } from "../lib/roles";
 
 /**
  * Where a password-reset link should land.
@@ -93,7 +100,7 @@ export function AuthProvider({ children }) {
         try {
           const { data } = await supabase
             .from("users")
-            .select("name, phone, role, department_id, plant_ids, photo_url")
+            .select("name, phone, roles, department_id, plant_ids, photo_url")
             .eq("id", session.user.id)
             .maybeSingle();
           if (data) profile = data;
@@ -102,12 +109,28 @@ export function AuthProvider({ children }) {
         }
 
         if (!active) return;
+
+        /**
+         * The roles this account holds. Same fallback chain as si_roles() in
+         * migration 0020, and for the same reason: a token minted before that
+         * migration carries `user_role` and no `user_roles`, and stays valid for
+         * up to an hour. Reading [] there would sign the user into an app where
+         * every predicate is false and nothing is permitted.
+         */
+        const resolvedRoles =
+          claims.user_roles ??
+          (claims.user_role ? [claims.user_role] : profile.roles ?? []);
+
         setUser({
           uid: session.user.id,
           email: session.user.email,
           name: profile.name || session.user.email,
           phone: profile.phone || "",
-          role: claims.user_role || profile.role || null,
+          roles: resolvedRoles,
+          // The highest role held. Landing page and display only — never a
+          // permission decision. Those ask hasRole()/hasAnyRole(), because
+          // authorization is the union of every role held.
+          role: highestRole(resolvedRoles),
           departmentId: claims.department_id || profile.department_id || null,
           plantIds: claims.plant_ids || profile.plant_ids || [],
           // A Superuser is role 'admin' plus is_protected, ranking above every
@@ -150,15 +173,21 @@ export function AuthProvider({ children }) {
     // The address only after the credentials were accepted, so a rejected
     // attempt does not leave a typo waiting in the field next time.
     if (remember) persistRememberMe(true, email);
-    // Hand the role back with the user so the caller can redirect immediately
+    // Hand the roles back with the user so the caller can redirect immediately
     // instead of waiting for onAuthStateChange to populate `user`. Same source
-    // of truth as everywhere else: the user_role claim from the access-token
-    // hook. A null role means the hook is disabled or this account has no row
-    // in public.users — callers should treat that as its own failure, not as
-    // bad credentials.
+    // of truth as everywhere else: the access-token hook's claims, read with
+    // the same pre-0020 fallback as above. An empty set means the hook is
+    // disabled or this account has no row in public.users — callers should
+    // treat that as its own failure, not as bad credentials.
+    const signInClaims = claimsFromSession(data.session);
+    const roles =
+      signInClaims.user_roles ?? (signInClaims.user_role ? [signInClaims.user_role] : []);
     return {
       user: data.user,
-      role: claimsFromSession(data.session).user_role ?? null,
+      roles,
+      // The login page redirects on this: landing is one destination, so it is
+      // the highest role held.
+      role: highestRole(roles),
     };
   }, []);
 

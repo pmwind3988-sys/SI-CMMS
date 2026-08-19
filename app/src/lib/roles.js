@@ -43,14 +43,52 @@ export function roleRank(role) {
 }
 
 /**
- * The rank of an actual account, as opposed to the rank of a role name.
+ * The highest-ranked role in a set — what the app lands on and displays.
+ *
+ * Landing and display only. Never a permission decision: permissions are the
+ * union of every role held, which is what hasRole()/hasAnyRole() answer.
+ */
+export function highestRole(roles) {
+  if (!roles?.length) return null;
+  return [...roles].sort((a, b) => roleRank(b) - roleRank(a))[0];
+}
+
+/** Does this account hold this role? Mirrors si_has_role() in migration 0020. */
+export function hasRole(account, role) {
+  return Array.isArray(account?.roles) && account.roles.includes(role);
+}
+
+export function hasAnyRole(account, roles) {
+  return roles.some((r) => hasRole(account, r));
+}
+
+/** "Supervisor · Technician", highest first. For badges and table cells. */
+export function rolesLabel(roles) {
+  if (!roles?.length) return "—";
+  return [...roles]
+    .sort((a, b) => roleRank(b) - roleRank(a))
+    .map((r) => ROLE_LABELS[r] || r)
+    .join(" · ");
+}
+
+/**
+ * The rank of an actual account, as opposed to the rank of a role name: the
+ * HIGHEST role held, or 6 for a Superuser. Mirrors
+ * si_account_rank(si_role[], boolean) in migration 0020.
+ *
  * Accepts either shape: a `users` row (`is_protected`) or the AuthContext user
  * (`isSuperuser`).
+ *
+ * The `?? [account.role]` fallback is the client mirror of si_roles()'s claim
+ * fallback, and is there for the same reason — a row read before migration
+ * 0020, or a stale cached profile, would otherwise rank 0 and silently deny
+ * everything rather than degrading to the single role it actually names.
  */
 export function accountRank(account) {
   if (!account) return 0;
   if (account.is_protected || account.isSuperuser) return SUPERUSER_RANK;
-  return roleRank(account.role);
+  const roles = account.roles ?? (account.role ? [account.role] : []);
+  return roles.reduce((max, r) => Math.max(max, roleRank(r)), 0);
 }
 
 export const ROLE_LABELS = {
