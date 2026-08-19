@@ -10,12 +10,19 @@
  *  - Resolving role + department_id from the JWT's custom claims, enriched with
  *    display fields (name, phone, photo) from public.users
  *  - Exposing a single `user` shape every component in this module reads:
- *      { uid, email, name, phone, roles, role, departmentId, plantIds }
+ *      { uid, email, name, phone, roles, role, departmentId, plantIds,
+ *        isSuperuser, mustChangePassword }
  *
  * `roles` is the set the account holds and is what every permission decision
  * reads, via hasRole()/hasAnyRole() — authorization is their union (migration
  * 0020). `role` is the highest of them, and exists only so landing pages and
  * badges have one value to use. Never decide access on `role`.
+ *
+ * `roles` comes from the token's claims and from nowhere else. An account that
+ * is inactive or owes a password change is issued a token with no role claims at
+ * all (migration 0026), and reading its own users row to fill the gap would undo
+ * that — see the comment on resolvedRoles, which is where that fallback used to
+ * be.
  *
  * Claim naming: Supabase reserves the `role` claim for the Postgres role
  * PostgREST switches into, so the application roles travel as `user_roles` (the
@@ -37,7 +44,7 @@
  */
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { supabase, rememberMe as persistRememberMe } from "../lib/supabase";
-import { highestRole } from "../lib/roles";
+import { highestRole, ROLES } from "../lib/roles";
 
 /**
  * Where a password-reset link should land.
@@ -100,7 +107,9 @@ export function AuthProvider({ children }) {
         try {
           const { data } = await supabase
             .from("users")
-            .select("name, phone, roles, department_id, plant_ids, photo_url")
+            // `roles` is deliberately NOT selected. Nothing here may read the
+            // account's roles from its own row — see resolvedRoles below.
+            .select("name, phone, department_id, plant_ids, photo_url")
             .eq("id", session.user.id)
             .maybeSingle();
           if (data) profile = data;
@@ -111,15 +120,28 @@ export function AuthProvider({ children }) {
         if (!active) return;
 
         /**
-         * The roles this account holds. Same fallback chain as si_roles() in
-         * migration 0020, and for the same reason: a token minted before that
-         * migration carries `user_role` and no `user_roles`, and stays valid for
-         * up to an hour. Reading [] there would sign the user into an app where
-         * every predicate is false and nothing is permitted.
+         * The roles this account holds — CLAIMS ONLY.
+         *
+         * THE ABSENCE OF A profile.roles FALLBACK IS LOAD-BEARING. It used to be
+         * the last leg of this chain, as a migration-0020 rollout requirement,
+         * and migration 0026 turned it into a hole: an account that is inactive
+         * or owes a password change is now issued a token with NO role claims,
+         * and users_select lets any account read its own row. So the fallback
+         * read the roles straight back out of the profile and handed them to
+         * hasRole() — the client mirror of the array_agg trap 0026 exists to
+         * close. Measured on the live schema: a roleless token still returns
+         * `roles: ["requester"]` from its own users row.
+         *
+         * Nothing would be granted — every policy still denies — which is what
+         * makes it worth spelling out. The failure is not an escalation; it is a
+         * complete app in which every list is empty and nothing says why.
+         *
+         * The user_role leg stays. It costs nothing, it is what a token minted
+         * before 0020 carries, and 0026 withholds both claims together, so it
+         * cannot reopen the withholding.
          */
         const resolvedRoles =
-          claims.user_roles ??
-          (claims.user_role ? [claims.user_role] : profile.roles ?? []);
+          claims.user_roles ?? (claims.user_role ? [claims.user_role] : []);
 
         setUser({
           uid: session.user.id,
@@ -133,11 +155,24 @@ export function AuthProvider({ children }) {
           role: highestRole(resolvedRoles),
           departmentId: claims.department_id || profile.department_id || null,
           plantIds: claims.plant_ids || profile.plant_ids || [],
-          // A Superuser is role 'admin' plus is_protected, ranking above every
-          // role (migration 0015). Claims only, never the profile row: a missing
-          // claim must read false so a stale token degrades to plain admin
-          // rather than silently granting the top tier.
-          isSuperuser: claims.is_protected === true,
+          /**
+           * A Superuser is role 'admin' plus is_protected, ranking above every
+           * role (migration 0015). Claims only, never the profile row: a missing
+           * claim must read false so a stale token degrades to plain admin
+           * rather than silently granting the top tier.
+           *
+           * BOTH halves are required, which is what si_is_superuser() computes —
+           * it is si_has_role('admin') AND the flag, so it goes false the moment
+           * 0026 withholds the roles. Without the conjunction here, a flagged or
+           * deactivated Superuser would still be offered every Superuser-only
+           * control on a token the database grants nothing to.
+           */
+          isSuperuser: claims.is_protected === true && resolvedRoles.includes(ROLES.ADMIN),
+          /**
+           * This account was given its password by somebody else. It is WHY the
+           * roles above are empty, and it is what /change-password routes on.
+           */
+          mustChangePassword: claims.must_change_password === true,
         });
       } catch (e) {
         if (active) {
@@ -188,6 +223,12 @@ export function AuthProvider({ children }) {
       // The login page redirects on this: landing is one destination, so it is
       // the highest role held.
       role: highestRole(roles),
+      /**
+       * Why `roles` can be empty even though the credentials were accepted. The
+       * login page needs the distinction: this one is a routing decision, an
+       * empty set without it is a misconfiguration to report.
+       */
+      mustChangePassword: signInClaims.must_change_password === true,
     };
   }, []);
 
