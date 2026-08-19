@@ -73,7 +73,9 @@ escalation.
 
 ## 1. Schema
 
-Migration `0025_employee_id_and_credentials.sql`.
+Migration `0025_employee_id_and_credentials.sql` — the columns, the index, the
+self-update guard and the trigger statement in §4. The hook is migration 0026,
+applied and verified on its own (§2).
 
 ```sql
 alter table users add column if not exists employee_id text;
@@ -97,6 +99,13 @@ plain-UPDATE profile path for administrators. It is not a column a non-admin may
 write about themselves.
 
 ## 2. Claims, and the trap that looks like it works
+
+Migration `0026_account_state_claims.sql`, on its own, containing nothing but the
+hook. It is the only edit in this sub-project that can lock every user out of the
+app at once, and separating it buys three things: 0025 lands and is verified while
+authorization is still untouched; the diff a reviewer reads is one function; and a
+rollback is reinstating 0020's hook body, with no columns to unwind and nothing
+else in the migration to lose.
 
 The hook grants role claims only to an account that is `active` **and** owes no
 password change:
@@ -185,7 +194,8 @@ Without this, adding the function makes brute-force protection worse than it is
 today — a regression disguised as a feature.
 
 An Edge Function is stateless, so the counter needs a home. It is a table, not
-in-memory state:
+in-memory state — migration `0027_login_attempts.sql`, landing with the function
+that uses it and with nothing before that reading it:
 
 ```sql
 create table login_attempts (
@@ -273,18 +283,33 @@ test, `canChangeUserEmail` self-or-Superuser.
 
 ## 7. Ordering
 
-1. Migration 0025 (columns, index, guard, hook) — applied.
+1. Migration 0025 — columns, index, self-update guard, and the
+   `si_sync_auth_user_activity` statement from §4. Applied.
 2. `npm run db:types`.
-3. Edge Function `admin-users`: the three rule changes plus
-   `send_recovery_link`.
-4. Edge Function `auth-signin`: new, `verify_jwt = false`.
-5. Client: `AuthContext`, login page, `/change-password`, Admin → Users.
+3. **Verify 0025 in isolation** (§9 steps 1–3). Authorization is untouched at
+   this point, so anything failing here is a schema bug and only that.
+4. Migration 0026 — the hook, alone. Applied.
+5. **Verify 0026 before any function or client work** (§9 steps 4–6). Until this
+   passes, stop: every later step assumes the hook is right, and a wrong hook
+   denies silently rather than erroring.
+6. Edge Function `admin-users`: the three rule changes plus `send_recovery_link`.
+7. Migration 0027 (`login_attempts` and its sweep) and Edge Function
+   `auth-signin`: new, `verify_jwt = false`.
+8. Client: `AuthContext`, login page, `/change-password`, Admin → Users.
 
-The hook change in step 1 takes effect for each user at their next token issue,
-so an already-signed-in session keeps working until it refreshes. Nothing in
-steps 3–5 is required for step 1 to be safe, and step 1 is not required for the
-old client to keep working: an account that is active and unflagged gets exactly
-the claims it gets today.
+Every step is safe to stop after. 0025 changes no behaviour at all: two unused
+columns, and a trigger statement that clears a flag nothing has set yet.
+
+0026 is the one to read twice before applying. Its flagged half is inert on the
+day it lands — nothing writes `must_change_password` until step 6 — but its
+inactive half is live immediately, and that is the point of the change rather
+than a side effect: **any account currently `status <> 'active'` loses access at
+its next token refresh.** Intended, but it should be a list someone has looked
+at, not a discovery. Check it before applying, not after.
+
+The old client keeps working throughout. An account that is active and unflagged
+gets exactly the claims it gets today, so nothing in steps 6–8 is needed for
+steps 1–5 to be safe.
 
 ## 8. Risks
 
@@ -294,6 +319,10 @@ failure mode is silence — everyone signs in to an empty app. This project has
 already had that failure once, when 0002's hook omitted `is_protected` and 0015
 was written believing it was there. Verify a **freshly minted** token before and
 after, not a cached one.
+
+Its own migration and its own gate in §7 are the mitigation: it lands with
+nothing yet depending on it, and with nothing else in the diff to distract the
+review.
 
 **A regression risk in the sign-in split.** Two paths mean two error surfaces.
 The generic-message requirement applies to both, or the direct path leaks
@@ -308,29 +337,48 @@ needs a real mailbox.
 
 ## 9. Verification
 
+**After 0025, before 0026.** Nothing here touches authorization, so all of it
+should pass with the app behaving exactly as it does today.
+
 1. Migration applies; every existing row has `employee_id = null`,
    `must_change_password = false`.
-2. A **fresh** token for an active, unflagged account still carries
+2. Two accounts, same ID in different case — the second is refused by the index.
+3. An administrator writes `employee_id` on a subordinate; an account cannot
+   write its own (the guard in §1). Sign-in, roles and dashboards unchanged.
+
+**After 0026, before any function or client work.** This is the gate.
+
+4. A **fresh** token for an active, unflagged account still carries
    `user_roles`, `user_role`, `is_protected` — sign out and in, do not read a
    cached token.
-3. Set an employee ID on one account. Sign in with the number; land on the
+5. Deactivate an account, sign it out and in: it reaches an empty app, not its
+   dashboard. Reactivate; access returns. **This is where the `array_agg` trap
+   of §2 shows up** — a hook that emits `user_roles: []` but keeps `user_role`
+   passes step 4 and fails here, with the deactivated account still holding its
+   roles. Read the claims, not just the screen: a dashboard that looks empty for
+   another reason would hide it.
+6. Set `must_change_password` by hand on a test account, sign it out and in: no
+   roles in the token and the claim true. Clear it; roles return. Separate from
+   step 5 because the two conditions are separate: a hook that gates on `status`
+   and forgets the flag passes 4 and 5 and fails only here.
+
+**After the functions and the client.**
+
+7. Set an employee ID on one account. Sign in with the number; land on the
    right dashboard. Sign in with the email; same result.
-4. Wrong number, and right number with wrong password: identical message.
-5. Two accounts, same ID in different case — the second is refused by the index.
-6. Deactivate an account, sign it out and in: it reaches an empty app, not its
-   dashboard. Reactivate; access returns.
-7. Superuser sets a temporary password. Confirm `must_change_password` is
+8. Wrong number, and right number with wrong password: identical message.
+9. Superuser sets a temporary password. Confirm `must_change_password` is
    **true** afterwards — this is the ordering trap in §4, and true here is the
    whole test.
-8. Sign in with that temporary password: redirected to `/change-password`, and
-   the rest of the app is empty. Change it; roles appear without a sign-out.
-9. An administrator: no "Password" button, "Send reset link" present, refused on
-   a placeholder address with a message naming the problem.
-10. An administrator cannot change another account's sign-in address; can change
+10. Sign in with that temporary password: redirected to `/change-password`, and
+    the rest of the app is empty. Change it; roles appear without a sign-out.
+11. An administrator: no "Password" button, "Send reset link" present, refused on
+    a placeholder address with a message naming the problem.
+12. An administrator cannot change another account's sign-in address; can change
     their own.
-11. Trip the attempt counter on the function; confirm the same generic message
-    and that a correct credential works again after the lockout.
-12. Supabase security advisor, as CLAUDE.md requires after any migration adding
+13. Trip the attempt counter on the function; confirm the same generic message
+    and that a correct credential works again after the delay.
+14. Supabase security advisor, as CLAUDE.md requires after any migration adding
     functions.
 
 ## Sequence
