@@ -165,6 +165,32 @@ export function canMarkTestAccount(target, me) {
 }
 
 /**
+ * May `me` delete this account outright? SUPERUSER ONLY (migration 0030).
+ *
+ * Not the rank rule, and not a role_permissions toggle like work-order delete.
+ * Deleting an account is the one irreversible thing that can be done to a person
+ * in this module, and a toggle is a thing that can be flipped.
+ *
+ * This predicate cannot tell you whether the delete will SUCCEED, only whether to
+ * offer it. Six foreign keys onto users(id) are ON DELETE NO ACTION, so an
+ * account with any history is refused by the database — and the count that
+ * decides it is not on the row this function receives. So the button is offered
+ * and the server explains, which is the sanctioned direction: the policy and the
+ * trigger are the boundary, and si_guard_user_delete's message is written to be
+ * read by whoever hit it.
+ */
+export function canDeleteUser(target, me) {
+  if (!me || !target) return false;
+  if (me.isSuperuser !== true) return false;
+  if (target.is_protected) return false;
+  // Your own row is the one RLS always lets you write, so it is the one that
+  // needs excluding by hand — the same shape canChangeUserRole uses. The Edge
+  // Function refuses it too; this only avoids offering it.
+  if (target.id === me.uid) return false;
+  return true;
+}
+
+/**
  * Role, department and status all move someone within the hierarchy, so none of
  * them may be aimed at yourself — the row you are always allowed to write.
  */

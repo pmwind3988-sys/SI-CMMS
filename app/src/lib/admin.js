@@ -211,6 +211,28 @@ export async function setUserEmail(userId, email) {
 }
 
 /**
+ * Delete an account outright. SUPERUSER ONLY, and the only irreversible
+ * operation on a user.
+ *
+ * An Edge Function call because two rows have to go and one of them is in
+ * auth.users, which only the Admin API reaches. The function deletes the
+ * public.users row as the CALLER, so users_delete is still the boundary and the
+ * deletion log still records who did it, then removes the sign-in on the service
+ * role (migration 0030).
+ *
+ * Expect this to REFUSE for anyone who has actually used the system. Six foreign
+ * keys onto users(id) are ON DELETE NO ACTION, so an account that has raised,
+ * been assigned, verified, commented or uploaded cannot be removed without
+ * breaking the audit trail. si_guard_user_delete turns that into a sentence
+ * naming what it found, and describeError() passes server messages through
+ * untouched so it reaches the screen as written. Deactivation is the answer
+ * there, and the message says so.
+ */
+export async function deleteUser(userId) {
+  return invokeAdminFunction({ action: "delete_user", user_id: userId });
+}
+
+/**
  * Create an account. The users row is what grants the role — the access-token
  * hook reads users.role when minting a token — so the function writes both, and
  * rolls the auth account back if the profile insert fails.

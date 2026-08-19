@@ -24,6 +24,13 @@
  *   - create_user        -> any active admin, no role granted at or above their
  *                           own rank. Flags the new account, because the password
  *                           was chosen by whoever created it.
+ *   - delete_user        -> SUPERUSER ONLY, and the only irreversible action
+ *                           here. Deletes the public.users row AS THE CALLER so
+ *                           users_delete, the history guard and the archive's
+ *                           deleted_by all work, then the auth.users row on the
+ *                           service role. Refuses any account that has history;
+ *                           deactivation is the answer for a person who has
+ *                           worked. See migration 0030.
  *
  * Everything else an admin needs is already possible directly from the client and
  * is deliberately NOT duplicated here:
@@ -603,6 +610,124 @@ Deno.serve(async (req: Request) => {
       ok: true,
       user_id: created.user.id,
       message: `${name} can now sign in with that password, and must change it the first time.`,
+    });
+  }
+
+  /* ---------------------------------------------------------------
+     delete_user — SUPERUSER ONLY, and the only irreversible thing here.
+
+     Two rows have to go: public.users and auth.users. They are deleted in that
+     order, and the order is the whole design.
+
+     public.users FIRST, and deliberately WITH THE CALLER'S OWN TOKEN rather than
+     the service-role client above. Everything correct about this operation
+     depends on that:
+
+       - users_delete decides who may. Migration 0030 restated it, and the rank
+         rule inside it is what stops an Administrator deleting a peer and stops
+         anyone deleting the Superuser (rank 6 is not below rank 5). Using the
+         service role would bypass the policy and oblige this file to re-derive
+         all of it, which is the "three enforcement points and the loosest wins"
+         trap the rest of this function keeps paying for.
+       - si_guard_user_delete produces the readable refusal for an account that
+         has history. It runs either way, but only the caller's identity makes
+         the message reach the right person.
+       - z_archive_deleted_user stamps deleted_by from auth.uid(), which is NULL
+         on a service-role connection. Deleting as the service role would write an
+         audit row that records nobody.
+
+     auth.users SECOND, and it needs the service role — that is why this action
+     exists in a function at all rather than in the client.
+
+     public.users.id references auth.users(id) ON DELETE CASCADE, so the reverse
+     order would also work and would even be atomic. It is not used, because the
+     cascade arrives as the service role: auth.uid() would be null, the archive
+     would record nobody, and si_guard_test_account's null-uid early return would
+     skip the test-account check entirely.
+  ----------------------------------------------------------------*/
+  if (action === "delete_user") {
+    const userId = String(payload.user_id ?? "");
+    if (!userId) return json({ error: "Which account?" }, 400);
+
+    // Superuser only. Restated here rather than left to users_delete because
+    // this function is the enforcement point that could bypass it, and because
+    // a clear 403 beats an empty result the caller has to interpret.
+    if (!callerRow.is_protected) {
+      return json(
+        {
+          error:
+            "Only the Superuser can delete an account. Deactivate it instead — " +
+            "that removes the access and keeps the history.",
+        },
+        403,
+      );
+    }
+    if (userId === caller.user.id) {
+      return json({ error: "You cannot delete your own account." }, 400);
+    }
+
+    // Read it before it is gone, so the confirmation can name who was removed.
+    const { data: targetRow } = await admin
+      .from("users")
+      .select("name, email, is_protected")
+      .eq("id", userId)
+      .maybeSingle();
+    if (!targetRow) return json({ error: "That account no longer exists." }, 404);
+    // si_guard_protected_user refuses writes to one, and users_delete's rank
+    // comparison already refuses this, but a protected account is administered
+    // only from Supabase and the message should say so rather than read as a
+    // permissions accident.
+    if (targetRow.is_protected) {
+      return json(
+        { error: "That account is protected and is administered only from Supabase." },
+        403,
+      );
+    }
+
+    const asCaller = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    // .select() so a refusal is distinguishable from a success. RLS declining a
+    // DELETE removes no rows and raises nothing — the same reason
+    // deleteWorkOrder() checks this, and the same reason setTestAccount() does.
+    const { data: deleted, error: profileError } = await asCaller
+      .from("users")
+      .delete()
+      .eq("id", userId)
+      .select("id");
+
+    if (profileError) return json({ error: profileError.message }, 400);
+    if (!deleted || deleted.length === 0) {
+      return json(
+        { error: "That delete was refused. The account may be protected, or above your rank." },
+        403,
+      );
+    }
+
+    const { error: authError } = await admin.auth.admin.deleteUser(userId);
+    if (authError) {
+      /* The profile is gone and the login is not. Reported rather than swallowed,
+         and it is not silently dangerous: custom_access_token_hook reads
+         public.users to mint claims, so with no row there are no roles, and every
+         policy denies an account whose si_roles() is empty. The sign-in would
+         succeed and reach nothing. It still needs clearing up in Supabase, and
+         nobody can do that if this returns ok. */
+      return json(
+        {
+          error:
+            `${targetRow.name}'s profile was deleted, but their sign-in could not be removed: ` +
+            `${authError.message}. They can still authenticate but hold no roles and can see ` +
+            `nothing. Delete the user in Supabase → Authentication → Users to finish.`,
+        },
+        500,
+      );
+    }
+
+    return json({
+      ok: true,
+      message: `${targetRow.name} has been deleted. A record of it is kept in the deletion log.`,
     });
   }
 

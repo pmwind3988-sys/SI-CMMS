@@ -692,6 +692,57 @@ export type Database = {
           },
         ]
       }
+      user_deletions: {
+        Row: {
+          deleted_at: string
+          deleted_by: string | null
+          deleted_by_name: string | null
+          deleted_by_role: string | null
+          department_id: string | null
+          email: string | null
+          employee_id: string | null
+          id: string
+          is_test_account: boolean | null
+          name: string | null
+          roles: string[] | null
+          snapshot: Json
+          status: string | null
+          user_id: string
+        }
+        Insert: {
+          deleted_at?: string
+          deleted_by?: string | null
+          deleted_by_name?: string | null
+          deleted_by_role?: string | null
+          department_id?: string | null
+          email?: string | null
+          employee_id?: string | null
+          id?: string
+          is_test_account?: boolean | null
+          name?: string | null
+          roles?: string[] | null
+          snapshot: Json
+          status?: string | null
+          user_id: string
+        }
+        Update: {
+          deleted_at?: string
+          deleted_by?: string | null
+          deleted_by_name?: string | null
+          deleted_by_role?: string | null
+          department_id?: string | null
+          email?: string | null
+          employee_id?: string | null
+          id?: string
+          is_test_account?: boolean | null
+          name?: string | null
+          roles?: string[] | null
+          snapshot?: Json
+          status?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       users: {
         Row: {
           created_at: string

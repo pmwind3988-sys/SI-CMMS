@@ -25,6 +25,7 @@ import {
   BadgeCheck,
   Mail,
   FlaskRound,
+  Trash2,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useReferenceData } from "../../lib/referenceData";
@@ -36,6 +37,7 @@ import {
   setUserRoles,
   setUserStatus,
   setTestAccount,
+  deleteUser,
   updateUserProfile,
   setUserEmail,
   clearDemoMark,
@@ -49,6 +51,7 @@ import {
   canSetUserPassword,
   canSendRecoveryLink,
   canMarkTestAccount,
+  canDeleteUser,
   canChangeUserEmail,
   assignableRoles,
 } from "../../lib/constants";
@@ -354,6 +357,16 @@ export default function UsersAdmin() {
           }}
         />
       )}
+      {panel?.kind === "delete" && (
+        <DeleteUserDialog
+          user={panel.user}
+          onClose={() => setPanel(null)}
+          onDone={(msg) => {
+            setPanel(null);
+            flash(msg);
+          }}
+        />
+      )}
       {panel?.kind === "create" && (
         <CreateUserDialog
           me={me}
@@ -575,6 +588,21 @@ function UserActions({
           onClick={() => onToggleStatus(user)}
         />
       )}
+      {/* Superuser only, and last in the row because it is the only irreversible
+          thing here. Offered even when it will fail: whether an account has
+          history is a count this component does not hold, so the database
+          decides and si_guard_user_delete's message explains. Deliberately not
+          hidden behind "looks deletable" guesswork that would be wrong. */}
+      {canDeleteUser(user, me) && (
+        <Button
+          size="sm"
+          variant="danger"
+          icon={Trash2}
+          aria-label="Delete account"
+          title="Delete this account permanently. Refused if they have any work order history."
+          onClick={() => setPanel({ kind: "delete", user })}
+        />
+      )}
     </>
   );
 }
@@ -602,6 +630,88 @@ function Modal({ title, subtitle, children, onClose }) {
         {children}
       </Card>
     </ModalOverlay>
+  );
+}
+
+/**
+ * Confirming a deletion.
+ *
+ * Type-the-name confirmation rather than a plain "are you sure". This is the only
+ * irreversible action in the module and the button sits next to Deactivate, which
+ * looks similar and is not — so the dialog asks for something a misclick cannot
+ * produce. Migration 0018's work-order delete had no such gate; a person is not a
+ * work order.
+ *
+ * The likely outcome is a refusal, and that is by design: anyone who has used the
+ * system is protected by six foreign keys. The copy says so up front so a refusal
+ * reads as the system working rather than as a bug.
+ */
+function DeleteUserDialog({ user, onClose, onDone }) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const confirmed = typed.trim() === user.name.trim();
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!confirmed) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await deleteUser(user.id);
+      onDone(res?.message ?? `${user.name} has been deleted.`);
+    } catch (e) {
+      // describeError passes the server's own sentence through, which is the
+      // point: si_guard_user_delete names the work orders and history rows that
+      // blocked it, and that is the copy worth showing.
+      setError(describeError(e, "Couldn't delete that account."));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Delete this account"
+      subtitle={`${user.name} · ${user.email}`}
+      onClose={onClose}
+    >
+      {error && <ErrorBanner message={error} />}
+      <form onSubmit={submit}>
+        <p className="text-[13px] text-ink mb-3">
+          This removes the profile <strong>and</strong> the sign-in. It cannot be undone — a
+          record is kept in the deletion log, but the account itself is gone.
+        </p>
+        <p className="text-[12px] text-ink-soft mb-4">
+          If this person has raised, been assigned, verified, commented on or attached anything,
+          the deletion will be refused and will tell you what it found. That is deliberate:
+          removing them would break the audit trail on other people&apos;s work.{" "}
+          <strong>Deactivate instead</strong> — it removes their access and keeps the history.
+        </p>
+        <Field label={`Type "${user.name}" to confirm`} required>
+          <input
+            type="text"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            className={inputClass}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Field>
+        <div className="flex gap-2 justify-end">
+          <Button variant="ghost" onClick={onClose} type="button">
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="danger"
+            icon={busy ? Loader2 : Trash2}
+            disabled={busy || !confirmed}
+          >
+            {busy ? "Deleting…" : "Delete permanently"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
