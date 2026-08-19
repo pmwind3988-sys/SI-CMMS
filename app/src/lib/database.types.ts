@@ -651,15 +651,16 @@ export type Database = {
           created_at: string
           department_id: string | null
           email: string
+          employee_id: string | null
           id: string
           is_protected: boolean
           last_login_at: string | null
+          must_change_password: boolean
           name: string
           password_changed_at: string | null
           phone: string | null
           photo_url: string | null
           plant_ids: string[]
-          role: Database["public"]["Enums"]["si_role"]
           roles: Database["public"]["Enums"]["si_role"][]
           seed_name: string | null
           seed_phone: string | null
@@ -672,15 +673,16 @@ export type Database = {
           created_at?: string
           department_id?: string | null
           email: string
+          employee_id?: string | null
           id: string
           is_protected?: boolean
           last_login_at?: string | null
+          must_change_password?: boolean
           name: string
           password_changed_at?: string | null
           phone?: string | null
           photo_url?: string | null
           plant_ids?: string[]
-          role: Database["public"]["Enums"]["si_role"]
           roles: Database["public"]["Enums"]["si_role"][]
           seed_name?: string | null
           seed_phone?: string | null
@@ -693,15 +695,16 @@ export type Database = {
           created_at?: string
           department_id?: string | null
           email?: string
+          employee_id?: string | null
           id?: string
           is_protected?: boolean
           last_login_at?: string | null
+          must_change_password?: boolean
           name?: string
           password_changed_at?: string | null
           phone?: string | null
           photo_url?: string | null
           plant_ids?: string[]
-          role?: Database["public"]["Enums"]["si_role"]
           roles?: Database["public"]["Enums"]["si_role"][]
           seed_name?: string | null
           seed_phone?: string | null
@@ -1096,15 +1099,13 @@ export type Database = {
     }
     Functions: {
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
-      si_account_rank:
-        | { Args: { p_is_protected: boolean; p_role: string }; Returns: number }
-        | {
-            Args: {
-              p_is_protected: boolean
-              p_roles: Database["public"]["Enums"]["si_role"][]
-            }
-            Returns: number
-          }
+      si_account_rank: {
+        Args: {
+          p_is_protected: boolean
+          p_roles: Database["public"]["Enums"]["si_role"][]
+        }
+        Returns: number
+      }
       si_caller_rank: { Args: never; Returns: number }
       si_can_delete_work_orders: { Args: never; Returns: boolean }
       si_compute_dashboard_stats: { Args: never; Returns: undefined }
@@ -1189,15 +1190,6 @@ export type Database = {
       si_set_protected: {
         Args: { p_protected: boolean; p_uid: string }
         Returns: undefined
-      }
-      si_set_user_role: {
-        Args: {
-          p_department_id?: string
-          p_plant_ids?: string[]
-          p_role: Database["public"]["Enums"]["si_role"]
-          p_uid: string
-        }
-        Returns: Json
       }
       si_set_user_roles: {
         Args: {
