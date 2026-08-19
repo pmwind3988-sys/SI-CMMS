@@ -283,6 +283,38 @@ calling a helper granted only to `postgres`, so it raised `permission denied for
 si_protected_override` on *every* write to `users` for *every* role. Migration 0013 fixes it.
 Every other guard on this schema is `SECURITY DEFINER`; that is not optional styling.
 
+### Test accounts (migration 0028)
+
+`users.is_test_account` marks a fixture: an account that exists to be signed into while a
+change is being tried, not to do work. The five bootstrap users carry it (backfilled from
+`seed_source`), and it is **the Superuser's alone** — both halves of that.
+
+*Invisible.* `users_select` adds `id = auth.uid() or si_is_superuser() or not is_test_account`,
+the same shape the `is_protected` clause already had. An Administrator therefore does not see
+these rows in Admin → Users, in any count, or in any picker — including the technician roster
+on the assign panel. Deliberate: a fixture that appears in a live picker is one somebody
+eventually assigns real work to.
+
+*Switchable by nobody else.* `users_update` excludes them from non-Superusers, and
+`si_guard_test_account` (BEFORE UPDATE, SECURITY DEFINER) refuses a `status` change and refuses
+any change to the mark itself. Two enforcement points rather than one because the policy does
+not cover `si_set_user_roles` — SECURITY DEFINER changes the database *role*, not `auth.uid()`,
+so the trigger still reads the caller's JWT and still refuses. `admin-users` is the third and
+restates the rule in TypeScript, because a service-role connection has `auth.uid() = null` and
+every check here is invisible to it. Same three points as every other rule about a `users` row;
+the loosest path wins.
+
+The guard refuses `status` and the mark, **not every write**. The first version refused
+everything, which would have stopped a fixture editing its own name or phone — exactly the
+thing you sign into it to test. Self-activation was never reachable anyway:
+`si_guard_user_self_update` already refuses a self `status` change for everyone, Superuser
+included.
+
+`auth.uid() is null` returns early, so the bootstrap and seed scripts still run. That is the
+same door `si_protected_override()` opens for system writes, and it has the same shape of risk:
+it is safe only because a null uid means a service-role connection, which has already been
+authenticated as trusted somewhere else.
+
 ### Status flow
 
 ```

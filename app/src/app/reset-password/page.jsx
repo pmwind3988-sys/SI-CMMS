@@ -40,10 +40,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Eye, EyeOff, CheckCircle2, ShieldCheck, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, ShieldCheck, AlertTriangle } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { describeError } from "../../lib/errors";
-import Field, { inputClass } from "../../components/ui/Field";
+import Field from "../../components/ui/Field";
+import PasswordInput from "../../components/ui/PasswordInput";
 import { ErrorBanner } from "../../components/ui/Surfaces";
 
 const MIN_LENGTH = 8;
@@ -104,7 +105,6 @@ export default function ResetPasswordPage() {
   const [phase, setPhase] = useState("checking"); // checking | ready | saving | done | invalid
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -271,32 +271,16 @@ export default function ResetPasswordPage() {
             {error && <ErrorBanner message={error} />}
             <form onSubmit={handleSubmit}>
               <Field label="New password" required>
-                <div className="relative">
-                  <input
-                    type={showPw ? "text" : "password"}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className={inputClass}
-                    autoComplete="new-password"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPw((s) => !s)}
-                    aria-label="Toggle password visibility"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-soft"
-                  >
-                    {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+                <PasswordInput
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
               </Field>
               <Field label="Confirm new password" required>
-                <input
-                  type={showPw ? "text" : "password"}
+                <PasswordInput
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
-                  className={inputClass}
-                  autoComplete="new-password"
                   required
                 />
               </Field>

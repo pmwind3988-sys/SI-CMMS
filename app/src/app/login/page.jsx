@@ -10,11 +10,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff, ArrowRight, Loader2, ShieldCheck } from "lucide-react";
+import { ArrowRight, Loader2, ShieldCheck } from "lucide-react";
 import { useAuth, GENERIC_SIGNIN_FAILURE } from "../../context/AuthContext";
 import { rememberedEmail, wasRememberMeChecked } from "../../lib/supabase";
 import { dashboardPathForRole } from "../../lib/roles";
 import Field, { inputClass } from "../../components/ui/Field";
+import PasswordInput from "../../components/ui/PasswordInput";
 import { ErrorBanner } from "../../components/ui/Surfaces";
 
 const COMPANY_EMAIL_DOMAIN = process.env.NEXT_PUBLIC_COMPANY_EMAIL_DOMAIN || null;
@@ -51,7 +52,6 @@ export default function LoginPage() {
   const router = useRouter();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
-  const [showPw, setShowPw] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
@@ -241,24 +241,12 @@ export default function LoginPage() {
               />
             </Field>
             <Field label="Password" required>
-              <div className="relative">
-                <input
-                  type={showPw ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className={`${inputClass} pr-10`}
-                  autoComplete="current-password"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw((s) => !s)}
-                  className="absolute right-3 top-2.5 text-ink-soft"
-                  aria-label="Toggle password visibility"
-                >
-                  {showPw ? <EyeOff size={17} /> : <Eye size={17} />}
-                </button>
-              </div>
+              <PasswordInput
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
             </Field>
 
             <div className="flex items-center justify-between mb-5">
