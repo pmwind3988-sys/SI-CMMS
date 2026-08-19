@@ -30,7 +30,7 @@ import {
   listenUsers,
   setUserPassword,
   createUser,
-  setUserRole,
+  setUserRoles,
   setUserStatus,
   updateUserProfile,
   setUserEmail,
@@ -41,7 +41,7 @@ import {
 } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
 import { canEditUser, canChangeUserEmail, assignableRoles } from "../../lib/constants";
-import { ROLES, ROLE_LABELS, ALL_ROLES } from "../../lib/roles";
+import { ROLES, ROLE_LABELS, ALL_ROLES, rolesLabel, accountRank, roleRank } from "../../lib/roles";
 import { RoleBadge } from "../ui/Badges";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
@@ -77,7 +77,8 @@ export default function UsersAdmin() {
     const rows = users ?? [];
     const needle = q.trim().toLowerCase();
     return rows.filter((u) => {
-      if (fRole !== "All" && u.role !== fRole) return false;
+      // Membership: filtering by Technician must surface a Supervisor+Technician.
+      if (fRole !== "All" && !(u.roles ?? []).includes(fRole)) return false;
       if (demoOnly && !isDemoAccount(u)) return false;
       if (!needle) return true;
       return (
@@ -203,7 +204,7 @@ export default function UsersAdmin() {
               <DemoFlags user={u} />
             </div>
             <div className="flex-[1.5]">
-              <RoleBadge role={u.role} />
+              <RoleBadges roles={u.roles} />
             </div>
             <div className="flex-1 text-[12.5px] text-ink-soft truncate">{u.department_id || "—"}</div>
             <div className="w-20">
@@ -241,7 +242,7 @@ export default function UsersAdmin() {
                 <DemoFlags user={u} />
               </div>
               <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
-                <RoleBadge role={u.role} />
+                <RoleBadges roles={u.roles} />
                 <StatusText status={u.status} />
               </div>
             </div>
@@ -316,6 +317,22 @@ export default function UsersAdmin() {
    layouts can't drift apart.
 -------------------------------------------------------------------*/
 
+/**
+ * One badge per role held, highest first. A single-role account renders exactly
+ * what it did before this existed.
+ */
+function RoleBadges({ roles }) {
+  const ordered = [...(roles ?? [])].sort((a, b) => roleRank(b) - roleRank(a));
+  if (ordered.length === 0) return <span className="text-[12.5px] text-ink-soft">—</span>;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {ordered.map((r) => (
+        <RoleBadge key={r} role={r} />
+      ))}
+    </span>
+  );
+}
+
 function StatusText({ status }) {
   return (
     <span
@@ -366,7 +383,7 @@ function UserActions({ user, me, setPanel, onToggleStatus, onClearDemoMark }) {
   if (!editable) {
     return (
       <span className="text-[11.5px] text-ink-soft">
-        {user.role === me?.role ? "Same rank — not editable here" : "Not editable here"}
+        {accountRank(user) === accountRank(me) ? "Same rank — not editable here" : "Not editable here"}
       </span>
     );
   }
@@ -506,40 +523,58 @@ function PasswordDialog({ user, onClose, onDone }) {
 }
 
 function RoleDialog({ user, me, departments, onClose, onDone }) {
-  // You cannot grant a role at or above your own — si_set_user_role raises on
-  // it, so the picker must not offer it. Their current role is kept in the list
-  // even if it is out of range, so the select is never blank on open.
-  const choices = Array.from(new Set([...assignableRoles(me), user.role]));
-  const [role, setRole] = useState(user.role);
+  // You cannot grant a role at or above your own — si_set_user_roles raises on
+  // it, so the picker must not offer it. Roles they already hold stay in the
+  // list even when out of range, so the dialog shows what is actually true;
+  // the RPC still refuses a change that would grant one.
+  const choices = Array.from(new Set([...assignableRoles(me), ...(user.roles ?? [])]));
+  const [roles, setRoles] = useState(user.roles ?? []);
   const [departmentId, setDepartmentId] = useState(user.department_id || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  function toggle(r) {
+    setRoles((cur) => (cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]));
+  }
 
   async function submit(e) {
     e.preventDefault();
     setError(null);
     setBusy(true);
     try {
-      await setUserRole(user.id, role, departmentId || null, user.plant_ids || []);
-      onDone(`${user.name} is now ${ROLE_LABELS[role]}.`);
+      await setUserRoles(user.id, roles, departmentId || null, user.plant_ids || []);
+      onDone(`${user.name} is now ${rolesLabel(roles)}.`);
     } catch (e) {
-      setError(describeError(e, "Couldn't change that role."));
+      setError(describeError(e, "Couldn't change those roles."));
       setBusy(false);
     }
   }
 
   return (
-    <Modal title="Change role" subtitle={`${user.name} · ${user.email}`} onClose={onClose}>
+    <Modal title="Change roles" subtitle={`${user.name} · ${user.email}`} onClose={onClose}>
       {error && <ErrorBanner message={error} />}
       <form onSubmit={submit}>
-        <Field label="Role" required>
-          <select value={role} onChange={(e) => setRole(e.target.value)} className={inputClass}>
+        <Field label="Roles" required>
+          {/* Checkboxes, not a select: an account holds a set (migration 0020)
+              and gets the union of what those roles allow. */}
+          <div className="flex flex-col gap-1.5">
             {choices.map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABELS[r]}
-              </option>
+              <label key={r} className="flex cursor-pointer items-center gap-2 text-[13.5px] text-ink">
+                <input
+                  type="checkbox"
+                  checked={roles.includes(r)}
+                  onChange={() => toggle(r)}
+                  className="accent-navy"
+                />
+                {ROLE_LABELS[r] || r}
+              </label>
             ))}
-          </select>
+          </div>
+          {roles.length === 0 && (
+            <div className="mt-1.5 text-[11.5px] text-danger">
+              An account must have at least one role.
+            </div>
+          )}
         </Field>
         <Field label="Department">
           <select
@@ -563,8 +598,8 @@ function RoleDialog({ user, me, departments, onClose, onDone }) {
           <Button variant="ghost" onClick={onClose} type="button">
             Cancel
           </Button>
-          <Button type="submit" icon={busy ? Loader2 : Check} disabled={busy}>
-            {busy ? "Saving…" : "Save role"}
+          <Button type="submit" icon={busy ? Loader2 : Check} disabled={busy || roles.length === 0}>
+            {busy ? "Saving…" : "Save roles"}
           </Button>
         </div>
       </form>
@@ -688,7 +723,7 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
     name: "",
     email: "",
     phone: "",
-    role: ROLES.REQUESTER,
+    roles: [ROLES.REQUESTER],
     departmentId: "",
     password: "",
   });
@@ -696,6 +731,13 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
   const [error, setError] = useState(null);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  function toggleRole(r) {
+    setForm((f) => ({
+      ...f,
+      roles: f.roles.includes(r) ? f.roles.filter((x) => x !== r) : [...f.roles, r],
+    }));
+  }
 
   async function submit(e) {
     e.preventDefault();
@@ -705,13 +747,16 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
     if (form.password.length < MIN_PASSWORD_LENGTH) {
       return setError(`The password needs at least ${MIN_PASSWORD_LENGTH} characters.`);
     }
+    // Stated here as well as in the Edge Function and the users_roles_not_empty
+    // constraint: an account with no roles can sign in and see nothing.
+    if (form.roles.length === 0) return setError("Pick at least one role.");
     setBusy(true);
     try {
       const res = await createUser({
         email: form.email.trim(),
         password: form.password,
         name: form.name.trim(),
-        role: form.role,
+        roles: form.roles,
         departmentId: form.departmentId || null,
         plantIds: ["PLT001"],
         phone: form.phone.trim(),
@@ -736,14 +781,22 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
         <Field label="Phone">
           <input value={form.phone} onChange={set("phone")} className={inputClass} />
         </Field>
-        <Field label="Role" required>
-          <select value={form.role} onChange={set("role")} className={inputClass}>
+        <Field label="Roles" required>
+          {/* An account holds a set and gets the union of what those roles
+              allow (migration 0020). */}
+          <div className="flex flex-col gap-1.5">
             {choices.map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABELS[r]}
-              </option>
+              <label key={r} className="flex cursor-pointer items-center gap-2 text-[13.5px] text-ink">
+                <input
+                  type="checkbox"
+                  checked={form.roles.includes(r)}
+                  onChange={() => toggleRole(r)}
+                  className="accent-navy"
+                />
+                {ROLE_LABELS[r] || r}
+              </label>
             ))}
-          </select>
+          </div>
         </Field>
         <Field label="Department">
           <select value={form.departmentId} onChange={set("departmentId")} className={inputClass}>
@@ -764,7 +817,7 @@ function CreateUserDialog({ me, departments, onClose, onDone }) {
             autoComplete="new-password"
           />
         </Field>
-        {form.role === ROLES.TECHNICIAN && (
+        {form.roles.includes(ROLES.TECHNICIAN) && (
           <p className="text-[12px] text-ink-soft mb-4">
             A technician record is created too, so they can be assigned work straight away. Add
             their skills in Settings so the assignment panel can match them to jobs.

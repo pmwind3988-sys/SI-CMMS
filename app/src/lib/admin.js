@@ -10,7 +10,7 @@
  *                   policy already lets an admin write any user's row, and a
  *                   column guard (migration 0002) stops non-admins straying
  *                   beyond their own name/phone/photo.
- *   RPC           — role changes, via si_set_user_role(). SECURITY DEFINER
+ *   RPC           — role changes, via si_set_user_roles(). SECURITY DEFINER
  *                   because it also enforces that a Supervisor may only
  *                   provision inside their own department.
  *   Edge Function — passwords, sign-in addresses and account creation. All three
@@ -36,7 +36,7 @@ import { supabase, liveQuery } from "./supabase";
 // 0015), so in practice it arrives false — carrying it keeps the predicate
 // honest rather than relying on that.
 const USER_SELECT =
-  "id, name, email, phone, role, department_id, plant_ids, status, created_at, " +
+  "id, name, email, phone, roles, department_id, plant_ids, status, created_at, " +
   "last_login_at, is_protected, seed_source, password_changed_at, si_dummy_flags";
 
 /** Every user, live. The users_select policy already limits who sees this. */
@@ -187,13 +187,13 @@ export async function setUserEmail(userId, email) {
  * hook reads users.role when minting a token — so the function writes both, and
  * rolls the auth account back if the profile insert fails.
  */
-export async function createUser({ email, password, name, role, departmentId, plantIds, phone }) {
+export async function createUser({ email, password, name, roles, departmentId, plantIds, phone }) {
   return invokeAdminFunction({
     action: "create_user",
     email,
     password,
     name,
-    role,
+    roles,
     department_id: departmentId || null,
     plant_ids: plantIds || [],
     phone: phone || "",
@@ -205,17 +205,23 @@ export async function createUser({ email, password, name, role, departmentId, pl
 -------------------------------------------------------------------*/
 
 /**
- * Change a user's role, department and plants together.
+ * Change a user's roles, department and plants together.
  *
- * The new role only reaches their JWT when their token is next refreshed, since
+ * The new roles only reach their JWT when their token is next refreshed, since
  * custom_access_token_hook runs at token-issue time. Supabase refreshes roughly
  * hourly, so a demotion is not instant — tell the user to sign out and back in
  * if it needs to take effect now.
+ *
+ * si_set_user_roles restates every rule the users_* policies apply, because it
+ * is SECURITY DEFINER and no policy sees it: not your own account, target below
+ * your rank, and every role granted below your rank — not merely the highest of
+ * them, or a Manager could grant admin alongside requester and have the pair
+ * pass as rank 5.
  */
-export async function setUserRole(userId, role, departmentId, plantIds) {
-  const { error } = await supabase.rpc("si_set_user_role", {
+export async function setUserRoles(userId, roles, departmentId, plantIds) {
+  const { error } = await supabase.rpc("si_set_user_roles", {
     p_uid: userId,
-    p_role: role,
+    p_roles: roles,
     p_department_id: departmentId || null,
     p_plant_ids: plantIds || [],
   });
