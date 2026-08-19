@@ -1,5 +1,5 @@
 -- ============================================================================
--- SI - Service Inside · 0022 An assignment must land on someone who can move it
+-- SI - Service Inside · 0023 An assignment must land on someone who can move it
 -- ============================================================================
 -- The client half of this fix is listenTechnicians() in src/lib/workOrders.js,
 -- which now intersects `technicians` with `users` on "holds technician" and
@@ -18,6 +18,13 @@
 --
 -- An account set inactive produced the same dead end, because the roster had no
 -- status filter either.
+--
+-- NUMBERED 0023, not 0022. 0022 is taken by 0022_realtime_technicians.sql on
+-- another branch, committed the same afternoon. Two files sharing a version
+-- prefix is not a cosmetic clash: the CLI matches history on the prefix, not
+-- the filename, so whichever applied first would make the other look already
+-- applied and skip it in silence. The two are independent -- a publication
+-- membership and a function body -- so either order is fine.
 --
 -- ONE function is replaced and nothing else changes: no new object, no policy
 -- change, no widening. si_guard_work_order_transition() is 0020's function with
