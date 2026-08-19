@@ -1507,7 +1507,7 @@ The header enumerates what the function does and why. Replace the "Why this exis
  *                           delivering nothing is the worst outcome available.
 ```
 
-- [ ] **Step 7: Deploy, then test each rule** — *deployed; 4 of 6 rows tested, see below*
+- [ ] **Step 7: Deploy, then test each rule** — *deployed; 5 of 6 rows tested — only the recovery-link send is left, blocked on SITE_URL*
 
 ```bash
 cd app && npx supabase functions deploy admin-users
@@ -1542,7 +1542,7 @@ await fetch(`${SUPABASE_URL}/functions/v1/admin-users`, {
 | Superuser | `set_password` on a subordinate | succeeds; message says they must change it |
 | Administrator | `create_user` with a password they chose | account created **and** `must_change_password` true in the database |
 
-- [ ] **Step 8: Prove the ordering trap is closed — this is the whole test** — *needs a Superuser session*
+- [x] **Step 8: Prove the ordering trap is closed — this is the whole test**
 
 After the Superuser's successful `set_password`:
 
@@ -1594,14 +1594,28 @@ As an **ordinary** Administrator (unflagged, active, not protected):
 | `send_recovery_link` | 500 SITE_URL not set — the configuration guard fires |
 | Stray rows | none |
 
-**Not yet verified:** a recovery link actually sending, and the placeholder-address
-refusal (which sits after the SITE_URL check), both blocked on the secret. And
-step 8 — a Superuser `set_password` leaving `must_change_password` **true** —
-which needs a Superuser session. Note that `create_user`'s flagging *is* proven
-(the test account arrived flagged and was confined to `/change-password`), but it
-is a different code path: `create_user` sets the flag in its INSERT, while
-`set_password` writes it separately *after* the password. Step 8 tests the one
-that can be defeated by ordering.
+**The ordering trap (step 8), through the real UI as the Superuser:** Admin →
+Users → Password on a demo technician. `must_change_password` read **true** 27
+seconds after `password_changed_at` — the flag survived the trigger, so the write
+order is right.
+
+That needed testing separately from `create_user`'s flagging even though both set
+the same column. `create_user` sets it *inside its INSERT*, which is safe
+structurally because `si_sync_auth_user_activity` only fires on UPDATE of
+`auth.users`. `set_password` writes it in a separate UPDATE *after* the password,
+which is the one path ordering can defeat: reversed, the trigger clears it and the
+account gets an administrator-chosen password with no obligation attached, and
+nothing anywhere reports a problem.
+
+**Still not verified:** a recovery link actually sending, and the
+placeholder-address refusal — which sits after the SITE_URL check, so the secret
+blocks both. Everything else in this task is tested.
+
+**Note on running step 8:** the tester cannot supply the password. It goes through
+Admin → Users → Password with a human choosing it, which is the more realistic
+path anyway. Afterwards the target is flagged and confined to
+`/change-password`; clearing the flag with the service role leaves the account
+usable without anyone having to change the password again.
 
 #### How these were run, and why it matters for the rest of the plan
 
