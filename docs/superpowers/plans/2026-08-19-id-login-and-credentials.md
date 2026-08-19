@@ -2671,7 +2671,7 @@ Both surfaces now read one exported constant, so they cannot drift.
 - Modify: `app/BUILD_AND_DEPLOY.md`
 - Modify: `docs/superpowers/specs/2026-08-19-id-login-and-credentials-design.md` (status line only)
 
-- [ ] **Step 1: Add two sections to CLAUDE.md**
+- [x] **Step 1: Add two sections to CLAUDE.md**
 
 Immediately after the multi-role section, because they modify what it describes:
 
@@ -2736,19 +2736,19 @@ Administrators use `send_recovery_link`, which refuses a placeholder address
 loudly, because succeeding and delivering nothing is the worst outcome available.
 ```
 
-- [ ] **Step 2: Correct the "Admin operations" section**
+- [x] **Step 2: Correct the "Admin operations" section**
 
 It currently says `set_email` "applies the same rank rule". That is no longer true. Replace that paragraph with the Superuser-only rule and the reason it is paired with `set_password`. Leave the rest of the section — the three-mechanism description is still accurate.
 
-- [ ] **Step 3: Record the new secret**
+- [x] **Step 3: Record the new secret**
 
 In `app/BUILD_AND_DEPLOY.md`, beside the existing environment notes: `SITE_URL` is an **Edge Function** secret (Edge Functions → Secrets), not a Vercel variable. It holds the same value as `NEXT_PUBLIC_SITE_URL`, must also be listed under Authentication → URL Configuration → Redirect URLs, and `send_recovery_link` refuses to send without it rather than emailing a link to nowhere.
 
-- [ ] **Step 4: Flip the spec's status line**
+- [x] **Step 4: Flip the spec's status line**
 
 `**Status:** approved, not yet implemented` → `**Status:** implemented (migrations 0025–0027)`.
 
-- [ ] **Step 5: Rebuild the APK**
+- [x] **Step 5: Rebuild the APK**
 
 The same `out/` is packaged into Android, and the login screen changed.
 
@@ -2756,7 +2756,7 @@ The same `out/` is packaged into Android, and the login screen changed.
 cd app && npm run apk && npm run apk:record
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add CLAUDE.md app/BUILD_AND_DEPLOY.md docs/superpowers/specs/2026-08-19-id-login-and-credentials-design.md
@@ -2770,17 +2770,17 @@ git commit -m "Docs: account state, the two sign-in paths, and the SITE_URL secr
 Run this after Task 9. Sign in yourself for each role.
 
 - [ ] A fresh token for an active, unflagged account carries `user_roles`, `user_role`, `is_protected`, `must_change_password: false`. **Sign out and in — a cached token proves nothing.**
-- [ ] Deactivate an account, sign it out and in: an empty app, not its dashboard. **Read the claims, not the screen** — an empty dashboard can be empty for other reasons. Reactivate; access returns.
-- [ ] Flag an account by hand, sign out and in: no role claims, the claim true, redirected to `/change-password`. Clear it; roles return. This is the step that catches a hook which handles `status` and forgets the flag.
-- [ ] Two accounts, the same number in different case: the second is refused.
-- [ ] Sign in by number and by email; the same dashboard both ways.
-- [ ] Wrong number, and right number with wrong password: byte-identical messages. Check the email path's wording too.
-- [ ] Superuser sets a temporary password → `must_change_password` is **true** in the database. This is the ordering trap; true here is the whole test.
-- [ ] An Administrator creates an account → `must_change_password` is **true** on it, and its first sign-in lands on `/change-password`.
-- [ ] Sign in with that password: `/change-password`, the rest of the app empty. Change it; roles appear with no sign-out.
-- [ ] An Administrator: no Password button, Send reset link present, refused loudly on a placeholder address.
-- [ ] An Administrator cannot change another account's sign-in address; can change their own.
-- [ ] Trip the delay; confirm the generic message, and that a correct credential works again once it expires.
-- [ ] Supabase security advisor clean for `custom_access_token_hook` and `si_email_by_employee_id`.
-- [ ] `npm run build` succeeds with the dev server stopped.
-- [ ] The APK is rebuilt and recorded.
+- [x] Deactivate an account, sign it out and in: an empty app, not its dashboard. **Read the claims, not the screen** — an empty dashboard can be empty for other reasons. Reactivate; access returns.
+- [x] Flag an account by hand, sign out and in: no role claims, the claim true, redirected to `/change-password`. Clear it; roles return. This is the step that catches a hook which handles `status` and forgets the flag.
+- [x] Two accounts, the same number in different case: the second is refused.
+- [x] Sign in by number and by email; the same dashboard both ways.
+- [x] Wrong number, and right number with wrong password: byte-identical messages. Check the email path's wording too.
+- [x] Superuser sets a temporary password → `must_change_password` is **true** in the database. This is the ordering trap; true here is the whole test.
+- [x] An Administrator creates an account → `must_change_password` is **true** on it, and its first sign-in lands on `/change-password`.
+- [x] Sign in with that password: `/change-password`, the rest of the app empty. Change it; roles appear with no sign-out.
+- [x] An Administrator: no Password button, and no Send reset link on a placeholder address (the button is correctly absent, replaced by a note naming the reason). **The loud refusal itself is untested — it sits behind the SITE_URL check.**
+- [x] An Administrator cannot change another account's sign-in address; can change their own.
+- [x] Trip the delay; confirm the generic message, and that a correct credential works again once it expires.
+- [ ] Supabase security advisor clean for `custom_access_token_hook`, `si_email_by_employee_id` and `si_sweep_login_attempts`. **Outstanding — dashboard only, and also owed from 0020 and 0023.**
+- [x] `npm run build` succeeds with the dev server stopped.
+- [x] The APK is rebuilt and recorded.
