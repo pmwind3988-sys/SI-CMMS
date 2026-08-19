@@ -8,11 +8,32 @@
  * the browser. This function is the only place it runs, on Supabase's servers,
  * where the key is injected from the environment and never leaves.
  *
+ * WHO MAY DO WHAT HERE. Not one rule — three, because these operations are not
+ * equally dangerous:
+ *   - set_password       -> your own, or SUPERUSER ONLY. An administrator who can
+ *                           set a subordinate's password holds their credential.
+ *   - set_email          -> your own, or SUPERUSER ONLY. Paired with the above
+ *                           deliberately: an address you can repoint at a mailbox
+ *                           you control, plus the public self-service reset, IS a
+ *                           password reset. Restricting one without the other
+ *                           would have been theatre.
+ *   - send_recovery_link -> any active admin, target strictly below their rank.
+ *                           What an administrator uses instead. Refuses a
+ *                           placeholder address loudly, because succeeding and
+ *                           delivering nothing is the worst outcome available.
+ *   - create_user        -> any active admin, no role granted at or above their
+ *                           own rank. Flags the new account, because the password
+ *                           was chosen by whoever created it.
+ *
  * Everything else an admin needs is already possible directly from the client and
  * is deliberately NOT duplicated here:
  *   - role / department / plant changes -> si_set_user_roles() RPC (migration 0020)
  *   - activate / deactivate            -> UPDATE users SET status, allowed to
- *                                         admins by the users_update policy
+ *                                         admins by the users_update policy.
+ *                                         Since migration 0026 that actually
+ *                                         revokes access, at the next token
+ *                                         refresh; before it, status decided
+ *                                         nothing at all.
  *
  * Authorization is checked twice over:
  *   1. verify_jwt is on, so Supabase rejects anything without a valid token
@@ -116,7 +137,16 @@ Deno.serve(async (req: Request) => {
   const action = String(payload.action ?? "");
 
   /* ---------------------------------------------------------------
-     set_password — the operation this function was written for.
+     set_password — SUPERUSER ONLY.
+
+     The rank rule is not enough here, and this is the decision the whole
+     sub-project turns on: an Administrator who can set a subordinate's password
+     HOLDS that person's credential. Restricting it to the account that is
+     administered only from Supabase means nobody inside the app ever does.
+
+     The cost is accepted knowingly: an account with no working mailbox and a
+     forgotten password waits for the Superuser, night shift included. For
+     everyone with a real address, send_recovery_link below is the answer.
   ----------------------------------------------------------------*/
   if (action === "set_password") {
     const userId = String(payload.user_id ?? "");
@@ -127,12 +157,21 @@ Deno.serve(async (req: Request) => {
       return json({ error: `Use at least ${MIN_PASSWORD_LENGTH} characters.` }, 400);
     }
 
-    // Resetting someone's password is editing them, so it obeys the same rank
-    // rule as any other write: your own account, or one strictly below you.
-    // Without this an Administrator could take over a peer Administrator's
-    // account by resetting its password — the exact thing 0015 set out to stop,
-    // reachable through the one path RLS does not cover.
-    if (userId !== caller.user.id) {
+    // Your own password needs no Superuser. That is /change-password, and this
+    // branch keeps working for it.
+    const isSelf = userId === caller.user.id;
+    if (!isSelf && !callerRow.is_protected) {
+      return json(
+        {
+          error:
+            "Only the protected Superuser account can set someone else's password. " +
+            "Use “Send reset link” instead, so they choose their own.",
+        },
+        403,
+      );
+    }
+
+    if (!isSelf) {
       const { data: targetRow, error: targetError } = await admin
         .from("users")
         .select("roles, is_protected, name")
@@ -147,6 +186,9 @@ Deno.serve(async (req: Request) => {
           403,
         );
       }
+      // Kept although only a Superuser reaches here, and a Superuser outranks
+      // everybody, so it cannot fire today. It is the line that keeps the rule
+      // true if the check above is ever widened.
       if (rankOfAccount(targetRow) >= rankOfAccount(callerRow)) {
         return json(
           { error: "You can only set the password of someone below you in the hierarchy." },
@@ -158,7 +200,131 @@ Deno.serve(async (req: Request) => {
     const { error } = await admin.auth.admin.updateUserById(userId, { password });
     if (error) return json({ error: error.message }, 400);
 
+    /* THE FLAG GOES AFTER THE PASSWORD. NOT BEFORE.
+
+       Writing a password IS a password change, so si_sync_auth_user_activity
+       fires and clears must_change_password. Set it first and the trigger wipes
+       it: the account gets a temporary password and no obligation to change it,
+       with nothing anywhere reporting a problem. See migration 0025 §3. */
+    if (!isSelf) {
+      const { error: flagError } = await admin
+        .from("users")
+        .update({ must_change_password: true })
+        .eq("id", userId);
+
+      if (flagError) {
+        // Reported, not swallowed. A password changed without the obligation
+        // attached is the one outcome an administrator must not be allowed to
+        // believe went fine.
+        return json({
+          ok: true,
+          message:
+            `Password updated, but this account was NOT marked as needing to change it: ` +
+            `${flagError.message}. Set users.must_change_password = true by hand.`,
+        });
+      }
+      return json({
+        ok: true,
+        message: "Temporary password set. They must change it the first time they sign in.",
+      });
+    }
+
     return json({ ok: true, message: "Password updated." });
+  }
+
+  /* ---------------------------------------------------------------
+     send_recovery_link — how an administrator helps someone who is locked out.
+     Supabase emails them a link and they set their own password, so no
+     administrator ever holds a credential belonging to somebody else.
+
+     Sent through an ANON client on purpose. resetPasswordForEmail is a public
+     endpoint — /forgot-password already calls it from the browser with any
+     address you like — so routing it through here grants nothing new. What this
+     function adds is the part the public endpoint cannot: the rank check, a
+     refusal on an address that cannot receive mail, and a definite answer to the
+     administrator about which of those happened.
+  ----------------------------------------------------------------*/
+  if (action === "send_recovery_link") {
+    const userId = String(payload.user_id ?? "");
+    if (!userId) return json({ error: "Which user?" }, 400);
+
+    /* Checked before anything else, because without it the feature cannot work
+       at all and every other refusal below would be noise. window.location.origin
+       is not available here and would be wrong anyway — Capacitor serves the same
+       export from https://localhost, so a link built from it points the reader's
+       mail client at their own phone. */
+    const SITE_URL = Deno.env.get("SITE_URL") ?? "";
+    if (!SITE_URL) {
+      return json(
+        {
+          error:
+            "SITE_URL is not set on this function, so the reset link would point nowhere. " +
+            "Set it in Edge Functions → Secrets to the deployed web address.",
+        },
+        500,
+      );
+    }
+
+    const { data: targetRow, error: targetError } = await admin
+      .from("users")
+      .select("email, name, roles, is_protected")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (targetError) return json({ error: "Couldn't verify that account." }, 500);
+    if (!targetRow) return json({ error: "No such user." }, 404);
+    if (targetRow.is_protected) {
+      return json(
+        { error: "This account is protected. It can only be changed from the database." },
+        403,
+      );
+    }
+    if (userId !== caller.user.id && rankOfAccount(targetRow) >= rankOfAccount(callerRow)) {
+      return json(
+        { error: "You can only send a reset link to someone below you in the hierarchy." },
+        403,
+      );
+    }
+
+    /* LOUDLY, not silently. resetPasswordForEmail succeeds against
+       tech.arun@example.com and delivers nothing, and an administrator who is
+       told it worked believes the person has been helped. That is the worst
+       available outcome, so it is the one refusal spelled out in full. */
+    const { data: isPlaceholder, error: placeholderError } = await admin.rpc(
+      "si_is_placeholder_email",
+      { p_email: targetRow.email },
+    );
+
+    if (placeholderError) return json({ error: "Couldn't check that address." }, 500);
+    if (isPlaceholder === true) {
+      return json(
+        {
+          error:
+            `${targetRow.email} is a placeholder address — nothing is delivered to it, so a ` +
+            `reset link would silently go nowhere. Give this account a real address first ` +
+            `(Edit → Email), or ask the Superuser to set a temporary password.`,
+        },
+        400,
+      );
+    }
+
+    // trailingSlash: true in next.config.js, and Supabase matches its redirect
+    // allow-list on the exact URL — /reset-password without the slash is a
+    // redirect and will not match.
+    const redirectTo = `${SITE_URL.replace(/\/+$/, "")}/reset-password/`;
+
+    const anon = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { error: sendError } = await anon.auth.resetPasswordForEmail(targetRow.email, {
+      redirectTo,
+    });
+    if (sendError) return json({ error: sendError.message }, 400);
+
+    return json({
+      ok: true,
+      message: `Reset link sent to ${targetRow.email}. It expires — tell them to use it now.`,
+    });
   }
 
   /* ---------------------------------------------------------------
@@ -197,6 +363,24 @@ Deno.serve(async (req: Request) => {
       if (targetRow.is_protected) {
         return json(
           { error: "This account is protected. It can only be changed from the database." },
+          403,
+        );
+      }
+      /* Superuser-only, matching set_password, because the two are the same
+         privilege wearing different clothes: repoint a subordinate's sign-in
+         address at a mailbox you control, run the PUBLIC self-service reset at
+         /forgot-password, and you have their password without ever calling
+         set_password. Leaving the rank rule here would have left that bypass wide
+         open beside a Superuser-only set_password — which would have made this
+         whole sub-project theatre. Your own address stays yours to change; that
+         is not an escalation. */
+      if (!callerRow.is_protected) {
+        return json(
+          {
+            error:
+              "Only the protected Superuser account can change someone else's sign-in address. " +
+              "You can change your own.",
+          },
           403,
         );
       }
@@ -253,6 +437,11 @@ Deno.serve(async (req: Request) => {
     const departmentId = payload.department_id ? String(payload.department_id) : null;
     const plantIds = Array.isArray(payload.plant_ids) ? payload.plant_ids.map(String) : [];
     const phone = payload.phone ? String(payload.phone) : "";
+    // Trimmed only. The unique index normalises with upper(btrim(...)), so it is
+    // the index — not this line — that decides two numbers are the same, and
+    // storing what the administrator typed keeps the display honest.
+    const employeeIdRaw = payload.employee_id ? String(payload.employee_id).trim() : "";
+    const employeeId = employeeIdRaw || null;
 
     const VALID_ROLES = ["requester", "technician", "supervisor", "manager", "admin"];
     if (!email) return json({ error: "An email address is required." }, 400);
@@ -293,17 +482,33 @@ Deno.serve(async (req: Request) => {
       name,
       email,
       phone,
+      employee_id: employeeId,
       roles,
       department_id: departmentId,
       plant_ids: plantIds,
       status: "active",
+      /* A new account's password was chosen by the administrator creating it, so
+         it is owed a change for exactly the reason a reset one is. The design
+         spec's §5 table lists only set_password; creating an account is issuing a
+         credential somebody else knows, and leaving it unflagged would mean every
+         account provisioned through this screen keeps an admin-known password
+         indefinitely — the requirement this sub-project exists to satisfy, missed
+         on the most common route to a new account.
+
+         Safe here, unlike set_password's separate write:
+         si_sync_auth_user_activity is an UPDATE trigger on auth.users, and
+         createUser INSERTs there. Nothing fires, so nothing clears it. */
+      must_change_password: true,
     });
 
     if (profileError) {
       // Roll the auth account back rather than leaving an account that can sign
       // in but has no roles and therefore no access to anything.
       await admin.auth.admin.deleteUser(created.user.id);
-      return json({ error: `Couldn't create the profile: ${profileError.message}` }, 400);
+      const hint = /users_employee_id_key/.test(profileError.message)
+        ? ` Employee ID "${employeeIdRaw}" is already used by another account.`
+        : "";
+      return json({ error: `Couldn't create the profile: ${profileError.message}.${hint}` }, 400);
     }
 
     // A technician also needs a technicians row before they can be assigned work.
@@ -325,7 +530,11 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return json({ ok: true, user_id: created.user.id, message: `${name} can now sign in.` });
+    return json({
+      ok: true,
+      user_id: created.user.id,
+      message: `${name} can now sign in with that password, and must change it the first time.`,
+    });
   }
 
   return json({ error: `Unknown action "${action}".` }, 400);
