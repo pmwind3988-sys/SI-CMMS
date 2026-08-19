@@ -1,0 +1,71 @@
+-- ============================================================================
+-- SI — Service Inside · 0024 technicians joins the realtime publication
+-- ============================================================================
+-- One guarded line. `technicians` is not a member of supabase_realtime, so no
+-- postgres_changes event is ever delivered for it: 0005 added one entry per
+-- listener that existed then, 0009 the eight reference tables, 0012 users (with
+-- the note that listenUsers() "has really been a one-shot fetch" until then),
+-- 0018 role_permissions. technicians is in none of them, and liveQuery()
+-- subscribes to it in two places.
+--
+-- Verify, before and after:
+--   select tablename from pg_publication_tables
+--    where pubname = 'supabase_realtime' order by tablename;
+--
+-- WHAT THIS FIXES, AND WHAT WAS ALREADY FIXED BY ACCIDENT. Since 0023 the
+-- assignment roster (listenTechnicians, src/lib/workOrders.js) watches
+-- ["technicians", "users"], and granting or revoking the role writes `users` —
+-- in the publication since 0012 — in the same transaction as the `technicians`
+-- INSERT. liveQuery re-runs its query rather than patching a cache, so that one
+-- event already refreshes the roster with the new row included. The case that
+-- matters most is therefore covered incidentally. What no `users` write
+-- accompanies, and so still never arrives:
+--
+--   * a skills or certifications edit (updateTechnicianRecord, src/lib/admin.js)
+--   * an availability change, which si_guard_technician_update (0002) exists
+--     specifically to let a technician make on their own row
+--   * every event listenTechnicianRecords (src/lib/admin.js) was written to
+--     receive — it subscribes to `technicians` alone
+--
+-- Neither admin.js export has a consumer yet; there is no Admin -> Technicians
+-- screen. So nothing user-visible changes today. What this removes is the trap:
+-- two listeners whose liveness depends entirely on a sibling table happening to
+-- be written in the same transaction. That holds until the first screen writes
+-- `technicians` on its own, and then fails as silence rather than as an error —
+-- the channel subscribes successfully and simply never fires, which is how the
+-- omission survived four migrations.
+--
+-- NUMBERED 0024, NOT 0022. This statement was run by hand in the SQL editor on
+-- 2026-08-19, while the file was numbered 0022 and the remote was at 0021. The
+-- remote is now at 0023, so a file at 0022 sits below the high-water mark and
+-- `supabase db push` refuses it as out of order unless passed --include-all.
+-- 0023's header records the other half of the same collision: the CLI keys its
+-- history on the version prefix and not the filename, so two files sharing 0022
+-- would have made whichever applied first mark the other as already applied and
+-- skip it in silence. Renumbering costs nothing because the statement below is
+-- idempotent and the ordering between the two is immaterial — a publication
+-- membership and a function body do not touch.
+--
+-- RLS ON THE NEW STREAM. technicians_select is si_signed_in() (0002 — the
+-- roster is deliberately system-wide, because the assignment picker needs the
+-- full list regardless of who is looking), so every signed-in session is now
+-- woken for every row change on this table. That is a change in traffic, not in
+-- disclosure: the same session may already SELECT every one of those rows.
+-- liveQuery also discards the payload and re-runs its query, so what reaches a
+-- component is what RLS returns on the refetch rather than what the WAL
+-- carried — which is why the PK-only DELETE payload (nothing in this schema
+-- sets replica identity full) does not matter here either. The app deletes no
+-- technicians row in any case: 0020 leaves the profile in place when the role
+-- is revoked and 0023 restates why.
+--
+-- THE GUARD is 0009's and 0012's, not decoration: adding a table already in the
+-- publication raises duplicate_object, which would abort the whole migration.
+-- Since the line has already been applied by hand, that is precisely what the
+-- next push will hit — and swallow.
+-- ============================================================================
+
+do $$
+begin
+  execute 'alter publication supabase_realtime add table technicians';
+exception when duplicate_object then null;
+end $$;
