@@ -577,6 +577,16 @@ revoke all on function si_set_user_role(uuid, si_role, text, text[]) from public
 grant execute on function si_set_user_role(uuid, si_role, text, text[]) to authenticated;
 ```
 
+- [x] **Step 9b: Three stragglers this plan originally missed** *(added during execution)*
+
+Auditing every `si_role()` caller — rather than trusting the inventory in the spec — turned up three more authorization decisions still asking "what is this person":
+
+- `technicians_update` policy (0002) — `si_role() in ('admin','manager','supervisor')` → membership.
+- `si_guard_technician_update` (0002) — same test, same fix.
+- **`si_archive_deleted_work_order` (0018)** — the important one. It declares `v_actor users%rowtype` and stamps `coalesce(si_role(), v_actor.role::text)`. plpgsql resolves record fields at execution time, so **the moment Task 9 drops `users.role`, every work order DELETE starts raising**, and the only symptom would be that deletion silently stopped working. Rewritten to read the highest entry of `v_actor.roles`.
+
+The first two work by accident under a union (`si_role()` returns the highest role held, and the roles they test for are the higher ones). The third does not.
+
 - [ ] **Step 10: Apply the migration**
 
 Docker is not required for `db:push` (it is for `db:diff`). Ensure `npm run dev` is not running.

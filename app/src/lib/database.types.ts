@@ -660,6 +660,7 @@ export type Database = {
           photo_url: string | null
           plant_ids: string[]
           role: Database["public"]["Enums"]["si_role"]
+          roles: Database["public"]["Enums"]["si_role"][]
           seed_name: string | null
           seed_phone: string | null
           seed_source: string | null
@@ -680,6 +681,7 @@ export type Database = {
           photo_url?: string | null
           plant_ids?: string[]
           role: Database["public"]["Enums"]["si_role"]
+          roles: Database["public"]["Enums"]["si_role"][]
           seed_name?: string | null
           seed_phone?: string | null
           seed_source?: string | null
@@ -700,6 +702,7 @@ export type Database = {
           photo_url?: string | null
           plant_ids?: string[]
           role?: Database["public"]["Enums"]["si_role"]
+          roles?: Database["public"]["Enums"]["si_role"][]
           seed_name?: string | null
           seed_phone?: string | null
           seed_source?: string | null
@@ -1093,10 +1096,15 @@ export type Database = {
     }
     Functions: {
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
-      si_account_rank: {
-        Args: { p_is_protected: boolean; p_role: string }
-        Returns: number
-      }
+      si_account_rank:
+        | { Args: { p_is_protected: boolean; p_role: string }; Returns: number }
+        | {
+            Args: {
+              p_is_protected: boolean
+              p_roles: Database["public"]["Enums"]["si_role"][]
+            }
+            Returns: number
+          }
       si_caller_rank: { Args: never; Returns: number }
       si_can_delete_work_orders: { Args: never; Returns: boolean }
       si_compute_dashboard_stats: { Args: never; Returns: undefined }
@@ -1124,6 +1132,15 @@ export type Database = {
         Args: { u: Database["public"]["Tables"]["users"]["Row"] }
         Returns: string[]
       }
+      si_eligible_roles: {
+        Args: {
+          p_assigned_to: string
+          p_requester: string
+          p_transition_roles: Database["public"]["Enums"]["si_role"][]
+        }
+        Returns: Database["public"]["Enums"]["si_role"][]
+      }
+      si_has_role: { Args: { p_role: string }; Returns: boolean }
       si_in_same_department: { Args: { dept: string }; Returns: boolean }
       si_is_admin: { Args: never; Returns: boolean }
       si_is_manager: { Args: never; Returns: boolean }
@@ -1161,6 +1178,14 @@ export type Database = {
       si_refresh_dashboard_stats: { Args: never; Returns: Json }
       si_role: { Args: never; Returns: string }
       si_role_rank: { Args: { p_role: string }; Returns: number }
+      si_roles: {
+        Args: never
+        Returns: Database["public"]["Enums"]["si_role"][]
+      }
+      si_roles_rank: {
+        Args: { p_roles: Database["public"]["Enums"]["si_role"][] }
+        Returns: number
+      }
       si_set_protected: {
         Args: { p_protected: boolean; p_uid: string }
         Returns: undefined
@@ -1170,6 +1195,15 @@ export type Database = {
           p_department_id?: string
           p_plant_ids?: string[]
           p_role: Database["public"]["Enums"]["si_role"]
+          p_uid: string
+        }
+        Returns: Json
+      }
+      si_set_user_roles: {
+        Args: {
+          p_department_id?: string
+          p_plant_ids?: string[]
+          p_roles: Database["public"]["Enums"]["si_role"][]
           p_uid: string
         }
         Returns: Json
