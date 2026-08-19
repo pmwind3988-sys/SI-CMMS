@@ -65,6 +65,17 @@ function resetRedirectUrl() {
   return `${base.replace(/\/+$/, "")}/reset-password/`;
 }
 
+/**
+ * The one sentence every rejected sign-in gets, on both paths.
+ *
+ * Exported, and used by the login page too, because the two paths having two
+ * wordings IS the leak: the auth-signin function goes to some trouble to make an
+ * unknown employee number indistinguishable from a wrong password, and a
+ * different sentence arriving from GoTrue on the email path would hand that
+ * distinction straight back. Kept byte-identical to the function's own GENERIC.
+ */
+export const GENERIC_SIGNIN_FAILURE = "Those details didn't match.";
+
 const AuthContext = createContext(null);
 
 /** Decode the claims the access-token hook injected. */
@@ -196,29 +207,92 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const signIn = useCallback(async (email, password, remember) => {
-    // The flag must precede signInWithPassword — it decides which store the
-    // session lands in. See the storage adapter in lib/supabase.js.
+  /**
+   * Sign in with a company email address or an employee number.
+   *
+   * TWO PATHS, DELIBERATELY. An email goes straight to GoTrue as it always has. A
+   * number goes through the auth-signin Edge Function, because resolving it to an
+   * address needs the service-role key — an anon-callable lookup would be a
+   * public staff directory (see that function's header).
+   *
+   * Routing everything through the function would be more uniform, and would make
+   * it a single point of failure for all access. Splitting means an outage costs
+   * employee-ID sign-ins only, and the people most likely to have a mailbox are
+   * the ones still able to get in — and to be sent a recovery link.
+   *
+   * The cost of splitting is TWO ERROR SURFACES. Both must refuse in the same
+   * words, or the difference between them becomes the oracle the function's
+   * generic message exists to deny: see friendlyError() on the login page, which
+   * flattens GoTrue's "user not found" into the same sentence.
+   */
+  const signIn = useCallback(async (identifier, password, remember) => {
+    const trimmed = (identifier ?? "").trim();
+    const byEmail = trimmed.includes("@");
+
+    // Before either call — it decides which store the session lands in, and the
+    // session is written by whichever call below succeeds. See the storage
+    // adapter in lib/supabase.js.
     persistRememberMe(remember);
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (signInError) throw signInError;
-    // The address only after the credentials were accepted, so a rejected
-    // attempt does not leave a typo waiting in the field next time.
-    if (remember) persistRememberMe(true, email);
+
+    let session;
+    let authUser;
+
+    if (byEmail) {
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: trimmed,
+        password,
+      });
+      if (signInError) throw signInError;
+      session = data.session;
+      authUser = data.user;
+    } else {
+      const { data, error: fnError } = await supabase.functions.invoke("auth-signin", {
+        body: { identifier: trimmed, password },
+      });
+      /* supabase-js collapses any non-2xx into "Edge Function returned a non-2xx
+         status code" and hides the real reason in error.context. Unwrap it — the
+         function only ever sends the one generic sentence, so there is nothing to
+         leak by showing it, and the generic message is better than the wrapper. */
+      if (fnError) {
+        let detail = null;
+        try {
+          detail = (await fnError.context?.json())?.error;
+        } catch {
+          // Not JSON — fall through to the generic message.
+        }
+        throw new Error(detail || GENERIC_SIGNIN_FAILURE);
+      }
+      if (data?.error) throw new Error(data.error);
+      if (!data?.session?.access_token) throw new Error(GENERIC_SIGNIN_FAILURE);
+
+      // setSession is what writes it into the store the flag above selected, and
+      // what makes onAuthStateChange fire so AuthContext resolves the user.
+      const { data: set, error: setError } = await supabase.auth.setSession({
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      });
+      if (setError) throw setError;
+      session = set.session;
+      authUser = set.user;
+    }
+
+    /* The identifier only after the credentials were accepted, so a rejected
+       attempt leaves no typo waiting in the field. Stored AS TYPED: someone who
+       signs in by number is offered the number next time, not an address they may
+       not even know. */
+    if (remember) persistRememberMe(true, trimmed);
+
     // Hand the roles back with the user so the caller can redirect immediately
     // instead of waiting for onAuthStateChange to populate `user`. Same source
-    // of truth as everywhere else: the access-token hook's claims, read with
-    // the same pre-0020 fallback as above. An empty set means the hook is
-    // disabled or this account has no row in public.users — callers should
-    // treat that as its own failure, not as bad credentials.
-    const signInClaims = claimsFromSession(data.session);
+    // of truth as everywhere else: the access-token hook's claims. An empty set
+    // means the hook is disabled, this account has no row in public.users, or it
+    // is inactive — callers should treat that as its own failure, not as bad
+    // credentials.
+    const signInClaims = claimsFromSession(session);
     const roles =
       signInClaims.user_roles ?? (signInClaims.user_role ? [signInClaims.user_role] : []);
     return {
-      user: data.user,
+      user: authUser,
       roles,
       // The login page redirects on this: landing is one destination, so it is
       // the highest role held.

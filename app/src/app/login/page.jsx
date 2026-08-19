@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff, ArrowRight, Loader2, ShieldCheck } from "lucide-react";
-import { useAuth } from "../../context/AuthContext";
+import { useAuth, GENERIC_SIGNIN_FAILURE } from "../../context/AuthContext";
 import { rememberedEmail, wasRememberMeChecked } from "../../lib/supabase";
 import { dashboardPathForRole } from "../../lib/roles";
 import Field, { inputClass } from "../../components/ui/Field";
@@ -33,15 +33,23 @@ function Logo({ size = 38 }) {
   );
 }
 
-function isCompanyEmail(email) {
+/**
+ * Only applies to something that is actually an email address.
+ *
+ * Without the second guard, configuring a company domain would reject every
+ * employee number before it reached the network — the field accepts two kinds of
+ * identifier now, and this rule is about only one of them.
+ */
+function isCompanyEmail(value) {
   if (!COMPANY_EMAIL_DOMAIN) return true; // no domain configured -> don't block
-  return email.toLowerCase().endsWith(`@${COMPANY_EMAIL_DOMAIN.toLowerCase()}`);
+  if (!value.includes("@")) return true; // an employee number, not an address
+  return value.toLowerCase().endsWith(`@${COMPANY_EMAIL_DOMAIN.toLowerCase()}`);
 }
 
 export default function LoginPage() {
   const { signIn } = useAuth();
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
@@ -57,8 +65,9 @@ export default function LoginPage() {
    */
   useEffect(() => {
     setRememberMe(wasRememberMeChecked());
+    // Whatever was typed last time — an address or a number.
     const saved = rememberedEmail();
-    if (saved) setEmail(saved);
+    if (saved) setIdentifier(saved);
   }, []);
 
   /**
@@ -83,7 +92,12 @@ export default function LoginPage() {
         return "Confirm your email address first — check your inbox for the verification link.";
       case "invalid_credentials":
       case "user_not_found":
-        return "Couldn't sign in — check your email and password and try again.";
+        /* Byte-identical to the auth-signin function's refusal, via the shared
+           constant. Two paths phrasing a rejection differently is a way to tell
+           an unknown identifier from a wrong password — which is exactly what
+           that function's generic message and timing floor exist to deny, so
+           leaking it here would undo both. */
+        return GENERIC_SIGNIN_FAILURE;
       case "over_request_rate_limit":
         return "Too many attempts. Wait a few minutes and try again.";
       default:
@@ -91,7 +105,7 @@ export default function LoginPage() {
     }
     if (e?.status === 429) return "Too many attempts. Wait a few minutes and try again.";
     if (e?.status === 400 || e?.status === 422) {
-      return "Couldn't sign in — check your email and password and try again.";
+      return GENERIC_SIGNIN_FAILURE;
     }
     return e?.message || "Couldn't sign in — please try again.";
   }
@@ -100,14 +114,14 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
 
-    if (!isCompanyEmail(email)) {
+    if (!isCompanyEmail(identifier)) {
       setError(`Please sign in with your company email address (@${COMPANY_EMAIL_DOMAIN}).`);
       return;
     }
 
     setStatus("checking");
     try {
-      const { role, mustChangePassword } = await signIn(email, password, rememberMe);
+      const { role, mustChangePassword } = await signIn(identifier, password, rememberMe);
 
       /**
        * Checked BEFORE the no-role branch below, because it is the reason the
@@ -202,23 +216,27 @@ export default function LoginPage() {
           <h2 className="text-xl font-bold text-ink mb-1.5">Sign in</h2>
           <p className="text-[13.5px] text-ink-soft mb-5">
             {COMPANY_EMAIL_DOMAIN
-              ? `Use your @${COMPANY_EMAIL_DOMAIN} company email address.`
-              : "Use your company email address."}
+              ? `Use your @${COMPANY_EMAIL_DOMAIN} email address, or your employee ID.`
+              : "Use your company email address, or your employee ID."}
           </p>
           {error && <ErrorBanner message={error} />}
           <form onSubmit={handleSubmit}>
-            <Field label="Company email" required>
+            <Field label="Company email or employee ID" required>
               {/* No placeholder on either field. The label already says what
                   goes in it, and a greyed sample address is routinely misread as
                   a filled-in value — people tab past it and submit an empty
                   form. The password field's row of bullets was worse: it is
                   indistinguishable from a typed password. */}
+              {/* type="text", not "email": the browser's own validation rejects
+                  a bare employee number before any of this code runs. */}
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 className={inputClass}
                 autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
                 required
               />
             </Field>
