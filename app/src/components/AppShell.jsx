@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, ClipboardList, Bell, Search, LogOut, Users, Settings, Menu, X } from "lucide-react";
+import { LayoutDashboard, ClipboardList, Bell, Search, LogOut, Users, Settings, Menu, X, KeyRound } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { RoleBadge } from "./ui/Badges";
 import { ROLES, dashboardPathForRole, hasRole, rolesLabel } from "../lib/roles";
@@ -67,19 +67,39 @@ export default function AppShell({ children }) {
 
   if (!user) return null;
 
-  const navItems = [
-    { href: dashboardPathForRole(user.role), label: "Dashboard", icon: LayoutDashboard },
-    { href: "/work-orders", label: "Work Orders", icon: ClipboardList },
-    { href: "/notifications", label: "Notifications", icon: Bell },
-    // Administration is Admin-only, matching RequireRole on those pages — a
-    // Manager following the link would only be redirected back.
-    ...(hasRole(user, ROLES.ADMIN)
-      ? [
-          { href: "/admin/users", label: "Users", icon: Users },
-          { href: "/admin/settings", label: "Settings", icon: Settings },
-        ]
-      : []),
-  ];
+  /**
+   * Where "home" is. Normally the dashboard for the highest role held.
+   *
+   * A flagged account holds no roles, so dashboardPathForRole(null) returns
+   * "/login" — and /login is not behind RequireAuth, so following it lands them
+   * on the sign-in form while their session is still live, which reads as having
+   * been signed out. They have exactly one page, so point at it.
+   */
+  const homeHref = user.mustChangePassword
+    ? "/change-password"
+    : dashboardPathForRole(user.role);
+
+  /**
+   * A flagged account gets one destination, because it HAS one destination:
+   * RequireAuth returns it here from anywhere else. Offering the usual links
+   * would be offering three that bounce straight back, which is the same
+   * "nothing works and nothing says why" this whole path exists to remove.
+   */
+  const navItems = user.mustChangePassword
+    ? [{ href: "/change-password", label: "Change password", icon: KeyRound }]
+    : [
+        { href: homeHref, label: "Dashboard", icon: LayoutDashboard },
+        { href: "/work-orders", label: "Work Orders", icon: ClipboardList },
+        { href: "/notifications", label: "Notifications", icon: Bell },
+        // Administration is Admin-only, matching RequireRole on those pages — a
+        // Manager following the link would only be redirected back.
+        ...(hasRole(user, ROLES.ADMIN)
+          ? [
+              { href: "/admin/users", label: "Users", icon: Users },
+              { href: "/admin/settings", label: "Settings", icon: Settings },
+            ]
+          : []),
+      ];
 
   const initials = user.name
     ?.split(" ")
@@ -109,7 +129,7 @@ export default function AppShell({ children }) {
         }`}
       >
         <div className="mb-6 flex items-center justify-between gap-2 px-2">
-          <Link href={dashboardPathForRole(user.role)} className="flex items-center gap-2.5">
+          <Link href={homeHref} className="flex items-center gap-2.5">
             <Logo size={30} variant="light" />
             <div>
               <div className="text-[15.5px] font-extrabold leading-none text-white">SI</div>
@@ -183,7 +203,7 @@ export default function AppShell({ children }) {
                 the mark already says, so it is the first thing to go when the
                 row is short of room — below `xs` the logo stands alone. */}
             <Link
-              href={dashboardPathForRole(user.role)}
+              href={homeHref}
               className="flex min-w-0 flex-shrink-0 items-center gap-2 lg:hidden"
               aria-label="SI — Service Inside"
             >
