@@ -823,12 +823,37 @@ with the querying user's privileges**. Revoking `si_signed_in()` would break ten
 Measured 2026-08-20, migrations 0001-0029: 54 functions, 28 SECURITY DEFINER, **zero**
 without a pinned `search_path`; 23 tables, all RLS-enabled; no views. The dashboard advisor
 agreed — no issues, warnings and info only. 0030, 0031 and 0033 add eight more functions, all
-SECURITY DEFINER with `search_path` pinned and `revoke all ... from public, anon`; **0031, 0033
-and 0034 have not been past the advisor yet.** 0033's three are revoked from `authenticated`
-too, since all three are trigger bodies with no caller in the app. 0034 adds none — it replaces
-0033's stamp function and both dashboard functions in place, and re-issues their grants, which
-it has to: a later `create or replace` resets options an earlier `alter` set, the same trap
-described above. One grant is deliberate and worth not "fixing" blindly:
+SECURITY DEFINER with `search_path` pinned and `revoke all ... from public, anon`. 0033's three
+are revoked from `authenticated` too, since all three are trigger bodies with no caller in the
+app. 0034 adds none — it replaces 0033's stamp function and both dashboard functions in place,
+and re-issues their grants, which it has to: a later `create or replace` resets options an
+earlier `alter` set, the same trap described above.
+
+**Advisor run 2026-08-20 after 0034: 0 errors, 7 warnings, 2 info — none of them from 0031,
+0033 or 0034.** Five warnings are the deliberate `authenticated` grants on SECURITY DEFINER
+functions (`si_can_delete_work_orders`, `si_is_test_account`, `si_reference_is_retired`,
+`si_refresh_dashboard_stats`, `si_set_user_roles`) — the first three because a policy
+expression evaluates with the caller's privileges, the last two because they are RPCs the
+client calls and they re-check the caller internally. That warning class will always fire on
+this schema; read the 0007 header before acting on it. One is `Leaked Password Protection
+Disabled`, which is auth configuration and not in any file.
+
+**And one is a function that exists in the database and in no migration: `si_rank(p_role
+si_role, p_protected boolean)`, with `search_path` unset.** It appears nowhere in this
+repository — not a migration, not a client call, only in the generated `database.types.ts`,
+which is read from the live schema. It is a superseded duplicate of `si_account_rank(text,
+boolean)`: same semantics, enum argument instead of text, and nothing calls it, because the
+rank chain in 0015 goes through `si_role_rank()`. Almost certainly drafted in the dashboard
+while 0015 was being written and never captured. Left in place rather than dropped blind — its
+body has never been read, so "nothing calls it" is established from the files and not from the
+database.
+
+That is worth more than the finding itself: **it is a live demonstration of why the static
+audit above is not a substitute for the advisor.** Replaying the migrations reports zero
+unpinned functions and is right about every function the files describe. The advisor found a
+64th. This has happened before on this project and is what 0013 exists to fix.
+
+One grant is deliberate and worth not "fixing" blindly:
 `si_reference_is_retired(text, text)` keeps EXECUTE for `authenticated`, and its only callers
 are SECURITY DEFINER triggers, so it could be revoked — it discloses nothing the six tables'
 own SELECT policies do not. What the files still cannot show, and the advisor can:
