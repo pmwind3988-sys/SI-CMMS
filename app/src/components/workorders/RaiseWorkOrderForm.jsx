@@ -6,7 +6,7 @@ import { ArrowLeft, Factory, Image as ImageIcon, Video, X, Sparkles, AlertTriang
 import { useAuth } from "../../context/AuthContext";
 import { createWorkOrder, updateWorkOrderFields, addAttachment } from "../../lib/workOrders";
 import { useReferenceData, includingCurrent } from "../../lib/referenceData";
-import { createDepartment } from "../../lib/admin";
+import { createAsset, createDepartment } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
 import Field, { inputClass } from "../ui/Field";
 import Combobox from "../ui/Combobox";
@@ -53,6 +53,7 @@ export default function RaiseWorkOrderForm({ existing }) {
   const [assetId, setAssetId] = useState(existing?.asset_id || "");
   const [area, setArea] = useState(existing?.area || "");
   const [creatingDept, setCreatingDept] = useState(false);
+  const [creatingAsset, setCreatingAsset] = useState(false);
   const [type, setType] = useState(existing?.type || "breakdown");
   const [complaint, setComplaint] = useState(existing?.description || "");
   const [priority, setPriority] = useState(existing?.priority || "");
@@ -151,6 +152,26 @@ export default function RaiseWorkOrderForm({ existing }) {
    */
   function handleDepartmentChange(id) {
     setDepartmentId(id);
+  }
+
+  /**
+   * Register a machine that isn't in the list (migration 0032). Selected right
+   * away rather than waiting for Realtime to deliver the row, same as the
+   * department below — and it sets the department too, because handleAssetChange
+   * is bypassed here and the pair would otherwise disagree on a brand new asset.
+   */
+  async function handleCreateAsset(name) {
+    setCreatingAsset(true);
+    setSubmitError(null);
+    try {
+      const created = await createAsset({ name, departmentId });
+      setAssetId(created.id);
+      if (created.department_id) setDepartmentId(created.department_id);
+    } catch (e) {
+      setSubmitError(describeError(e, "Couldn't register that equipment."));
+    } finally {
+      setCreatingAsset(false);
+    }
   }
 
   async function handleCreateDepartment(name) {
@@ -276,11 +297,18 @@ export default function RaiseWorkOrderForm({ existing }) {
                 value={assetId}
                 onChange={handleAssetChange}
                 options={assetOptions}
-                loading={!ready}
+                loading={!ready || creatingAsset}
+                loadingLabel={creatingAsset ? "Adding…" : "Loading…"}
                 placeholder="Search equipment by name, asset code or department…"
                 emptyLabel="No equipment registered yet"
                 noMatchLabel="No equipment matches that"
+                onCreate={handleCreateAsset}
+                createLabel="Add equipment"
               />
+              <p className="mt-1.5 text-[11.5px] text-ink-soft">
+                Can&apos;t find the machine? Pick its department below, then type the name here to
+                register it.
+              </p>
             </Field>
 
             <Field
@@ -428,12 +456,34 @@ export default function RaiseWorkOrderForm({ existing }) {
             )}
 
             <Field label="Estimated downtime" required hint={errors.downtime}>
+              {/* Both controls are wrapped rather than sized directly, because
+                  inputClass already carries `w-full` and Tailwind emits `.w-full`
+                  after `.w-32` — so `${inputClass} w-32` lost, the select took the
+                  full width, and the number input (flex-basis 0) collapsed to its
+                  min-content size: a box too narrow to read a two-digit number in.
+                  Sizing the wrappers leaves each control filling its own box. */}
               <div className="flex gap-2">
-                <input type="number" min="0" value={downtimeValue} onChange={(e) => setDowntimeValue(e.target.value)} placeholder="e.g. 4" className={`${inputClass} flex-1`} />
-                <select value={downtimeUnit} onChange={(e) => setDowntimeUnit(e.target.value)} className={`${inputClass} w-32`}>
-                  <option value="hours">Hours</option>
-                  <option value="days">Days</option>
-                </select>
+                <div className="min-w-0 flex-1">
+                  <input
+                    type="number"
+                    min="0"
+                    value={downtimeValue}
+                    onChange={(e) => setDowntimeValue(e.target.value)}
+                    placeholder="e.g. 4"
+                    className={inputClass}
+                  />
+                </div>
+                <div className="w-32 flex-none">
+                  <select
+                    value={downtimeUnit}
+                    onChange={(e) => setDowntimeUnit(e.target.value)}
+                    className={inputClass}
+                    aria-label="Downtime unit"
+                  >
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                </div>
               </div>
             </Field>
 

@@ -430,6 +430,61 @@ export async function createDepartment({ name, plantId }) {
  * The caller is deleteReferenceRow("departments", id) in lib/referenceData.js.
  */
 
+/**
+ * Register a piece of equipment, for the "+ Add new" row in the raise form's
+ * equipment picker.
+ *
+ * The counterpart of createDepartment() above, and an INSERT for the same
+ * reason: migration 0032 opened assets_insert to any signed-in user, and an
+ * upsert would let a Requester silently rewrite an existing machine's name by
+ * guessing its id. A collision has to come back as a collision. (RLS would
+ * refuse the update branch anyway — assets_update is still supervisor and
+ * above — but that would surface as a policy error rather than "that already
+ * exists".)
+ *
+ * `department_id` is `not null`, so a machine cannot be registered before the
+ * department is known. The raise form asks for equipment first and fills the
+ * department in from it, which is the right order for the 99% case and exactly
+ * backwards for this one — hence the explicit message rather than a constraint
+ * violation.
+ */
+export async function createAsset({ name, departmentId, plantId }) {
+  const clean = String(name || "").trim();
+  if (!clean) throw new Error("Give the machine a name.");
+  if (!departmentId) {
+    throw new Error(
+      `Choose the department below first, then add "${clean}" — a machine has to belong to one.`
+    );
+  }
+
+  const slug = clean.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 20);
+  if (!slug) throw new Error("That name has no letters or numbers in it.");
+
+  const { data, error } = await supabase
+    .from("assets")
+    .insert({
+      id: `AST-${slug}`,
+      asset_code: slug,
+      name: clean,
+      department_id: departmentId,
+      criticality: "medium",
+      plant_id: plantId || "PLT001",
+      status: "active",
+    })
+    .select("id, asset_code, name, category, department_id, criticality, status")
+    .single();
+
+  // asset_code carries no unique constraint, so 23505 can only be the id — which
+  // is derived from the name, so it means exactly one thing to the person typing.
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error(`"${clean}" is already registered — pick it from the list instead.`);
+    }
+    throw error;
+  }
+  return data;
+}
+
 export async function upsertAsset({ id, assetCode, name, departmentId, criticality, category, plantId, status }) {
   const { error } = await supabase.from("assets").upsert(
     {

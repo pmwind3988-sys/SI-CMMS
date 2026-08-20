@@ -377,9 +377,23 @@ generic "try again" copy.
 Statuses, priorities, SLA, impact levels, WO types, safety severities, departments and
 equipment are **editable tables**, not literals. The first six are keyed on Postgres enums, so
 migration 0009 grants UPDATE only — they can be relabelled but not added to. Departments and
-assets can be added freely and appear on the raise form immediately. Since 0019 *any* signed-in
-user may insert a department, because the raise form offers "+ Add new" in its picker; renaming
-and deleting one stay Manager+/Admin, which is the half that could damage existing records.
+assets can be added freely and appear on the raise form immediately.
+
+**Any signed-in user may register a department (0019) or a piece of equipment (0032)**, because
+the raise form offers "+ Add new" in both pickers — the person on the floor with a fault to
+report is the one who notices the machine or the bay is missing. Insert only; the other verbs
+stay where they were (departments: update Manager+, delete Admin; assets: update Supervisor+,
+delete Admin). **Renaming is the dangerous half**: `id` is what `work_orders` reference, and
+`name` is denormalised onto `work_orders.asset_name`, so a rename rewrites how existing records
+read. Removing is 0031's business.
+
+Both write paths are `.insert()`, never `.upsert()`. PostgREST turns an upsert into
+`insert … on conflict do update`, which needs the UPDATE policy too — so RLS already refuses
+it — but stating it as an insert is what makes a collision come back as *"that already
+exists"* rather than as a policy error. `createAsset()` also refuses before it starts if no
+department is chosen: `assets.department_id` is `not null`, and the raise form asks for
+equipment *first* and fills the department in from it, which is right for every other case and
+exactly backwards for this one.
 
 ### Retiring reference data (migration 0031)
 
