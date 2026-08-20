@@ -425,9 +425,53 @@ The `attachments` bucket is private. `attachments.file_url` stores the **object 
 `listenAttachments()` mints a one-hour signed URL on read. 50MB cap with a mime allowlist,
 enforced by the bucket.
 
+### Deleting user accounts (migration 0030)
+
+The second irreversible operation in the module, and **Superuser-only** — not a
+`role_permissions` toggle like work-order delete, because a toggle is a thing that can be
+flipped.
+
+**The audit trail is the boundary, and it already was.** Six of the ten foreign keys onto
+`users(id)` are `ON DELETE NO ACTION` — `work_orders.requester_id` / `assigned_to_id` /
+`verified_by`, `work_order_history.actor_id`, `comments.author_id`,
+`attachments.uploaded_by_id` — so Postgres refuses to delete anyone who has done anything.
+0030 added **no cascades**; it made the refusal legible. `si_guard_user_delete` counts the
+references and raises a sentence, because `describeError()` surfaces server messages
+verbatim so a trigger can be the copy. Measured: *"Arun Kumar has 1 work order, 6 history
+rows, 1 comment. Deleting the account would break that audit trail, so it is refused.
+Deactivate the account instead."* Deactivation stays the answer for a person who has worked.
+
+**`admin-users` deletes `public.users` as the CALLER, not on the service role.** Three
+things depend on it: `users_delete` stays the boundary (so the rank rule still stops peer
+deletion and still protects the rank-6 Superuser), the refusal message reaches the right
+person, and `z_archive_deleted_user` can stamp `deleted_by` from `auth.uid()` — which is
+NULL on a service-role connection, so the alternative files an audit row recording nobody.
+`auth.users` goes second, on the service role, because only the Admin API reaches it.
+Verified: a real deletion recorded `deleted_by_name: SI Superuser`, and the `auth.users`
+row was gone with no orphan left behind.
+
+`public.users.id` references `auth.users(id) on delete cascade`, so the reverse order would
+also work and would even be atomic. It is deliberately unused: the cascade arrives as the
+service role, so the archive records nobody and `si_guard_test_account`’s null-uid early
+return skips the test-account check entirely.
+
+`user_deletions` hides test-account deletions from non-Superusers. Without that clause it
+would hand an Administrator the name of every fixture ever removed — the same side-door
+leak 0029 closed on the technicians roster. Measured as an ordinary Administrator: `[]`,
+while the row is there.
+
+**0030 also closed a hole 0028 left.** 0028 amended `users_select` and `users_update` and
+not `users_delete`, and declared its guard `before insert or update`. A DELETE policy’s
+`USING` clause is evaluated independently of the SELECT policy, so hiding a row never
+stopped anyone deleting it, and the rank rule did not cover fixtures because they rank <= 4.
+Not theoretical: Vikram Shah is a fixture with zero references, so any Administrator
+holding his uuid could have destroyed him. The other fixtures were shielded by the foreign
+keys — by luck, not design. The DELETE branch sits **above** the mark check, because a
+DELETE changes no columns and would otherwise fall through every test and be allowed.
+
 ### Deleting work orders (migration 0018)
 
-The only irreversible operation in the module, and the only capability that is **granted
+Irreversible, like deleting an account above, but the only capability here that is **granted
 rather than inherent**. `role_permissions` holds one row per `si_role` value; only a
 Superuser may write it (`role_permissions_update` is `using (si_is_superuser())`), and it
 ships with Admin allowed and everyone else not — where 0002 left it. Admin → Settings →
@@ -455,9 +499,13 @@ rejected write.
 Three mechanisms by need: plain UPDATE for profile fields and status (column guard limits
 non-admins to their own name/phone/photo); RPC `si_set_user_roles` for role changes (also
 enforces supervisor department scoping); Edge Function `supabase/functions/admin-users` for
-password changes, **sign-in address changes** and account creation, since all three write
-`auth.users` and need the service-role key. That function re-checks the caller is an active
-admin *from the database*, not from the JWT claim.
+password changes, **sign-in address changes**, account creation and **account deletion**,
+since all four write `auth.users` and need the service-role key. That function re-checks the
+caller is an active admin *from the database*, not from the JWT claim.
+
+`delete_user` is the odd one out and is described under migration 0030 above: it uses the
+service role for `auth.users` only, and deletes the `public.users` row with the *caller’s*
+token so RLS, the history guard and the archive’s `deleted_by` all still work.
 
 **Setting somebody else's password, and changing somebody else's sign-in address, are
 both Superuser-only** (migration 0025 onwards). The rank rule was not enough: it stopped
@@ -477,6 +525,16 @@ nothing about it puts a credential in the sender's hands. It refuses a placehold
 **loudly**, because `resetPasswordForEmail` succeeds against `tech.arun@example.com` and
 delivers nothing — and an administrator told it worked believes the person has been
 helped. It needs `SITE_URL` set as an Edge Function secret and refuses to send without it.
+
+**End-to-end delivery was proven on 2026-08-20** and is no longer a question mark: `SITE_URL`
+and `NEXT_PUBLIC_SITE_URL` are `https://si-cmms.vercel.app`,
+`https://si-cmms.vercel.app/reset-password/` is in Authentication → URL Configuration →
+Redirect URLs, and a link sent to a real `@pmw-group.com` address arrived, opened
+`/reset-password` and set a new password. Everything before that had been *configured* for
+a while; nothing had ever been *delivered*, and `ok: true` from the function only means
+Supabase accepted the request. The built-in sender is still rate-limited to a handful of
+messages an hour and drops the rest, so a single silent failure is not evidence of a broken
+configuration.
 
 `create_user` marks the new account as owing a password change, for the same reason
 `set_password` does: the password was chosen by whoever created the account.
@@ -592,12 +650,3 @@ has happened on this project, and is what 0013 exists to fix.
   accounts the *only* credential route is the Superuser issuing a temporary password. That
   is the accepted trade-off of Superuser-only resets working as designed, but it is more
   absolute than intended until real addresses are set. Not a code gap; a data one.
-- `send_recovery_link` is fully configured but **has never delivered a message**. `SITE_URL`
-  and `NEXT_PUBLIC_SITE_URL` are both `https://si-cmms.vercel.app`, and
-  `https://si-cmms.vercel.app/reset-password/` is listed under Authentication → URL
-  Configuration → Redirect URLs (added 2026-08-20), so nothing is known to be missing. One
-  thing is still unconfirmed and cannot be confirmed except by sending: that the project's
-  SMTP actually delivers. The built-in sender is rate-limited to a handful of messages an
-  hour and drops the rest, and `ok: true` from the function only means Supabase accepted the
-  request. Amirul's is the only account with a real address, so the first real send is also
-  the first test.
