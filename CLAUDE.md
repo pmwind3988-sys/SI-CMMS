@@ -74,6 +74,8 @@ Components **never import `supabase` directly**. They call `listenX(args, cb, on
 | `lib/notifications.js` | in-app notifications |
 | `lib/osNotifications.js` | presenting one of those in the OS — status bar / notification centre |
 | `lib/dashboard.js` | the two precomputed stat rows |
+| `lib/datetime.js` | Malaysian dates/times, and the date-range presets |
+| `lib/exportWorkOrders.js` | shaping the Excel export (pure; no Supabase, no React) |
 | `lib/referenceData.js` | `ReferenceDataProvider` / `useReferenceData()` |
 | `lib/admin.js` | user and reference-data administration |
 | `lib/errors.js` | `describeError()` |
@@ -337,6 +339,140 @@ included.
 same door `si_protected_override()` opens for system writes, and it has the same shape of risk:
 it is safe only because a null uid means a service-role connection, which has already been
 authenticated as trusted somewhere else.
+
+### Test data and the dashboard (migrations 0033, 0034)
+
+**The rule, and it is one sentence: statistics exclude test data; lists show everything,
+tagged.**
+
+`si_compute_dashboard_stats()` aggregated `from work_orders` with no predicate at all, and
+`npm run seed:demo` walks one work order raised by `requester@example.com` and assigned to
+`tech.arun@example.com` — both fixtures — the whole way to `closed`. So it fed
+`completed_today`, both averages, `monthly_work_orders`, `department_breakdown`,
+`machine_breakdown` and `technician_performance`, which groups by `assigned_to_name`: the
+fixture's **name**, rendered on the Manager and Admin charts. The same side door 0029 closed
+on the technicians roster, reopened where nobody thought to look.
+
+**`work_orders.is_test_data` keys on the requester, not on either party.** 0033 stamped it
+`requester or assignee` and that was too broad by one word — measured on the live project it
+caught a real work order Amirul had raised and merely assigned to a fixture, and since the
+only other row was the demo seed, every card went to zero and every chart to `[]`. **0034
+narrows it**: whether the fault was real is decided by who raised it. The two outputs whose
+*subject* is the technician — `technician_performance` and `active_technicians` — additionally
+test `si_is_test_account(assigned_to_id)`, because those credit a person. Volume, department
+and machine breakdowns, open counts and SLA all keep the row.
+
+Recorded rather than hidden: the two timing averages still include a row a fixture worked,
+because they measure the work order's journey rather than crediting anyone. There is no
+reading of that pair where both halves are right.
+
+**Not `si_dummy_flags`.** The dashboard already carries a demo-accounts warning card built on
+it, and reusing it here would have been the tempting thing — but that column is a *heuristic*
+(placeholder email, still on the seeded password, profile never edited). A real person who had
+not yet changed the password they were given would have had their work silently dropped out of
+every statistic. 0028's mark is deliberate and set only by a Superuser.
+
+**A denormalised column rather than a join, because the client cannot do the join.** The
+aggregate is SECURITY DEFINER and could read `users` directly; `users_select` hides a fixture's
+row from everyone but the Superuser, so no client-side filter is even expressible. That is what
+`RoleDashboard` needed — it computes the Supervisor's cards from `listenWorkOrderList()`, whose
+scope is `() => true` since 0019 — and what the export needed. One column answers all three.
+
+Three consequences worth knowing:
+
+- **`si_dashboard_card_rows()` changed in the same migration, necessarily.** It exists (0012)
+  so a card and its drill-down share one definition of "open"; adding the predicate to the
+  aggregate alone reproduces exactly the disagreement it was written to prevent. Its
+  `active_technicians` branch is also where a fixture's name escaped despite 0028: `left join
+  users u` nulls for a row the caller may not see, and the coalesce falls through to
+  `max(w.assigned_to_name)`, the denormalised copy.
+- **The stamp trigger fires on every UPDATE, not `update of requester_id, assigned_to_id`.**
+  RLS grants *rows*, not columns, so a column list would leave `update work_orders set
+  is_test_data = false` unguarded — and `updateWorkOrderFields()` forwards an arbitrary
+  `fields` object, so that is a live path. It is named `c_stamp_work_order_test_data` because
+  Postgres fires BEFORE triggers alphabetically and 0003's `b_stamp_work_order` **clears
+  `assigned_to_id` on a decline**; running before it would read the technician being declined
+  away.
+- **`work_orders_select` is untouched.** A demo work order that vanished from the list would be
+  one nobody could find to delete, so `WorkOrderList` tags it "Demo" instead. `RoleDashboard`
+  drops test rows from the single array its cards, recent list and drill-downs all share —
+  filtering the counts but not the rows behind them would be the 0012 bug again.
+
+**A deleted work order used to sit in the charts for up to fifteen minutes.** Nothing was wrong
+with the arithmetic: `deleteWorkOrder()` hard-deletes (0018) and `stats` is a full rebuild, so a
+*recomputed* aggregate was already right — but only pg_cron recomputed, every fifteen minutes.
+`work_orders_recompute_stats_delete` is `after delete … for each statement` (once per statement,
+not once per row). It has to be server-side: `si_refresh_dashboard_stats()` re-checks for
+Manager/Admin, and 0018 lets a Superuser grant deletion to a Supervisor, who would then delete a
+work order and be refused the refresh.
+
+### Dates and times
+
+**`lib/datetime.js` pins `Asia/Kuala_Lumpur`. Everything older in the app does not.** Every
+other date in the codebase is `toLocaleString(undefined, …)` — the *device's* locale and zone,
+with no year — so one work order reads `8/12, 2:56 PM` on a laptop set to US English and
+`12/08, 14:56` on a British one. The plant is in Malaysia; plant time is the only correct
+answer. The old call sites are unchanged and still wrong in that way; new work should use this
+module.
+
+Two things there look like over-engineering and are not:
+
+- **Display strings are assembled from `formatToParts`, not handed to `toLocaleString("en-MY")`.**
+  `en-MY` is not guaranteed to exist — Node without full ICU falls back to en-US and silently
+  returns MM/DD/YYYY. A date that reads `08/12/2026` in one place and `12/08/2026` in another is
+  worse than either, because nothing looks broken. Only the *timezone* is delegated to Intl.
+- **Range boundaries are computed in Kuala Lumpur.** `new Date().setHours(0,0,0,0)` is the
+  obvious "start of today" and it is wrong here: on a UTC browser it lands at 08:00 KL, so a job
+  raised at 7am files under yesterday and "Today" under-reports the morning shift.
+
+`to` is **exclusive** everywhere, paired with `.lt()` and never `.lte()`. An inclusive
+`23:59:59` end drops anything in that last second, and drops every row whose timestamp carries
+milliseconds — which every `now()` default does.
+
+`toExcelDate()` shifts an instant so its UTC fields hold the KL reading. An Excel serial carries
+no timezone; handing it the raw instant makes every cell display UTC, eight hours adrift, on a
+column that still sorts correctly and therefore never looks wrong.
+
+### Exporting work orders
+
+`lib/exportWorkOrders.js` builds a four-sheet workbook — **Work Orders** (one row per work
+order, 50 columns), **Status History**, **Comments**, **Export Info** — via
+`write-excel-file`. Everything above `downloadWorkOrderExport()` is pure: plain data in, plain
+arrays out, no Supabase and no React, which is what makes it testable in Node, the only place
+this repo can run a test. Reference-data lookups arrive as a `labels` argument.
+
+`write-excel-file`, not `xlsx`: npm's `xlsx` is frozen at 0.18.5 because SheetJS left the
+registry, and carries the prototype-pollution and ReDoS advisories. Its API is v4's
+`writeXlsxFile(sheets).toFile(name)` — v3 took `{ fileName }` as an option, and that call still
+*succeeds* against v4 while writing no file at all. The import is dynamic, so the writer sits in
+its own 84KB chunk rather than in the bundle every user downloads.
+
+Three details in the shaping:
+
+- **Lifecycle timestamps come from `work_order_history`, first occurrence of each status.** A
+  real trail is not monotonic — reassignment produces several `assigned` rows and statuses do go
+  backwards. `verified` exists only in the trail, never as a resting state, which is the whole
+  reason the lifecycle is read from history rather than from the work order's own columns.
+  `verified_by` is a uuid with no name on the row; the name comes from the `verified` history
+  row's actor.
+- **Durations are hours as numbers with the unit in the header**, so they average and pivot
+  instead of being text that merely looks numeric.
+- **Attachments are a count, not a sheet of links.** The bucket is private behind one-hour
+  signed URLs (0005), so any URL written into a saved workbook is dead before anyone opens it.
+
+`fetchWorkOrdersForExport()` in `lib/workOrders.js` is deliberately **not** capped at the list's
+300 rows, and paginates with `.range()` until a short page: Supabase caps a response at 1000
+rows *silently*, and ten history rows per work order overflows that at three hundred work
+orders. It shares `scopedWorkOrderQuery()` with `listenWorkOrderList` so the file cannot drift
+from the list it was taken from, and the priority/status/search predicate is defined once in
+`WorkOrderList` and reused by both. A fixture's work order is **included and marked** in a
+`Test Data` column rather than dropped — an export is a record, and silently omitting rows from
+a record is worse than a column Excel's autofilter clears in one click.
+
+The date filter narrows **server-side**, which is a correctness fix rather than a performance
+one: the system-wide branch is `.limit(300)` on newest-first, so filtering a loaded array for
+"January" would search the newest 300 rows and report whichever few of January's were among
+them.
 
 ### Status flow
 
@@ -686,9 +822,13 @@ with the querying user's privileges**. Revoking `si_signed_in()` would break ten
 
 Measured 2026-08-20, migrations 0001-0029: 54 functions, 28 SECURITY DEFINER, **zero**
 without a pinned `search_path`; 23 tables, all RLS-enabled; no views. The dashboard advisor
-agreed — no issues, warnings and info only. 0030 and 0031 add five more functions, all
-SECURITY DEFINER with `search_path` pinned and `revoke all ... from public, anon`; **0031 has
-not been past the advisor yet.** One grant in it is deliberate and worth not "fixing" blindly:
+agreed — no issues, warnings and info only. 0030, 0031 and 0033 add eight more functions, all
+SECURITY DEFINER with `search_path` pinned and `revoke all ... from public, anon`; **0031, 0033
+and 0034 have not been past the advisor yet.** 0033's three are revoked from `authenticated`
+too, since all three are trigger bodies with no caller in the app. 0034 adds none — it replaces
+0033's stamp function and both dashboard functions in place, and re-issues their grants, which
+it has to: a later `create or replace` resets options an earlier `alter` set, the same trap
+described above. One grant is deliberate and worth not "fixing" blindly:
 `si_reference_is_retired(text, text)` keeps EXECUTE for `authenticated`, and its only callers
 are SECURITY DEFINER triggers, so it could be revoked — it discloses nothing the six tables'
 own SELECT policies do not. What the files still cannot show, and the advisor can:
@@ -722,7 +862,21 @@ has happened on this project, and is what 0013 exists to fix.
 - Single plant: `plant_id` is threaded everywhere but everything seeds to `PLT001` and no UI
   exposes plant selection.
 - `@capacitor/cli` pulls a `tar` version with a critical advisory; fixing it needs a Capacitor
-  6 → 8 major upgrade.
+  6 → 8 major upgrade. It is the only advisory in the tree — `write-excel-file` brings one
+  transitive dependency (`fflate`) and neither is flagged.
+- **Dates outside `lib/datetime.js` still render in the device's locale and timezone**, with no
+  year: `notifications/page.jsx`, `DashboardModule`, `NotificationBell`, `CommentsPanel` and
+  `StatusTimeline` all call `toLocaleString(undefined, …)`. The export, the work order list's
+  Raised column and the date filter are pinned to `Asia/Kuala_Lumpur`; those five are not, so
+  the same timestamp can read differently on two screens of the same app. Mechanical to fix —
+  swap the call for `fmtDateTimeMY` — and deliberately left alone here to keep this change to
+  what was asked for.
+- The dashboard's two timing averages (`avg_response_minutes`, `avg_repair_minutes`) still
+  include work a fixture performed on a genuinely-raised work order — only
+  `technician_performance` and `active_technicians` exclude a fixture assignee (migration 0034).
+  Signing into a fixture and closing a real work order in four minutes puts four minutes in the
+  average. Excluding it would instead lose a real resolution from the timing stats; 0034's
+  header records why neither answer is wholly right.
 - **Most accounts cannot receive email.** The seeded ones are all `@example.com`, which
   `si_is_placeholder_email` correctly refuses to send recovery links to — so for those
   accounts the *only* credential route is the Superuser issuing a temporary password. That

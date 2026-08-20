@@ -190,8 +190,42 @@ export function listenWorkOrder(woId, cb, onError) {
  * chain of exclusive branches — a Requester+Technician sees what they raised
  * AND what they were assigned, which the old if/else could not express.
  */
-export function listenWorkOrderList(currentUser, cb, onError) {
-  const base = () => supabase.from("work_orders").select(WO_SELECT).order("created_at", { ascending: false });
+export function listenWorkOrderList(currentUser, cb, onError, range = null) {
+  const run = () => {
+    const q = scopedWorkOrderQuery(currentUser, range);
+    // Display cap. The export deliberately does not share it — see
+    // fetchWorkOrdersForExport.
+    return q.canScopeToSelf ? q.query : q.query.limit(LIST_DISPLAY_LIMIT);
+  };
+  return liveQuery({ table: "work_orders", run, cb, onError });
+}
+
+/** How many rows the list renders at once. Not a cap on what can be exported. */
+const LIST_DISPLAY_LIMIT = 300;
+
+/**
+ * The role scope and the date range, in one place.
+ *
+ * Extracted from listenWorkOrderList so the export cannot drift from the list it
+ * was taken from. That is the same argument si_dashboard_card_rows() makes about
+ * the dashboard drill-down: a second definition of the row set is how a total
+ * starts disagreeing with the rows behind it.
+ *
+ * The date range is applied HERE, in the query, rather than by filtering the
+ * loaded array. That is not a performance preference, it is a correctness one:
+ * the system-wide branch is capped at LIST_DISPLAY_LIMIT rows of newest-first, so
+ * filtering client-side for "January" would search the newest 300 rows and report
+ * whichever few of January's happened to be among them. Narrowing server-side
+ * makes the cap apply inside the range instead.
+ *
+ * `to` is EXCLUSIVE — `.lt()`, never `.lte()`. See dateRangePreset() in
+ * lib/datetime for why an inclusive end silently drops rows.
+ */
+function scopedWorkOrderQuery(currentUser, range) {
+  let query = supabase.from("work_orders").select(WO_SELECT).order("created_at", { ascending: false });
+
+  if (range?.from) query = query.gte("created_at", range.from);
+  if (range?.to) query = query.lt("created_at", range.to);
 
   // Supervisor, Manager and Admin are all system-wide as of 0019, so holding any
   // of them means "everything" and no narrower filter can apply on top.
@@ -200,20 +234,118 @@ export function listenWorkOrderList(currentUser, cb, onError) {
     hasRole(currentUser, ROLES.MANAGER) ||
     hasRole(currentUser, ROLES.ADMIN);
 
-  let run;
-  if (systemWide) {
-    run = () => base().limit(300);
-  } else {
-    const clauses = [];
-    if (hasRole(currentUser, ROLES.REQUESTER)) clauses.push(`requester_id.eq.${currentUser.uid}`);
-    if (hasRole(currentUser, ROLES.TECHNICIAN)) clauses.push(`assigned_to_id.eq.${currentUser.uid}`);
-    // No usable role: show nothing rather than everything. RLS would return an
-    // empty set anyway; this makes the client agree with it instead of asking
-    // for rows it will never be given.
-    run = clauses.length ? () => base().or(clauses.join(",")) : () => base().limit(0);
+  if (systemWide) return { query, canScopeToSelf: false };
+
+  const clauses = [];
+  if (hasRole(currentUser, ROLES.REQUESTER)) clauses.push(`requester_id.eq.${currentUser.uid}`);
+  if (hasRole(currentUser, ROLES.TECHNICIAN)) clauses.push(`assigned_to_id.eq.${currentUser.uid}`);
+  // No usable role: show nothing rather than everything. RLS would return an
+  // empty set anyway; this makes the client agree with it instead of asking
+  // for rows it will never be given.
+  if (!clauses.length) return { query: query.limit(0), canScopeToSelf: true };
+
+  return { query: query.or(clauses.join(",")), canScopeToSelf: true };
+}
+
+/* ------------------------------------------------------------------
+   EXPORT — the whole record, not the visible page.
+-------------------------------------------------------------------*/
+
+/**
+ * Supabase caps a single response at 1000 rows by default, and does it SILENTLY:
+ * a truncated result is indistinguishable from a complete one. That is the whole
+ * reason this helper exists rather than a plain `.select()`. Ten history rows per
+ * work order means three hundred work orders overflow it, and the export would
+ * quietly lose the tail of the audit trail — the same shape of failure as a
+ * column nothing reads.
+ */
+const PAGE_SIZE = 1000;
+
+/** Chunk size for `.in()` id lists. 100 uuids is roughly 4KB of query string. */
+const ID_CHUNK = 100;
+
+async function fetchAllPages(buildQuery) {
+  const out = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await buildQuery().range(offset, offset + PAGE_SIZE - 1);
+    if (error) throw error;
+    out.push(...(data ?? []));
+    // A short page is the only reliable end-of-data signal PostgREST gives here.
+    if (!data || data.length < PAGE_SIZE) return out;
+  }
+}
+
+function chunk(items, size) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/**
+ * `orderBy` is a parameter and not hardcoded to created_at, because
+ * `attachments` has no created_at column — it stamps `uploaded_at` (migration
+ * 0001). Ordering every child table by the same name would have failed that one
+ * query outright.
+ */
+async function fetchChildRows(table, idColumn, ids, select, { orderBy = "created_at", extraFilter } = {}) {
+  const rows = [];
+  for (const ids_ of chunk(ids, ID_CHUNK)) {
+    const page = await fetchAllPages(() => {
+      let q = supabase.from(table).select(select).in(idColumn, ids_);
+      if (extraFilter) q = extraFilter(q);
+      return q.order(orderBy, { ascending: true });
+    });
+    rows.push(...page);
+  }
+  return rows;
+}
+
+/**
+ * Everything the export needs, for the given role scope and date range.
+ *
+ * Four queries (each paginated), not four per work order: the child tables are
+ * fetched with one `.in()` per chunk of ids.
+ *
+ * Deliberately NOT capped at LIST_DISPLAY_LIMIT. The list renders 300 rows
+ * because rendering more is pointless; an export truncated at 300 would be a
+ * file that silently disagrees with the range printed on its own Export Info
+ * sheet. Whoever presses the button gets the range they asked for.
+ *
+ * No authorization work here, and none needed: RLS scopes work_orders,
+ * work_order_history, comments and attachments independently, so a Requester's
+ * export contains their own work orders and nothing else. The role filters below
+ * exist to use the indexes, exactly as they do on the listener.
+ *
+ * Attachment rows are metadata only — no signed URLs are minted. The workbook
+ * carries a count, because a one-hour signed URL written into a saved file is
+ * dead before anyone opens it.
+ */
+export async function fetchWorkOrdersForExport(currentUser, range = null) {
+  // A fresh query per page: a PostgREST builder is single-use once .range() has
+  // been applied to it, so the scope is rebuilt rather than reused.
+  const workOrders = await fetchAllPages(() => scopedWorkOrderQuery(currentUser, range).query);
+
+  if (!workOrders.length) {
+    return { workOrders: [], history: [], comments: [], attachments: [] };
   }
 
-  return liveQuery({ table: "work_orders", run, cb, onError });
+  const ids = workOrders.map((w) => w.id);
+
+  const [history, comments, attachments] = await Promise.all([
+    fetchChildRows("work_order_history", "work_order_id", ids, "*"),
+    fetchChildRows("comments", "entity_id", ids, "*", {
+      extraFilter: (q) => q.eq("entity_type", "work_order"),
+    }),
+    fetchChildRows(
+      "attachments",
+      "entity_id",
+      ids,
+      "id, entity_id, file_type, file_size_bytes, uploaded_by_role, uploaded_at",
+      { orderBy: "uploaded_at", extraFilter: (q) => q.eq("entity_type", "work_order") }
+    ),
+  ]);
+
+  return { workOrders, history, comments, attachments };
 }
 
 export function listenWorkOrderHistory(woId, cb, onError) {

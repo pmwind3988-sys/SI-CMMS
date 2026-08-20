@@ -1051,6 +1051,7 @@ export type Database = {
           est_downtime_value: number | null
           id: string
           impact: Database["public"]["Enums"]["si_impact"] | null
+          is_test_data: boolean
           permit_required: boolean
           plant_id: string | null
           priority: Database["public"]["Enums"]["si_priority"]
@@ -1095,6 +1096,7 @@ export type Database = {
           est_downtime_value?: number | null
           id?: string
           impact?: Database["public"]["Enums"]["si_impact"] | null
+          is_test_data?: boolean
           permit_required?: boolean
           plant_id?: string | null
           priority: Database["public"]["Enums"]["si_priority"]
@@ -1139,6 +1141,7 @@ export type Database = {
           est_downtime_value?: number | null
           id?: string
           impact?: Database["public"]["Enums"]["si_impact"] | null
+          is_test_data?: boolean
           permit_required?: boolean
           plant_id?: string | null
           priority?: Database["public"]["Enums"]["si_priority"]
@@ -1364,6 +1367,7 @@ export type Database = {
           est_downtime_value: number | null
           id: string
           impact: Database["public"]["Enums"]["si_impact"] | null
+          is_test_data: boolean
           permit_required: boolean
           plant_id: string | null
           priority: Database["public"]["Enums"]["si_priority"]
