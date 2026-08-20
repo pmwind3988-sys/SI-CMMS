@@ -28,7 +28,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import { useReferenceData } from "../../lib/referenceData";
+import { useReferenceData, includingCurrent } from "../../lib/referenceData";
 import {
   listenUsers,
   setUserPassword,
@@ -66,7 +66,16 @@ const MIN_PASSWORD_LENGTH = 8;
 
 export default function UsersAdmin() {
   const { user: me } = useAuth();
-  const { departments } = useReferenceData();
+  /* Both lists (migration 0031). Creating a user offers only departments still
+     in use; editing an existing one has to keep showing theirs even after a
+     retirement, via includingCurrent() inside RoleDialog.
+
+     No server-side guard to match, unlike work_orders: users.department_id
+     routes notifications and groups the dashboard rather than being a value a
+     work order carries, and refusing it would block an Administrator changing
+     somebody's role for the unrelated reason that their department has been
+     retired. */
+  const { departments, activeDepartments } = useReferenceData();
 
   const [users, setUsers] = useState(null);
   const [error, setError] = useState(null);
@@ -338,7 +347,7 @@ export default function UsersAdmin() {
         <RoleDialog
           user={panel.user}
           me={me}
-          departments={departments}
+          departments={includingCurrent(activeDepartments, departments, panel.user?.department_id, "id")}
           onClose={() => setPanel(null)}
           onDone={(msg) => {
             setPanel(null);
@@ -370,7 +379,7 @@ export default function UsersAdmin() {
       {panel?.kind === "create" && (
         <CreateUserDialog
           me={me}
-          departments={departments}
+          departments={activeDepartments}
           onClose={() => setPanel(null)}
           onDone={(msg) => {
             setPanel(null);

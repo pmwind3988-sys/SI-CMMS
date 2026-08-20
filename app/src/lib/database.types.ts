@@ -297,6 +297,7 @@ export type Database = {
           code: string
           created_at: string
           id: string
+          is_active: boolean
           manager_id: string | null
           name: string
           plant_id: string | null
@@ -306,6 +307,7 @@ export type Database = {
           code: string
           created_at?: string
           id: string
+          is_active?: boolean
           manager_id?: string | null
           name: string
           plant_id?: string | null
@@ -315,6 +317,7 @@ export type Database = {
           code?: string
           created_at?: string
           id?: string
+          is_active?: boolean
           manager_id?: string | null
           name?: string
           plant_id?: string | null
@@ -342,6 +345,7 @@ export type Database = {
           code: Database["public"]["Enums"]["si_impact"]
           created_at: string
           description: string | null
+          is_active: boolean
           label: string
           sort_order: number
           suggests_priority: Database["public"]["Enums"]["si_priority"]
@@ -351,6 +355,7 @@ export type Database = {
           code: Database["public"]["Enums"]["si_impact"]
           created_at?: string
           description?: string | null
+          is_active?: boolean
           label: string
           sort_order: number
           suggests_priority: Database["public"]["Enums"]["si_priority"]
@@ -360,6 +365,7 @@ export type Database = {
           code?: Database["public"]["Enums"]["si_impact"]
           created_at?: string
           description?: string | null
+          is_active?: boolean
           label?: string
           sort_order?: number
           suggests_priority?: Database["public"]["Enums"]["si_priority"]
@@ -483,6 +489,7 @@ export type Database = {
           created_at: string
           description: string | null
           id: Database["public"]["Enums"]["si_priority"]
+          is_active: boolean
           label: string
           rank: number | null
           updated_at: string
@@ -493,6 +500,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           id: Database["public"]["Enums"]["si_priority"]
+          is_active?: boolean
           label: string
           rank?: number | null
           updated_at?: string
@@ -503,6 +511,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           id?: Database["public"]["Enums"]["si_priority"]
+          is_active?: boolean
           label?: string
           rank?: number | null
           updated_at?: string
@@ -543,6 +552,7 @@ export type Database = {
           code: string
           created_at: string
           escalates_to_priority: Database["public"]["Enums"]["si_priority"]
+          is_active: boolean
           label: string
           sort_order: number
           updated_at: string
@@ -551,6 +561,7 @@ export type Database = {
           code: string
           created_at?: string
           escalates_to_priority: Database["public"]["Enums"]["si_priority"]
+          is_active?: boolean
           label: string
           sort_order: number
           updated_at?: string
@@ -559,6 +570,7 @@ export type Database = {
           code?: string
           created_at?: string
           escalates_to_priority?: Database["public"]["Enums"]["si_priority"]
+          is_active?: boolean
           label?: string
           sort_order?: number
           updated_at?: string
@@ -888,6 +900,7 @@ export type Database = {
           code: Database["public"]["Enums"]["si_wo_type"]
           created_at: string
           description: string | null
+          is_active: boolean
           label: string
           sort_order: number
           updated_at: string
@@ -896,6 +909,7 @@ export type Database = {
           code: Database["public"]["Enums"]["si_wo_type"]
           created_at?: string
           description?: string | null
+          is_active?: boolean
           label: string
           sort_order: number
           updated_at?: string
@@ -904,6 +918,7 @@ export type Database = {
           code?: Database["public"]["Enums"]["si_wo_type"]
           created_at?: string
           description?: string | null
+          is_active?: boolean
           label?: string
           sort_order?: number
           updated_at?: string
@@ -1280,6 +1295,10 @@ export type Database = {
           p_role: Database["public"]["Enums"]["si_role"]
         }
         Returns: number
+      }
+      si_reference_is_retired: {
+        Args: { p_key: string; p_table: string }
+        Returns: boolean
       }
       si_refresh_dashboard_stats: { Args: never; Returns: Json }
       si_role: { Args: never; Returns: string }

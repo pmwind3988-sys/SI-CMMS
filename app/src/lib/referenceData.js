@@ -26,23 +26,59 @@ import { useAuth } from "../context/AuthContext";
 
 const ReferenceDataContext = createContext(null);
 
-/** table -> { select, order } for the eight reference sets. */
+/**
+ * table -> { select, order } for the eight reference sets.
+ *
+ * `retire` marks the six a Superuser can take out of use (migration 0031) and
+ * says where each one keeps that state. Five carry a plain `is_active` boolean;
+ * equipment uses the `status` column that has existed since 0001, because a
+ * second flag beside it would be a second truth.
+ *
+ * Retired rows are still LOADED. That is the whole point of retiring rather than
+ * deleting: an existing work order's P4 badge still needs to find the row that
+ * says "Low" and "#22C55E". Only the pickers filter, via the active* lists
+ * below.
+ */
 const SOURCES = {
-  departments: { select: "id, name, code, plant_id", order: "name" },
+  departments: {
+    select: "id, name, code, plant_id, is_active",
+    order: "name",
+    retire: { key: "id", flag: "is_active" },
+  },
   assets: {
     select: "id, asset_code, name, category, department_id, criticality, status",
     order: "name",
+    retire: { key: "id", flag: "status", active: "active", retired: "decommissioned" },
   },
-  priorities: { select: "id, code, label, color_hex, rank, description", order: "rank" },
+  priorities: {
+    select: "id, code, label, color_hex, rank, description, is_active",
+    order: "rank",
+    retire: { key: "id", flag: "is_active" },
+  },
   sla: {
     select:
       "id, priority_id, plant_id, ack_target_minutes, ack_target_label, response_target_minutes, response_target_label, resolution_target_minutes, resolution_target_label",
     order: "priority_id",
   },
+  // No `retire` spec, deliberately (0031): nobody picks a status, the workflow
+  // moves a work order through them. Taking one out of use means removing rows
+  // from wo_status_transitions, which is a different change.
   wo_statuses: { select: "code, label, color_hex, sort_order, is_terminal, description", order: "sort_order" },
-  impact_levels: { select: "code, label, suggests_priority, sort_order, description", order: "sort_order" },
-  wo_types: { select: "code, label, sort_order, description", order: "sort_order" },
-  safety_severities: { select: "code, label, escalates_to_priority, sort_order", order: "sort_order" },
+  impact_levels: {
+    select: "code, label, suggests_priority, sort_order, description, is_active",
+    order: "sort_order",
+    retire: { key: "code", flag: "is_active" },
+  },
+  wo_types: {
+    select: "code, label, sort_order, description, is_active",
+    order: "sort_order",
+    retire: { key: "code", flag: "is_active" },
+  },
+  safety_severities: {
+    select: "code, label, escalates_to_priority, sort_order, is_active",
+    order: "sort_order",
+    retire: { key: "code", flag: "is_active" },
+  },
   // Not reference data in the same sense — these are capability grants a
   // Superuser makes (migration 0018), not labels. They ride along here for the
   // reason the whole provider exists: a handful of rows that almost every
@@ -101,6 +137,16 @@ export function ReferenceDataProvider({ children }) {
     const severities = data.safety_severities ?? [];
     const rolePermissions = data.role_permissions ?? [];
 
+    // Retired rows stay in the lists above so every label still resolves; these
+    // are what anything offering a *choice* renders from (migration 0031).
+    const active = (table, rows) => rows.filter((r) => !isRetired(table, r));
+    const activePriorities = active("priorities", priorities);
+    const activeImpacts = active("impact_levels", impacts);
+    const activeTypes = active("wo_types", types);
+    const activeSeverities = active("safety_severities", severities);
+    const activeDepartments = active("departments", departments);
+    const activeAssets = active("assets", assets);
+
     const byKey = (rows, key) => new Map(rows.map((r) => [r[key], r]));
     const departmentMap = byKey(departments, "id");
     const assetMap = byKey(assets, "id");
@@ -145,6 +191,9 @@ export function ReferenceDataProvider({ children }) {
       ready,
       error,
 
+      // Every row, retired included. Settings edits these; every label helper
+      // below resolves against them, which is what keeps an existing work order
+      // showing "Low" and green after P4 has been retired.
       departments,
       assets,
       priorities,
@@ -154,6 +203,15 @@ export function ReferenceDataProvider({ children }) {
       types,
       severities,
       rolePermissions,
+
+      // Still offerable. Anything that asks somebody to choose a value for new
+      // work reads these instead (migration 0031).
+      activeDepartments,
+      activeAssets,
+      activePriorities,
+      activeImpacts,
+      activeTypes,
+      activeSeverities,
 
       /**
        * Does this role hold this capability? Absent rows read false, which is
@@ -172,9 +230,15 @@ export function ReferenceDataProvider({ children }) {
       severityByCode: (code) => severityMap.get(code) ?? null,
       slaForPriority: (priorityId) => slaMap.get(priorityId) ?? null,
 
-      /** Assets filtered to one department — what the raise form's picker needs. */
+      /**
+       * Assets filtered to one department — what the raise form's picker needs.
+       * Retired equipment is left out for the same reason: this answers "what
+       * can this work order be raised against", not "what exists".
+       */
       assetsForDepartment: (departmentId) =>
-        departmentId ? assets.filter((a) => a.department_id === departmentId) : assets,
+        departmentId
+          ? activeAssets.filter((a) => a.department_id === departmentId)
+          : activeAssets,
 
       // Display helpers. Each degrades to the raw code so a missing row is a
       // cosmetic problem, never a crash.
@@ -211,7 +275,13 @@ export function ReferenceDataProvider({ children }) {
           if (ceiling != null) best = best == null ? ceiling : Math.min(best, ceiling);
         }
         if (best == null) return null;
-        return priorities.find((p) => p.rank === best)?.id ?? null;
+        /* Resolved against the ACTIVE priorities only. impact_levels.suggests_priority
+           and safety_severities.escalates_to_priority are foreign keys onto
+           priorities, so they go on pointing at P1 after P1 has been retired —
+           and a suggestion the picker cannot offer would preselect a value the
+           form then rejects. No active priority at that rank means no
+           suggestion, which the form already handles. */
+        return activePriorities.find((p) => p.rank === best)?.id ?? null;
       },
     };
   }, [data, error]);
@@ -228,12 +298,95 @@ export function useReferenceData() {
 }
 
 /* ------------------------------------------------------------------
-   Admin writes. Only relabelling/recolouring is permitted — the tables
-   are keyed on enums, so the set of rows is fixed by the schema and
-   there is deliberately no insert or delete policy (see migration 0009).
+   Admin writes.
+
+   Relabelling and recolouring is what an Administrator gets: the lookup
+   tables are keyed on enums, so the set of rows is fixed by the schema
+   and there is no insert policy (migration 0009).
+
+   Retiring a row and removing one are Superuser-only and were added by
+   migration 0031. Both are enforced there — si_guard_reference_retire()
+   for the flag, the *_delete policies plus si_guard_reference_delete()
+   for the removal. Nothing below is a security check; canRetireReferenceData()
+   in constants.js decides what to SHOW, and the two disagreeing means the
+   user sees an error rather than a silent success.
 -------------------------------------------------------------------*/
 export async function updateReferenceRow(table, keyColumn, keyValue, patch) {
   if (!SOURCES[table]) throw new Error(`${table} is not an editable reference table`);
   const { error } = await supabase.from(table).update(patch).eq(keyColumn, keyValue);
   if (error) throw error;
+}
+
+/** The six tables a Superuser can retire rows in, keyed as in SOURCES. */
+export const RETIRABLE = Object.fromEntries(
+  Object.entries(SOURCES)
+    .filter(([, s]) => s.retire)
+    .map(([table, s]) => [table, s.retire])
+);
+
+/** Is this row out of use? Answered the same way for all six tables. */
+export function isRetired(table, row) {
+  const spec = RETIRABLE[table];
+  if (!spec || !row) return false;
+  return spec.active ? row[spec.flag] !== spec.active : row[spec.flag] === false;
+}
+
+/**
+ * Active rows, plus whichever one is already selected even after it has been
+ * retired.
+ *
+ * The raise form is also the edit form. Filtering a picker to the active rows
+ * would drop the current value out of the `<select>` on a work order raised
+ * before the retirement, and the browser would silently move the selection to
+ * the first remaining option — changing a field nobody touched, on save.
+ */
+export function includingCurrent(activeRows, allRows, currentValue, key) {
+  if (!currentValue || activeRows.some((r) => r[key] === currentValue)) return activeRows;
+  const current = allRows.find((r) => r[key] === currentValue);
+  return current ? [...activeRows, current] : activeRows;
+}
+
+/** Retire a reference row, or restore one. Superuser only — see 0031. */
+export async function setReferenceRowActive(table, keyValue, active) {
+  const spec = RETIRABLE[table];
+  if (!spec) throw new Error(`${table} cannot be retired`);
+
+  const value = spec.active ? (active ? spec.active : spec.retired) : active;
+  const { data, error } = await supabase
+    .from(table)
+    .update({ [spec.flag]: value })
+    .eq(spec.key, keyValue)
+    .select(spec.key);
+
+  if (error) throw error;
+  // RLS refusing an UPDATE changes no rows and raises nothing, so the absence of
+  // a returned row is the refusal. Same pattern as deleteWorkOrder().
+  if (!data?.length) {
+    throw new Error("Only the Superuser can retire or restore reference data.");
+  }
+}
+
+/**
+ * Remove a reference row outright.
+ *
+ * si_guard_reference_delete() counts what still points at the row and refuses
+ * with a sentence naming it, which describeError() surfaces verbatim — so there
+ * is no client-side pre-check here. An earlier version of this counted the
+ * references in the browser first; that raced against a concurrent insert and
+ * duplicated a rule that has to live in the database anyway.
+ */
+export async function deleteReferenceRow(table, keyValue) {
+  const spec = RETIRABLE[table];
+  if (!spec) throw new Error(`${table} rows cannot be removed`);
+
+  const { data, error } = await supabase
+    .from(table)
+    .delete()
+    .eq(spec.key, keyValue)
+    .select(spec.key);
+
+  if (error) throw error;
+  if (!data?.length) {
+    throw new Error("You don't have permission to remove that.");
+  }
 }

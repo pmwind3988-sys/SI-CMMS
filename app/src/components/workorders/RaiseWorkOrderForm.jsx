@@ -1,11 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Factory, Image as ImageIcon, Video, X, Sparkles, AlertTriangle, Send, Save } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { createWorkOrder, updateWorkOrderFields, addAttachment } from "../../lib/workOrders";
-import { useReferenceData } from "../../lib/referenceData";
+import { useReferenceData, includingCurrent } from "../../lib/referenceData";
 import { createDepartment } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
 import Field, { inputClass } from "../ui/Field";
@@ -22,6 +22,10 @@ import { PriorityBadge } from "../ui/Badges";
  */
 export default function RaiseWorkOrderForm({ existing }) {
   const { user } = useAuth();
+  /* Both halves of every retirable set (migration 0031). The active* lists are
+     what this form offers; the full lists are only there so that editing a work
+     order raised before a retirement still shows the value it actually has —
+     see includingCurrent() below. */
   const {
     ready,
     departments,
@@ -30,6 +34,12 @@ export default function RaiseWorkOrderForm({ existing }) {
     impacts,
     types,
     severities,
+    activeDepartments,
+    activeAssets,
+    activePriorities,
+    activeImpacts,
+    activeTypes,
+    activeSeverities,
     assetById,
     departmentName,
     priorityColor,
@@ -75,14 +85,52 @@ export default function RaiseWorkOrderForm({ existing }) {
    * that used to be here assumed the person raising a work order only ever
    * reported faults on their own department's machines, which is not how a
    * plant works — whoever notices the fault files it.
+   *
+   * Retired values are filtered out of all six pickers (migration 0031), and
+   * WHEN EDITING the value already on the work order is added back. The form is
+   * also the edit form, so a job raised against a machine since decommissioned
+   * has to keep showing that machine; without it the picker would fall to the
+   * first remaining option and silently rewrite a field nobody touched.
+   *
+   * Not when raising, which is the whole point of retiring — otherwise `type`,
+   * which starts on a hardcoded "breakdown", would re-offer a retired type to
+   * every new work order.
    */
-  const assetOptions = assets.map((m) => ({
+  const offeredAssets = includingCurrent(activeAssets, assets, isEdit ? assetId : null, "id");
+  const offeredDepartments = includingCurrent(activeDepartments, departments, isEdit ? departmentId : null, "id");
+  const offeredTypes = includingCurrent(activeTypes, types, isEdit ? type : null, "code");
+  const offeredPriorities = includingCurrent(activePriorities, priorities, isEdit ? priority : null, "id");
+  const offeredImpacts = includingCurrent(activeImpacts, impacts, isEdit ? impact : null, "code");
+  const offeredSeverities = includingCurrent(
+    activeSeverities,
+    severities,
+    isEdit && safetyFlag ? safetySeverity : null,
+    "code"
+  );
+
+  /* Reference data arrives after the first render, so the two fields that start
+     from a hardcoded default — type "breakdown", severity "Medium" — cannot be
+     initialised from the active lists. If either default has since been retired,
+     move to the first one still offered, rather than leaving the form holding a
+     value si_guard_retired_reference() will refuse on submit with nothing
+     highlighted to explain why. */
+  useEffect(() => {
+    if (!ready || isEdit) return;
+    if (activeTypes.length && !activeTypes.some((t) => t.code === type)) {
+      setType(activeTypes[0].code);
+    }
+    if (activeSeverities.length && !activeSeverities.some((s) => s.code === safetySeverity)) {
+      setSafetySeverity(activeSeverities[0].code);
+    }
+  }, [ready, isEdit, activeTypes, activeSeverities, type, safetySeverity]);
+
+  const assetOptions = offeredAssets.map((m) => ({
     value: m.id,
     label: m.name,
     hint: `${m.asset_code || m.id} · ${departmentName(m.department_id)}`,
   }));
 
-  const departmentOptions = departments.map((d) => ({ value: d.id, label: d.name, hint: d.code }));
+  const departmentOptions = offeredDepartments.map((d) => ({ value: d.id, label: d.name, hint: d.code }));
 
   /**
    * Picking equipment sets the department to whoever maintains that machine —
@@ -275,7 +323,7 @@ export default function RaiseWorkOrderForm({ existing }) {
 
             <Field label="Work order type">
               <div className="flex flex-wrap gap-2">
-                {types.map((t) => (
+                {offeredTypes.map((t) => (
                   <button
                     key={t.code}
                     type="button"
@@ -295,7 +343,7 @@ export default function RaiseWorkOrderForm({ existing }) {
 
             <Field label="Priority" required>
               <div className="flex gap-2">
-                {priorities.map(({ id: p, label }) => (
+                {offeredPriorities.map(({ id: p, label }) => (
                   <button
                     key={p}
                     type="button"
@@ -350,7 +398,7 @@ export default function RaiseWorkOrderForm({ existing }) {
 
             <Field label="Production impact" required hint={errors.impact}>
               <div className="flex flex-col gap-2">
-                {impacts.map((opt) => (
+                {offeredImpacts.map((opt) => (
                   <label
                     key={opt.code}
                     title={opt.description || undefined}
@@ -404,7 +452,7 @@ export default function RaiseWorkOrderForm({ existing }) {
               </div>
               {safetyFlag && (
                 <div className="flex gap-2">
-                  {severities.map((s) => (
+                  {offeredSeverities.map((s) => (
                     <button
                       key={s.code}
                       type="button"

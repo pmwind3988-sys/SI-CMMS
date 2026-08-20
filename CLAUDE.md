@@ -381,6 +381,65 @@ assets can be added freely and appear on the raise form immediately. Since 0019 
 user may insert a department, because the raise form offers "+ Add new" in its picker; renaming
 and deleting one stay Manager+/Admin, which is the half that could damage existing records.
 
+### Retiring reference data (migration 0031)
+
+**Taking a value out of use is a different operation from deleting it, and the difference is
+the whole migration.** 0009 gave the enum-keyed lookups no DELETE policy because "a status
+with no transition rows would be a broken status". Right about deleting; not an argument
+against ever retiring.
+
+`is_active` on `priorities`, `impact_levels`, `wo_types`, `safety_severities` and
+`departments`; equipment reuses `assets.status`, which 0001 created with a `decommissioned`
+value and nothing had read since. A retired row **stays** — every work order that already
+references it keeps its label and its colour forever — and simply stops being offered.
+Reversible.
+
+The reason it has to be retire rather than delete is that `work_orders.status`, `.priority`,
+`.type` and `.impact` are **enum columns with no foreign key onto the lookup tables**.
+Postgres would not stop you deleting `P1`; every P1 work order ever raised would just start
+rendering a blank grey badge, and nothing would look wrong until somebody opened a board.
+
+Six tables, and three excluded on purpose: `wo_statuses` (nobody *picks* a status — the
+workflow moves through them, so the equivalent is editing `wo_status_transitions`), `sla`
+(one row per priority, retired with its priority), `role_permissions` (the boolean already
+is the switch).
+
+**A trigger, not a policy.** `si_guard_reference_retire` is the only thing that can gate one
+column: `departments_update` is `si_is_manager_or_admin()` and `assets_update` is
+`si_is_admin()`, and both have to stay open for ordinary edits. Measured as an ordinary
+Administrator straight at PostgREST: `PATCH priorities?id=eq.P4 {is_active:false}` → 403,
+*"Only the Superuser can retire or restore reference data."*
+
+**The flag is not advisory, and that is the point.** `users.status` decided nothing for four
+migrations because the admin screen wrote it and no policy, trigger or predicate read it
+(0026). A retirement that only filtered a dropdown would be that bug again — anything
+speaking to PostgREST directly would carry on using the value. `si_guard_retired_reference`
+on `work_orders` is where it is actually enforced, and it checks **only values being set**:
+an existing work order carrying a retired priority has to stay acceptable, repairable and
+closable, since those records are what retiring exists to protect.
+
+Two consequences that look like oversights and are not. The client keeps loading **every**
+row, retired included, because that is what makes a retired P4 still resolve to "Low" and
+green; only the `active*` lists filter. And `includingCurrent()` adds the value already on a
+work order back into its picker **when editing** — the raise form is also the edit form, and
+a `<select>` whose current value has dropped out silently rewrites a field nobody touched.
+Not when raising: `type` starts on a hardcoded `"breakdown"`, which would otherwise re-offer
+a retired type to every new work order.
+
+**Removing a row outright** is the other half, and only reaches rows nothing has ever used.
+Superuser for the four lookup tables (new `*_delete` policies); departments and assets keep
+the `si_is_admin()` policy 0002 gave them, because taking an existing capability away would
+have been a regression dressed as a feature. `si_guard_reference_delete` counts the
+references and raises a sentence, the shape 0030 used — measured: *"Utilities is still used
+by 2 pieces of equipment. Removing it would leave those records without a label, so it is
+refused. Retire it instead."* Four of the six have no foreign key protecting them, so for
+those the trigger is not a better message than the constraint, it is the only thing there.
+
+`deleteDepartment()` is gone from `lib/admin.js`; it counted the same references in the
+browser, which raced a concurrent insert and duplicated a rule that belongs in the database.
+`upsertAsset()` no longer pins `status: 'active'` — that would have put a decommissioned
+machine back on the raise form the next time an Administrator corrected its name.
+
 ### Notification delivery outside the app
 
 `notifications` rows are written server-side and read by `listenNotifications`.
@@ -611,9 +670,14 @@ the statements: `si_role()`, `si_department_id()`, `si_is_*()`, `si_in_same_depa
 with the querying user's privileges**. Revoking `si_signed_in()` would break ten policies in
 0002 alone. Read that comment before "fixing" a grant.
 
-Measured 2026-08-20, all 29 migrations: 54 functions, 28 SECURITY DEFINER, **zero** without a
-pinned `search_path`; 23 tables, all RLS-enabled; no views. The dashboard advisor agrees —
-no issues, warnings and info only. What the files still cannot show, and the advisor can:
+Measured 2026-08-20, migrations 0001-0029: 54 functions, 28 SECURITY DEFINER, **zero**
+without a pinned `search_path`; 23 tables, all RLS-enabled; no views. The dashboard advisor
+agreed — no issues, warnings and info only. 0030 and 0031 add five more functions, all
+SECURITY DEFINER with `search_path` pinned and `revoke all ... from public, anon`; **0031 has
+not been past the advisor yet.** One grant in it is deliberate and worth not "fixing" blindly:
+`si_reference_is_retired(text, text)` keeps EXECUTE for `authenticated`, and its only callers
+are SECURITY DEFINER triggers, so it could be revoked — it discloses nothing the six tables'
+own SELECT policies do not. What the files still cannot show, and the advisor can:
 auth configuration (leaked-password protection, MFA, OTP expiry), extensions in `public`,
 live grants rather than intended ones, and anything changed directly in the dashboard — which
 has happened on this project, and is what 0013 exists to fix.

@@ -9,23 +9,54 @@
  *
  *   Lookup tables (statuses, priorities, impact levels, types, severities) are
  *   keyed on a Postgres enum. Their rows describe values the schema already
- *   accepts, so they can be relabelled and recoloured but not added to or
- *   deleted — a status with no transition rows and no trigger handling would be
- *   a broken status, and work orders already reference these codes. Migration
- *   0009 grants UPDATE only, so the database enforces this too.
+ *   accepts, so they can be relabelled and recoloured but not added to.
+ *   Migration 0009 grants UPDATE only, so the database enforces this too.
  *
  *   Operational records (departments, equipment) are real business data. Those
  *   can be added.
+ *
+ * A third operation cuts across both, and is a Superuser's alone (migration
+ * 0031): RETIRING a row. The row stays, so every work order that already
+ * references it keeps its label and its colour forever; it just stops being
+ * offered for new work. That is the answer for taking a priority or a department
+ * out of use, and it is reversible.
+ *
+ * Removing a row outright is the rarer one, and only possible while nothing has
+ * ever referenced it — the mistyped department, essentially. Anything else is
+ * refused by si_guard_reference_delete() with a sentence naming what still
+ * points at it, which is shown as-is because describeError() surfaces server
+ * messages verbatim.
+ *
+ * Statuses, SLA targets and Permissions have neither, deliberately: nobody picks
+ * a status (the workflow moves through them), an SLA row belongs to its priority
+ * rather than standing on its own, and a permission is already a switch.
  *
  * Edits reach every open session over Realtime, so a colour change shows up on a
  * supervisor's board without them reloading.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Check, X, Pencil, Plus, Trash2, Loader2, Info, ShieldAlert, Lock } from "lucide-react";
-import { useReferenceData, updateReferenceRow } from "../../lib/referenceData";
+import {
+  Check,
+  X,
+  Pencil,
+  Plus,
+  Trash2,
+  Loader2,
+  Info,
+  ShieldAlert,
+  Lock,
+  Archive,
+  RotateCcw,
+} from "lucide-react";
+import {
+  useReferenceData,
+  updateReferenceRow,
+  setReferenceRowActive,
+  deleteReferenceRow,
+  isRetired,
+} from "../../lib/referenceData";
 import {
   upsertDepartment,
-  deleteDepartment,
   upsertAsset,
   updateSlaTargets,
   updatePriority,
@@ -33,7 +64,11 @@ import {
 } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
 import { useAuth } from "../../context/AuthContext";
-import { canEditRolePermissions } from "../../lib/constants";
+import {
+  canEditRolePermissions,
+  canRetireReferenceData,
+  canRemoveReferenceRow,
+} from "../../lib/constants";
 import { ALL_ROLES, ROLE_LABELS } from "../../lib/roles";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
@@ -65,13 +100,33 @@ export default function SettingsAdmin() {
     setError(describeError(e, fallback));
   }
 
+  /* Built from every row rather than the active ones. These drive the "Suggests"
+     and "Caps at" columns, which are foreign keys onto priorities and stay valid
+     after a retirement — and a row whose current value had dropped out of its own
+     <select> would show the raw code, or worse, be silently rewritten to the
+     first remaining option on the next save. Same for equipment sitting in a
+     retired department. The suffix is so the pairing is not invisible. */
   const priorityOptions = useMemo(
-    () => ref.priorities.map((p) => ({ value: p.id, label: `${p.id} — ${p.label}` })),
+    () =>
+      ref.priorities.map((p) => ({
+        value: p.id,
+        label: `${p.id} — ${p.label}${isRetired("priorities", p) ? " (retired)" : ""}`,
+      })),
     [ref.priorities]
   );
   const departmentOptions = useMemo(
-    () => ref.departments.map((d) => ({ value: d.id, label: d.name })),
+    () =>
+      ref.departments.map((d) => ({
+        value: d.id,
+        label: `${d.name}${isRetired("departments", d) ? " (retired)" : ""}`,
+      })),
     [ref.departments]
+  );
+  /* The add-equipment dialog is the exception: that is a choice for something
+     new, so it offers only what is still in use. */
+  const activeDepartmentOptions = useMemo(
+    () => ref.activeDepartments.map((d) => ({ value: d.id, label: d.name })),
+    [ref.activeDepartments]
   );
 
   return (
@@ -144,6 +199,9 @@ export default function SettingsAdmin() {
             flash(`${row.id} saved.`);
           }}
           onError={(e) => fail(e, "Couldn't save that priority.")}
+          retireTable="priorities"
+          retireWarning="Work orders already raised at this priority keep their badge and their SLA. It stops being offered on the raise form, and stops being suggested by any impact level. You can restore it at any time."
+          onChanged={flash}
         />
       )}
 
@@ -191,6 +249,9 @@ export default function SettingsAdmin() {
             flash("Impact level saved.");
           }}
           onError={(e) => fail(e, "Couldn't save that impact level.")}
+          retireTable="impact_levels"
+          retireWarning="Work orders already raised at this impact level keep it. It stops being offered on the raise form. You can restore it at any time."
+          onChanged={flash}
         />
       )}
 
@@ -209,6 +270,9 @@ export default function SettingsAdmin() {
             flash("Work order type saved.");
           }}
           onError={(e) => fail(e, "Couldn't save that type.")}
+          retireTable="wo_types"
+          retireWarning="Work orders already raised as this type keep it. It stops being offered on the raise form. You can restore it at any time."
+          onChanged={flash}
         />
       )}
 
@@ -234,6 +298,9 @@ export default function SettingsAdmin() {
             flash("Safety severity saved.");
           }}
           onError={(e) => fail(e, "Couldn't save that severity.")}
+          retireTable="safety_severities"
+          retireWarning="Work orders already flagged at this severity keep it. It stops being offered when someone ticks the safety box. You can restore it at any time."
+          onChanged={flash}
         />
       )}
 
@@ -272,11 +339,9 @@ export default function SettingsAdmin() {
             });
             flash(`${values.name} added.`);
           }}
-          onDelete={async (row) => {
-            await deleteDepartment(row.id);
-            flash(`${row.name} deleted.`);
-          }}
-          deleteWarning="Departments still referenced by a work order, a piece of equipment or a user can't be deleted — you'll be told which. This can't be undone."
+          retireTable="departments"
+          retireWarning="Work orders, equipment and users already in this department stay exactly as they are, and the dashboard still breaks them out. It stops being offered on the raise form and when assigning a user. You can restore it at any time."
+          onChanged={flash}
         />
       )}
 
@@ -315,6 +380,10 @@ export default function SettingsAdmin() {
               departmentId: patch.department_id ?? row.department_id,
               criticality: patch.criticality ?? row.criticality,
               category: row.category,
+              // Carried through, not defaulted: this column is what retires a
+              // machine since 0031, so dropping it here would quietly put a
+              // decommissioned one back on the raise form.
+              status: row.status,
             });
             flash("Equipment saved.");
           }}
@@ -327,7 +396,7 @@ export default function SettingsAdmin() {
               key: "department_id",
               label: "Department",
               type: "select",
-              options: departmentOptions,
+              options: activeDepartmentOptions,
               required: true,
             },
             {
@@ -352,6 +421,9 @@ export default function SettingsAdmin() {
             });
             flash(`${values.name} added.`);
           }}
+          retireTable="assets"
+          retireWarning="Work orders already raised against this machine stay exactly as they are. It stops being offered on the raise form. You can restore it at any time."
+          onChanged={flash}
         />
       )}
 
@@ -552,22 +624,50 @@ function EditableTable({
   addFields,
   onAdd,
   /**
-   * Optional. Only the tables holding real operational records get one — the
-   * enum-keyed lookups (statuses, priorities, impacts, types, severities) have
-   * no delete policy at all, because their row set is the enum's and a status
-   * with no transition rows would be a broken status (migration 0009).
+   * The table name, for the six that can be taken out of use (migration 0031).
+   * Everything else follows from it: RETIRABLE says where the flag lives,
+   * canRetireReferenceData() and canRemoveReferenceRow() say who sees which
+   * button. Omitted on statuses, SLA and permissions — see the file header.
    *
-   * One row at a time, with a confirmation. Checkbox multi-select arrives with
-   * the rest of the admin CRUD work and will absorb this button.
+   * One row at a time, with a confirmation on the two consequential directions.
+   * Restoring needs none: it puts a value back on a form.
    */
-  onDelete,
-  deleteWarning,
+  retireTable,
+  retireWarning,
+  onChanged,
 }) {
+  const { user: me } = useAuth();
   const [editing, setEditing] = useState(null); // row key
   const [draft, setDraft] = useState({});
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [confirming, setConfirming] = useState(null); // row pending deletion
+  const [confirming, setConfirming] = useState(null); // { row, mode: 'retire' | 'remove' }
+
+  const mayRetire = !!retireTable && canRetireReferenceData(me);
+  const mayRemove = !!retireTable && canRemoveReferenceRow(retireTable, me);
+  const hasActions = mayRetire || mayRemove;
+
+  /* Retired rows drop to the bottom under their own heading rather than sitting
+     dimmed in place. In place they read as a rendering glitch; under a heading
+     that says what they are, the list stays a list of what is in use — which is
+     what this screen is mostly for. */
+  const retiredOf = (row) => (retireTable ? isRetired(retireTable, row) : false);
+  const liveRows = rows.filter((r) => !retiredOf(r));
+  const retiredRows = retireTable ? rows.filter(retiredOf) : [];
+
+  async function setActive(row, active) {
+    setBusy(true);
+    try {
+      await setReferenceRowActive(retireTable, row[rowKey], active);
+      onChanged?.(
+        `${row.name || row.label || row[rowKey]} ${active ? "restored" : "retired"}.`
+      );
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function startEdit(row) {
     setEditing(row[rowKey]);
@@ -597,6 +697,82 @@ function EditableTable({
     }
   }
 
+  /* One renderer for both groups. `retired` only dims and swaps the retire
+     button for a restore — a retired row stays editable, because relabelling or
+     recolouring one is exactly what you do before restoring it. */
+  function renderRow(row, isFirst, retired) {
+    const isEditing = editing === row[rowKey];
+    return (
+      <div
+        key={row[rowKey]}
+        className={`flex items-center px-4 py-2.5 ${isFirst ? "" : "border-t border-[#F1F3F5]"} ${
+          retired ? "opacity-60" : ""
+        }`}
+      >
+        {columns.map((c) => (
+          <div key={c.key} className={`${c.width} pr-2 min-w-0`}>
+            {!isEditing || c.type === "readonly" ? (
+              <CellValue column={c} row={row} />
+            ) : (
+              <CellInput
+                column={c}
+                value={draft[c.key]}
+                onChange={(v) => setDraft((d) => ({ ...d, [c.key]: v }))}
+              />
+            )}
+          </div>
+        ))}
+        <div className={`${hasActions ? "w-40" : "w-24"} flex justify-end gap-1.5`}>
+          {isEditing ? (
+            <>
+              <Button size="sm" variant="ghost" icon={X} aria-label="Cancel edit" onClick={() => setEditing(null)} />
+              <Button
+                size="sm"
+                icon={busy ? Loader2 : Check}
+                aria-label="Save row"
+                disabled={busy}
+                onClick={() => save(row)}
+              />
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="ghost" icon={Pencil} aria-label="Edit row" onClick={() => startEdit(row)} />
+              {mayRetire &&
+                (retired ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={RotateCcw}
+                    aria-label="Restore row"
+                    disabled={busy}
+                    onClick={() => setActive(row, true)}
+                  />
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={Archive}
+                    aria-label="Retire row"
+                    disabled={busy}
+                    onClick={() => setConfirming({ row, mode: "retire" })}
+                  />
+                ))}
+              {mayRemove && (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  icon={Trash2}
+                  aria-label="Remove row permanently"
+                  onClick={() => setConfirming({ row, mode: "remove" })}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {note && (
@@ -622,81 +798,58 @@ function EditableTable({
           nothing on a phone. */}
       <Card className="overflow-hidden">
         <div className="overflow-x-auto scroll-touch">
-          {/* Widened when there is a delete column: the action cell grows from
-              w-24 to w-32, and a min-width that did not grow with it left the
-              delete button outside the scrollable area entirely. */}
-          <div className={onDelete ? "min-w-[49rem]" : "min-w-[46rem]"}>
+          {/* Widened when there is an action column: the cell grows from w-24 to
+              w-40 to hold retire and remove beside edit, and a min-width that
+              did not grow with it would leave the last button outside the
+              scrollable area entirely. */}
+          <div className={hasActions ? "min-w-[54rem]" : "min-w-[46rem]"}>
             <div className="flex items-center px-4 py-2.5 bg-canvas text-[11.5px] font-bold text-ink-soft uppercase tracking-wide">
               {columns.map((c) => (
                 <div key={c.key} className={c.width}>
                   {c.label}
                 </div>
               ))}
-              <div className={`${onDelete ? "w-32" : "w-24"} text-right`}>{onDelete ? "Actions" : "Edit"}</div>
+              <div className={`${hasActions ? "w-40" : "w-24"} text-right`}>
+                {hasActions ? "Actions" : "Edit"}
+              </div>
             </div>
 
-            {rows.map((row, i) => {
-              const isEditing = editing === row[rowKey];
-              return (
-                <div
-                  key={row[rowKey]}
-                  className={`flex items-center px-4 py-2.5 ${i === 0 ? "" : "border-t border-[#F1F3F5]"}`}
-                >
-                  {columns.map((c) => (
-                    <div key={c.key} className={`${c.width} pr-2 min-w-0`}>
-                      {!isEditing || c.type === "readonly" ? (
-                        <CellValue column={c} row={row} />
-                      ) : (
-                        <CellInput
-                          column={c}
-                          value={draft[c.key]}
-                          onChange={(v) => setDraft((d) => ({ ...d, [c.key]: v }))}
-                        />
-                      )}
-                    </div>
-                  ))}
-                  <div className={`${onDelete ? "w-32" : "w-24"} flex justify-end gap-1.5`}>
-                    {isEditing ? (
-                      <>
-                        <Button size="sm" variant="ghost" icon={X} aria-label="Cancel edit" onClick={() => setEditing(null)} />
-                        <Button
-                          size="sm"
-                          icon={busy ? Loader2 : Check}
-                          aria-label="Save row"
-                          disabled={busy}
-                          onClick={() => save(row)}
-                        />
-                      </>
-                    ) : (
-                      <>
-                        <Button size="sm" variant="ghost" icon={Pencil} aria-label="Edit row" onClick={() => startEdit(row)} />
-                        {onDelete && (
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            icon={Trash2}
-                            aria-label="Delete row"
-                            onClick={() => setConfirming(row)}
-                          />
-                        )}
-                      </>
-                    )}
-                  </div>
+            {liveRows.map((row, i) => renderRow(row, i === 0, false))}
+
+            {retiredRows.length > 0 && (
+              <>
+                <div className="flex items-center gap-2 border-t border-[#F1F3F5] bg-canvas px-4 py-2 text-[11.5px] font-bold uppercase tracking-wide text-ink-soft">
+                  <Archive size={13} className="flex-shrink-0" />
+                  Retired — kept on existing records, no longer offered
                 </div>
-              );
-            })}
+                {retiredRows.map((row) => renderRow(row, true, true))}
+              </>
+            )}
           </div>
         </div>
       </Card>
       <p className="mt-2 text-[11.5px] text-ink-soft lg:hidden">Scroll the table sideways to reach every column.</p>
 
       {confirming && (
-        <ConfirmDeleteDialog
-          label={confirming.name || confirming.label || confirming[rowKey]}
-          warning={deleteWarning}
+        <ConfirmActionDialog
+          mode={confirming.mode}
+          label={
+            confirming.row.name || confirming.row.label || confirming.row[rowKey]
+          }
+          warning={confirming.mode === "retire" ? retireWarning : undefined}
           onClose={() => setConfirming(null)}
           onConfirm={async () => {
-            await onDelete(confirming);
+            if (confirming.mode === "retire") {
+              await setReferenceRowActive(retireTable, confirming.row[rowKey], false);
+              onChanged?.(
+                `${confirming.row.name || confirming.row.label || confirming.row[rowKey]} retired.`
+              );
+            } else {
+              await deleteReferenceRow(retireTable, confirming.row[rowKey]);
+              onChanged?.(
+                `${confirming.row.name || confirming.row.label || confirming.row[rowKey]} removed.`
+              );
+            }
             setConfirming(null);
           }}
           onError={onError}
@@ -786,18 +939,21 @@ function CellInput({ column, value, onChange }) {
 }
 
 /**
- * Deleting reference data is not undoable and not a status change, so it asks
- * first — the only other place in this module that does is deleting a work
- * order.
+ * Retiring and removing both ask first, for different reasons: retiring changes
+ * what everyone else's raise form offers, and removing cannot be undone. The
+ * third direction, restoring, does not — it puts a value back on a form, and a
+ * dialog guarding that is friction with nothing behind it.
  *
  * The failure is shown in the dialog AND passed to onError for the page banner,
- * matching AddRowDialog below. Both are wanted: deleteDepartment() reports what
- * is still pointing at the row, which only reads properly next to the name, and
- * the banner keeps that sentence on screen after the dialog is dismissed.
+ * matching AddRowDialog below. Both are wanted: si_guard_reference_delete()
+ * names what is still pointing at the row, which only reads properly next to
+ * the name, and the banner keeps that sentence on screen after the dialog is
+ * dismissed.
  */
-function ConfirmDeleteDialog({ label, warning, onClose, onConfirm, onError }) {
+function ConfirmActionDialog({ mode, label, warning, onClose, onConfirm, onError }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const retiring = mode === "retire";
 
   async function confirm() {
     setError(null);
@@ -805,7 +961,7 @@ function ConfirmDeleteDialog({ label, warning, onClose, onConfirm, onError }) {
     try {
       await onConfirm();
     } catch (err) {
-      setError(describeError(err, "Couldn't delete that."));
+      setError(describeError(err, retiring ? "Couldn't retire that." : "Couldn't remove that."));
       onError?.(err);
     } finally {
       setBusy(false);
@@ -816,21 +972,31 @@ function ConfirmDeleteDialog({ label, warning, onClose, onConfirm, onError }) {
     <ModalOverlay className="p-4">
       <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="mb-4 flex items-start justify-between">
-          <h2 className="text-[15.5px] font-bold text-ink">Delete {label}?</h2>
+          <h2 className="text-[15.5px] font-bold text-ink">
+            {retiring ? `Retire ${label}?` : `Remove ${label} permanently?`}
+          </h2>
           <button onClick={onClose} aria-label="Close" className="text-ink-soft hover:text-ink">
             <X size={18} />
           </button>
         </div>
         {error && <ErrorBanner message={error} />}
         <p className="mb-5 text-[13px] text-ink-soft">
-          {warning || "This can't be undone."}
+          {retiring
+            ? warning ||
+              "It stops being offered for new work. Existing records keep it, and you can restore it at any time."
+            : "This can't be undone. It only works while nothing has ever used it — otherwise you'll be told what still does, and retiring is the answer instead."}
         </p>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" type="button" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="danger" icon={busy ? Loader2 : Trash2} disabled={busy} onClick={confirm}>
-            {busy ? "Deleting…" : "Delete"}
+          <Button
+            variant={retiring ? "primary" : "danger"}
+            icon={busy ? Loader2 : retiring ? Archive : Trash2}
+            disabled={busy}
+            onClick={confirm}
+          >
+            {busy ? (retiring ? "Retiring…" : "Removing…") : retiring ? "Retire" : "Remove"}
           </Button>
         </div>
       </Card>

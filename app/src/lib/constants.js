@@ -119,6 +119,39 @@ export function canEditRolePermissions(currentUser) {
   return currentUser?.isSuperuser === true;
 }
 
+/**
+ * May this account take a reference value out of use, or put it back?
+ *
+ * Superuser only, mirroring si_guard_reference_retire() (migration 0031). The
+ * trigger rather than a policy is the enforcement point, because
+ * departments_update is si_is_manager_or_admin() and assets_update is
+ * si_is_admin() — both have to stay open for ordinary edits, and RLS grants a
+ * whole row rather than a column.
+ */
+export function canRetireReferenceData(currentUser) {
+  return currentUser?.isSuperuser === true;
+}
+
+/**
+ * …and may they remove the row outright?
+ *
+ * Restates the DELETE policies rather than the retire rule, because they differ:
+ * 0031 gave priorities/impact_levels/wo_types/safety_severities a
+ * `si_is_superuser()` delete policy, while departments and assets keep the
+ * `si_is_admin()` one 0002 gave them. Taking that away from Administrators
+ * would have been a regression dressed up as a new feature.
+ *
+ * Whether the row CAN go is a different question again, and not one the client
+ * answers: si_guard_reference_delete() counts what still references it.
+ */
+export function canRemoveReferenceRow(table, currentUser) {
+  if (!currentUser) return false;
+  if (currentUser.isSuperuser === true) return true;
+  return (
+    (table === "departments" || table === "assets") && hasRole(currentUser, ROLES.ADMIN)
+  );
+}
+
 /* ------------------------------------------------------------------
    User administration — mirrors the users_* policies and
    si_guard_user_self_update as rewritten in migration 0015.

@@ -421,56 +421,16 @@ export async function createDepartment({ name, plantId }) {
   return data;
 }
 
-/**
- * Delete a department.
- *
- * Three tables carry a FK onto it, so the useful failure is not the constraint
- * violation — it is knowing what is still pointing at it. Those counts are read
- * first and reported; without that, Postgres raises 23503 and describeError
- * turns it into "That refers to something that no longer exists", which is both
- * unhelpful and the opposite of true.
- *
- * The count read races against a concurrent insert, so the constraint is still
- * the thing that guarantees correctness — this only makes the common case
- * legible.
- *
- * departments_delete is `si_is_admin()`, and RLS refusing a DELETE removes no
- * rows and raises nothing, so the deleted row is selected back and its absence
- * turned into an error. Same pattern as deleteWorkOrder().
+/*
+ * Deleting a department used to live here, counting the three tables that carry
+ * a FK onto it so the failure could name them instead of arriving as a bare
+ * 23503. Migration 0031 moved that counting into si_guard_reference_delete(),
+ * which does it for all six reference tables, cannot race a concurrent insert,
+ * and holds whether the DELETE arrives from this app or from anything else.
+ * The caller is deleteReferenceRow("departments", id) in lib/referenceData.js.
  */
-export async function deleteDepartment(departmentId) {
-  const inUse = await Promise.all([
-    supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("department_id", departmentId),
-    supabase.from("assets").select("id", { count: "exact", head: true }).eq("department_id", departmentId),
-    supabase.from("users").select("id", { count: "exact", head: true }).eq("department_id", departmentId),
-  ]);
 
-  const [woCount, assetCount, userCount] = inUse.map((r) => r.count ?? 0);
-  const blockers = [
-    woCount && `${woCount} work order${woCount === 1 ? "" : "s"}`,
-    assetCount && `${assetCount} piece${assetCount === 1 ? "" : "s"} of equipment`,
-    userCount && `${userCount} user${userCount === 1 ? "" : "s"}`,
-  ].filter(Boolean);
-
-  if (blockers.length) {
-    throw new Error(
-      `This department is still used by ${blockers.join(", ")}. Move them elsewhere first — deleting it would orphan their records.`
-    );
-  }
-
-  const { data, error } = await supabase
-    .from("departments")
-    .delete()
-    .eq("id", departmentId)
-    .select("id");
-
-  if (error) throw error;
-  if (!data?.length) {
-    throw new Error("Only an Administrator can delete a department.");
-  }
-}
-
-export async function upsertAsset({ id, assetCode, name, departmentId, criticality, category, plantId }) {
+export async function upsertAsset({ id, assetCode, name, departmentId, criticality, category, plantId, status }) {
   const { error } = await supabase.from("assets").upsert(
     {
       id,
@@ -480,7 +440,12 @@ export async function upsertAsset({ id, assetCode, name, departmentId, criticali
       criticality,
       category: category || null,
       plant_id: plantId || "PLT001",
-      status: "active",
+      // Carried through rather than pinned to 'active'. Since 0031 this column
+      // is what retires a piece of equipment, so hardcoding it here would put
+      // a decommissioned machine back on the raise form the next time an
+      // Administrator corrected its name — and the guard would not object,
+      // because restoring is a legitimate write it simply would not have made.
+      status: status || "active",
     },
     { onConflict: "id" }
   );
