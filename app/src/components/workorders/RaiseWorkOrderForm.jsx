@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Factory, Image as ImageIcon, Video, X, Sparkles, AlertTriangle, Send, Save } from "lucide-react";
+import { ArrowLeft, Factory, Image as ImageIcon, X, Sparkles, AlertTriangle, Send, Save } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { createWorkOrder, updateWorkOrderFields, addAttachment } from "../../lib/workOrders";
 import { useReferenceData, includingCurrent } from "../../lib/referenceData";
@@ -30,13 +30,11 @@ export default function RaiseWorkOrderForm({ existing }) {
     ready,
     departments,
     assets,
-    priorities,
     impacts,
     types,
     severities,
     activeDepartments,
     activeAssets,
-    activePriorities,
     activeImpacts,
     activeTypes,
     activeSeverities,
@@ -56,13 +54,8 @@ export default function RaiseWorkOrderForm({ existing }) {
   const [creatingAsset, setCreatingAsset] = useState(false);
   const [type, setType] = useState(existing?.type || "breakdown");
   const [complaint, setComplaint] = useState(existing?.description || "");
-  const [priority, setPriority] = useState(existing?.priority || "");
-  const [priorityTouched, setPriorityTouched] = useState(isEdit);
   const [impact, setImpact] = useState(existing?.impact || "");
   const [photos, setPhotos] = useState([]);
-  const [videos, setVideos] = useState([]);
-  const [downtimeValue, setDowntimeValue] = useState(existing?.est_downtime_value?.toString() || "");
-  const [downtimeUnit, setDowntimeUnit] = useState(existing?.est_downtime_unit || "hours");
   const [safetyFlag, setSafetyFlag] = useState(existing?.safety_risk?.flag || false);
   const [safetySeverity, setSafetySeverity] = useState(existing?.safety_risk?.severity || "Medium");
   const [envFlag, setEnvFlag] = useState(existing?.environmental_risk?.flag || false);
@@ -73,13 +66,32 @@ export default function RaiseWorkOrderForm({ existing }) {
   const [submitError, setSubmitError] = useState(null);
 
   const photoInput = useRef(null);
-  const videoInput = useRef(null);
 
   const asset = assetById(assetId);
   const safety = { flag: safetyFlag, severity: safetySeverity };
   const env = { flag: envFlag };
-  const suggestion = suggestPriority(impact, safety, env);
-  const effectivePriority = priorityTouched ? priority : suggestion;
+
+  /**
+   * Priority is DERIVED now, not chosen — it follows the production impact,
+   * still escalated by safety and environmental risk exactly as before. What
+   * changed is that there is no longer an override: the four priority buttons
+   * and the `priorityTouched` flag they set are gone.
+   *
+   * This is a display of the rule, not the rule. `si_derive_priority` in
+   * migration 0036 recomputes the same thing in a BEFORE INSERT/UPDATE trigger
+   * and overwrites whatever arrives, so a value sent from anywhere — this form,
+   * a stale tab, PostgREST directly — cannot disagree with the impact. Keeping
+   * the client calculation is what lets the form show the answer and the SLA
+   * targets before submitting; it is not what enforces it.
+   */
+  const effectivePriority = suggestPriority(impact, safety, env);
+  /** The ceiling the safety severity would impose, for the note under it. */
+  const safetyCeiling = safetyFlag
+    ? severities.find((s) => s.code === safetySeverity)?.escalates_to_priority
+    : null;
+  const envCeiling = envFlag
+    ? severities.find((s) => s.code === "Medium")?.escalates_to_priority
+    : null;
 
   /**
    * Every asset, from every department (migration 0019). The department filter
@@ -100,7 +112,9 @@ export default function RaiseWorkOrderForm({ existing }) {
   const offeredAssets = includingCurrent(activeAssets, assets, isEdit ? assetId : null, "id");
   const offeredDepartments = includingCurrent(activeDepartments, departments, isEdit ? departmentId : null, "id");
   const offeredTypes = includingCurrent(activeTypes, types, isEdit ? type : null, "code");
-  const offeredPriorities = includingCurrent(activePriorities, priorities, isEdit ? priority : null, "id");
+  /* No offeredPriorities any more: nothing picks a priority, so there is no
+     picker whose current value has to be added back. suggestPriority() already
+     resolves against the ACTIVE priorities on its own. */
   const offeredImpacts = includingCurrent(activeImpacts, impacts, isEdit ? impact : null, "code");
   const offeredSeverities = includingCurrent(
     activeSeverities,
@@ -196,7 +210,6 @@ export default function RaiseWorkOrderForm({ existing }) {
     if (!assetId) errs.asset = "Select the affected equipment.";
     if (!complaint || complaint.length < 10) errs.complaint = "Describe the complaint (min. 10 characters).";
     if (!impact) errs.impact = "Select the production impact.";
-    if (!downtimeValue) errs.downtime = "Estimate the downtime.";
     if (!requester) errs.requester = "Requester name is required.";
     if (!phone || phone.replace(/\D/g, "").length < 7) errs.phone = "Enter a valid phone number.";
     return errs;
@@ -219,8 +232,6 @@ export default function RaiseWorkOrderForm({ existing }) {
           type,
           priority: effectivePriority || "P3",
           impact,
-          est_downtime_value: Number(downtimeValue),
-          est_downtime_unit: downtimeUnit,
           description: complaint,
           safety_risk: safety,
           environmental_risk: env,
@@ -240,8 +251,6 @@ export default function RaiseWorkOrderForm({ existing }) {
         type,
         priority: effectivePriority || "P3",
         impact,
-        estDowntimeValue: downtimeValue,
-        estDowntimeUnit: downtimeUnit,
         description: complaint,
         safetyRisk: safety,
         environmentalRisk: env,
@@ -251,7 +260,9 @@ export default function RaiseWorkOrderForm({ existing }) {
       });
 
       const actor = { uid: user.uid, name: requester, role: user.role };
-      await Promise.all([...photos.map((p) => addAttachment(woId, actor, p, "photo")), ...videos.map((v) => addAttachment(woId, actor, v, "video"))]);
+      /* addAttachment compresses each photo before it uploads, so these are the
+         only bytes that reach storage — see the note there. */
+      await Promise.all(photos.map((p) => addAttachment(woId, actor, p, "photo")));
 
       router.push(`/work-orders/view?id=${woId}`);
     } catch (e) {
@@ -277,7 +288,7 @@ export default function RaiseWorkOrderForm({ existing }) {
       <p className="text-[13px] text-ink-soft mb-6">
         {isEdit
           ? "Core details can be corrected while this work order is still Open — before a technician is assigned."
-          : "Priority is suggested automatically and escalates for safety or environmental risk."}
+          : "Priority is set from the production impact, and escalates for safety or environmental risk."}
       </p>
 
       {submitError && <ErrorBanner message={submitError} />}
@@ -289,28 +300,21 @@ export default function RaiseWorkOrderForm({ existing }) {
       <div className="flex flex-col gap-5 lg:flex-row lg:gap-6">
         <div className="min-w-0 lg:flex-[2]">
           <Card className="p-4 sm:p-5">
-            {/* Equipment first, department second: choosing the machine fills
-                the department in, so asking for the department first would have
-                the form overwrite an answer the moment it was given. */}
-            <Field label="Equipment" required hint={errors.asset}>
-              <Combobox
-                value={assetId}
-                onChange={handleAssetChange}
-                options={assetOptions}
-                loading={!ready || creatingAsset}
-                loadingLabel={creatingAsset ? "Adding…" : "Loading…"}
-                placeholder="Search equipment by name, asset code or department…"
-                emptyLabel="No equipment registered yet"
-                noMatchLabel="No equipment matches that"
-                onCreate={handleCreateAsset}
-                createLabel="Add equipment"
-              />
-              <p className="mt-1.5 text-[11.5px] text-ink-soft">
-                Can&apos;t find the machine? Pick its department below, then type the name here to
-                register it.
-              </p>
-            </Field>
+            {/* Department first, equipment second.
 
+                Picking a machine still fills the department in from whoever
+                maintains it — handleAssetChange has not changed — so answering
+                in this order means the second answer can overwrite the first.
+                That is the right way round: the asset is the more specific of
+                the two and knows its own owner, and the field stays editable
+                afterwards for the case where the registered owner is not who
+                should handle this one.
+
+                It also un-inverts registering a NEW machine, which is the case
+                the old order got backwards: createAsset() refuses to start
+                without a department (migration 0032), because assets.department_id
+                is `not null`. Asking for equipment first meant the person adding
+                a machine had to go back up for the field they had just skipped. */}
             <Field
               label="Department"
               required
@@ -328,8 +332,28 @@ export default function RaiseWorkOrderForm({ existing }) {
                 createLabel="Add department"
               />
               <p className="mt-1.5 text-[11.5px] text-ink-soft">
-                Filled in from the equipment you picked. Change it if someone else should handle
-                this, or type a name that isn&apos;t listed to add it.
+                Who should handle this. Picking the equipment below fills this in from the machine&apos;s
+                own department — change it afterwards if someone else should take it, or type a name
+                that isn&apos;t listed to add it.
+              </p>
+            </Field>
+
+            <Field label="Equipment" required hint={errors.asset}>
+              <Combobox
+                value={assetId}
+                onChange={handleAssetChange}
+                options={assetOptions}
+                loading={!ready || creatingAsset}
+                loadingLabel={creatingAsset ? "Adding…" : "Loading…"}
+                placeholder="Search equipment by name, asset code or department…"
+                emptyLabel="No equipment registered yet"
+                noMatchLabel="No equipment matches that"
+                onCreate={handleCreateAsset}
+                createLabel="Add equipment"
+              />
+              <p className="mt-1.5 text-[11.5px] text-ink-soft">
+                Can&apos;t find the machine? With the department above set, type the name here to
+                register it.
               </p>
             </Field>
 
@@ -369,61 +393,10 @@ export default function RaiseWorkOrderForm({ existing }) {
               <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)} rows={4} placeholder="What happened? Include symptoms, sounds, error codes…" className={`${inputClass} resize-y`} />
             </Field>
 
-            <Field label="Priority" required>
-              <div className="flex gap-2">
-                {offeredPriorities.map(({ id: p, label }) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => {
-                      setPriority(p);
-                      setPriorityTouched(true);
-                    }}
-                    title={label}
-                    className="flex-1 py-2 rounded text-[13px] font-bold border"
-                    style={{
-                      borderColor: effectivePriority === p ? priorityColor(p) : "#D8DEE4",
-                      background: effectivePriority === p ? `${priorityColor(p)}1A` : "#fff",
-                      color: effectivePriority === p ? priorityColor(p) : "#64748B",
-                    }}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </Field>
-
-            <div
-              className="rounded px-3.5 py-3 mb-4 border"
-              style={{ background: suggestion ? `${priorityColor(suggestion)}0D` : "#F6F8FB", borderColor: suggestion ? `${priorityColor(suggestion)}55` : "#E5E9F0" }}
-            >
-              <div className="flex items-center gap-2 mb-1.5">
-                <Sparkles size={14} className="text-accent" />
-                <span className="text-[12.5px] font-semibold text-ink">Auto Priority Suggestion</span>
-              </div>
-              {suggestion ? (
-                <div className="flex flex-wrap items-center justify-between gap-1">
-                  <span className="text-[12.5px] text-ink-soft">
-                    Based on production impact{safetyFlag ? " + safety risk" : ""}
-                    {envFlag ? " + environmental risk" : ""}, the system recommends <strong style={{ color: priorityColor(suggestion) }}>{suggestion}</strong>.
-                  </span>
-                  {priorityTouched && priority !== suggestion && (
-                    <button
-                      onClick={() => {
-                        setPriority(suggestion);
-                        setPriorityTouched(true);
-                      }}
-                      className="text-accent font-semibold text-[12px] whitespace-nowrap ml-2.5"
-                    >
-                      Apply →
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <span className="text-[12.5px] text-ink-soft">Select production impact below (and any risk flags) to see a suggestion.</span>
-              )}
-            </div>
-
+            {/* Production impact now sits ABOVE priority, where it did not
+                before. Priority is derived from it, and a derived value printed
+                above the field it derives from reads backwards — the reader has
+                to scroll down to find out why it says what it says. */}
             <Field label="Production impact" required hint={errors.impact}>
               <div className="flex flex-col gap-2">
                 {offeredImpacts.map((opt) => (
@@ -443,49 +416,51 @@ export default function RaiseWorkOrderForm({ existing }) {
               </div>
             </Field>
 
+            {/* Read-only, and rendered as a statement rather than as a disabled
+                control: four greyed-out buttons would still read as "you may
+                choose, just not now", which is the wrong idea entirely. */}
+            <Field label="Priority">
+              <div
+                className="rounded px-3.5 py-3 border"
+                style={{
+                  background: effectivePriority ? `${priorityColor(effectivePriority)}0D` : "#F6F8FB",
+                  borderColor: effectivePriority ? `${priorityColor(effectivePriority)}55` : "#E5E9F0",
+                }}
+              >
+                {effectivePriority ? (
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                    <PriorityBadge p={effectivePriority} />
+                    <span className="text-[12.5px] text-ink-soft">
+                      Set from the production impact
+                      {safetyFlag ? ", raised for safety risk" : ""}
+                      {envFlag ? ", raised for environmental risk" : ""}. Not editable.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={14} className="text-accent" />
+                    <span className="text-[12.5px] text-ink-soft">
+                      Choose the production impact above and the priority follows from it.
+                    </span>
+                  </div>
+                )}
+              </div>
+            </Field>
+
             {!isEdit && (
-              <div className="mb-4 flex flex-col gap-4 sm:flex-row">
+              <div className="mb-4">
                 <FileUploadField label="Upload Photo" icon={ImageIcon} accept="image/*" inputRef={photoInput} files={photos} onSelect={(f) => setPhotos((p) => [...p, ...f])} onRemove={(i) => setPhotos((p) => p.filter((_, idx) => idx !== i))} previewImages />
-                <FileUploadField label="Upload Video" icon={Video} accept="video/*" inputRef={videoInput} files={videos} onSelect={(f) => setVideos((v) => [...v, ...f])} onRemove={(i) => setVideos((v) => v.filter((_, idx) => idx !== i))} />
+                <p className="mt-1.5 text-[11.5px] text-ink-soft">
+                  Resized and compressed on this device before it uploads, so a photo straight off a
+                  phone camera goes up in a fraction of the time.
+                </p>
               </div>
             )}
             {isEdit && (
               <div className="text-[11.5px] text-ink-soft mb-4">
-                Photos and videos are managed from the Attachments tab on the work order itself, not from this edit form.
+                Photos are managed from the Attachments tab on the work order itself, not from this edit form.
               </div>
             )}
-
-            <Field label="Estimated downtime" required hint={errors.downtime}>
-              {/* Both controls are wrapped rather than sized directly, because
-                  inputClass already carries `w-full` and Tailwind emits `.w-full`
-                  after `.w-32` — so `${inputClass} w-32` lost, the select took the
-                  full width, and the number input (flex-basis 0) collapsed to its
-                  min-content size: a box too narrow to read a two-digit number in.
-                  Sizing the wrappers leaves each control filling its own box. */}
-              <div className="flex gap-2">
-                <div className="min-w-0 flex-1">
-                  <input
-                    type="number"
-                    min="0"
-                    value={downtimeValue}
-                    onChange={(e) => setDowntimeValue(e.target.value)}
-                    placeholder="e.g. 4"
-                    className={inputClass}
-                  />
-                </div>
-                <div className="w-32 flex-none">
-                  <select
-                    value={downtimeUnit}
-                    onChange={(e) => setDowntimeUnit(e.target.value)}
-                    className={inputClass}
-                    aria-label="Downtime unit"
-                  >
-                    <option value="hours">Hours</option>
-                    <option value="days">Days</option>
-                  </select>
-                </div>
-              </div>
-            </Field>
 
             <Field label="Safety risk">
               <div className="mb-2 flex flex-wrap items-center gap-3">
@@ -507,7 +482,7 @@ export default function RaiseWorkOrderForm({ existing }) {
                       key={s.code}
                       type="button"
                       onClick={() => setSafetySeverity(s.code)}
-                      title={`${s.label} — caps the suggestion at ${s.escalates_to_priority}`}
+                      title={`${s.label} — raises the priority to at least ${s.escalates_to_priority}`}
                       className="flex-1 py-1.5 rounded text-[12px] font-semibold border"
                       style={{ borderColor: safetySeverity === s.code ? "#EF4444" : "#D8DEE4", background: safetySeverity === s.code ? "#FCE9E9" : "#fff", color: safetySeverity === s.code ? "#EF4444" : "#64748B" }}
                     >
@@ -515,6 +490,17 @@ export default function RaiseWorkOrderForm({ existing }) {
                     </button>
                   ))}
                 </div>
+              )}
+              {/* Said out loud, not just in a `title`. Priority is derived and
+                  sits ABOVE this field, so flagging a risk down here changes a
+                  value that may well be off the top of the screen — under the
+                  old design an override was a deliberate click, and the effect
+                  was where the eye already was. */}
+              {safetyCeiling && (
+                <p className="mt-1.5 text-[11.5px] text-ink-soft">
+                  Raises the priority to at least{" "}
+                  <strong style={{ color: priorityColor(safetyCeiling) }}>{safetyCeiling}</strong>.
+                </p>
               )}
             </Field>
 
@@ -531,6 +517,12 @@ export default function RaiseWorkOrderForm({ existing }) {
                   </button>
                 ))}
               </div>
+              {envCeiling && (
+                <p className="mt-1.5 text-[11.5px] text-ink-soft">
+                  Raises the priority to at least{" "}
+                  <strong style={{ color: priorityColor(envCeiling) }}>{envCeiling}</strong>.
+                </p>
+              )}
             </Field>
 
             <div className="flex flex-col sm:flex-row sm:gap-4">
@@ -561,7 +553,7 @@ export default function RaiseWorkOrderForm({ existing }) {
               <>
                 <div className="flex items-center gap-2 mb-4">
                   <PriorityBadge p={effectivePriority} />
-                  <span className="text-[12.5px] text-[#B9C9E8]">{priorityTouched ? "Manually set" : "Auto-suggested"}</span>
+                  <span className="text-[12.5px] text-[#B9C9E8]">From production impact</span>
                 </div>
                 <div className="flex flex-col gap-2.5">
                   {[
@@ -577,7 +569,7 @@ export default function RaiseWorkOrderForm({ existing }) {
                 </div>
                 {isEdit && (
                   <div className="text-[11px] text-[#B9C9E8] mt-3 pt-3 border-t border-[#2C5AA8]">
-                    Editing recalculates the suggestion, but SLA deadlines already set at creation are not changed retroactively.
+                    Changing the impact re-derives the priority, but SLA deadlines already set at creation are not changed retroactively.
                   </div>
                 )}
               </>

@@ -3,7 +3,7 @@
 /**
  * SI — Service Inside · Work order attachments
  *
- * Upload photos and videos, and — the half that was missing — open them.
+ * Upload photos, and — the half that was missing — open them.
  *
  * A photo was a bare `<img>` with no handler on it, so tapping one did nothing
  * at all: the only view of a fault photo was an 80px thumbnail. A video was a
@@ -14,6 +14,17 @@
  *
  * The viewer walks photos-then-videos as a single list, the order the two
  * columns already read in, so next/prev is one model instead of two.
+ *
+ * **Video is upload-removed, not read-removed.** There is no video control any
+ * more and migration 0036 drops the video mime types from the bucket, so no new
+ * one can arrive by any path. What was uploaded before that stays playable, and
+ * the Videos column renders only when the work order actually has one —
+ * otherwise a permanently-empty "Videos (0)" column would sit next to Photos
+ * advertising a feature that is gone. Deleting the playback branch instead
+ * would have made those files unreachable from the app that stored them.
+ *
+ * Photos are compressed in the browser before upload (lib/compressImage.js),
+ * inside `addAttachment` rather than here — see the note there.
  */
 import { useEffect, useRef, useState } from "react";
 import {
@@ -22,7 +33,6 @@ import {
   ExternalLink,
   Image as ImageIcon,
   Play,
-  Video,
   X,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
@@ -181,7 +191,6 @@ export default function AttachmentsPanel({ wo }) {
   const [error, setError] = useState(null);
   const [viewing, setViewing] = useState(null);
   const photoInput = useRef(null);
-  const videoInput = useRef(null);
 
   useEffect(() => {
     const unsub = listenAttachments(wo.id, setItems, () => setError("Couldn't load attachments."));
@@ -211,7 +220,9 @@ export default function AttachmentsPanel({ wo }) {
     // showed up as a third squeezed column instead of a full-width banner.
     <div>
       {error && <ErrorBanner message={error} />}
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+      {/* One column until there is actually a legacy video to show, so Photos
+          gets the full width in the ordinary case rather than half of it. */}
+      <div className={`grid grid-cols-1 gap-6 ${videos.length > 0 ? "sm:grid-cols-2" : ""}`}>
         <div className="min-w-0">
           <div className="mb-2.5 flex items-center justify-between">
             <div className="font-bold text-[13.5px] text-ink">Photos ({photos.length})</div>
@@ -236,13 +247,14 @@ export default function AttachmentsPanel({ wo }) {
             ))}
           </div>
         </div>
+        {videos.length > 0 && (
         <div className="min-w-0">
-          <div className="mb-2.5 flex items-center justify-between">
+          <div className="mb-2.5">
             <div className="font-bold text-[13.5px] text-ink">Videos ({videos.length})</div>
-            <Button size="sm" variant="ghost" icon={Video} onClick={() => videoInput.current.click()}>Upload</Button>
-            <input ref={videoInput} type="file" accept="video/*" multiple hidden onChange={(e) => upload(e.target.files, "video")} />
+            <div className="text-[11.5px] text-ink-soft">
+              Uploaded before video attachments were withdrawn. Still playable; no new ones can be added.
+            </div>
           </div>
-          {videos.length === 0 && <div className="text-[12.5px] text-ink-soft">No videos uploaded yet.</div>}
           <div className="flex flex-col gap-1.5">
             {videos.map((v, i) => (
               <button
@@ -262,6 +274,7 @@ export default function AttachmentsPanel({ wo }) {
             ))}
           </div>
         </div>
+        )}
       </div>
 
       {viewing !== null && media[viewing] && (

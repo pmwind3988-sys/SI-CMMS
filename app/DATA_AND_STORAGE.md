@@ -8,8 +8,9 @@ below is Supabase-side; nothing here is configurable from inside the app.
 ## 1. The limits
 
 Two separate quotas, counted separately, with separate consequences. **Database** is the
-Postgres data. **Storage** is the `attachments` bucket — photos and videos, which never
-touch Postgres beyond a row holding their object key.
+Postgres data. **Storage** is the `attachments` bucket — photos and PDFs, which never
+touch Postgres beyond a row holding their object key. (Videos uploaded before migration
+0036 are still in there; the bucket no longer accepts new ones.)
 
 | | Free | Pro |
 |---|---|---|
@@ -46,11 +47,17 @@ rather than hard-stopping — but it is the quota this app is most likely to blo
 
 ## 2. What actually grows here, in order
 
-**Attachments dominate, by two orders of magnitude.** A phone photo off a plant Android is
-2–5 MB and the bucket allows video up to 50 MB. Three photos on a work order is ~10 MB of
-storage against a 1 GB Free quota — so **Free runs out of file storage at roughly 100 work
-orders**, while the same 100 work orders use well under 3 MB of *database*. If storage is
-filling and you are looking at table sizes, you are looking in the wrong place.
+**Attachments dominate, by two orders of magnitude**, though far less than they used to.
+A phone photo off a plant Android is 2–5 MB *as taken*; since migration 0036 it is
+resized to a 1920px long edge and re-encoded in the browser before it is uploaded
+(`lib/compressImage.js`), which measured **92.9% smaller** on a 4032×3024 photo — so what
+lands in the bucket is a few hundred KB, not a few MB. New video is refused outright.
+
+The old arithmetic was: three photos on a work order is ~10 MB against a 1 GB Free quota,
+so **Free ran out of file storage at roughly 100 work orders**. At ~400 KB a photo that
+becomes closer to 800. The same 100 work orders still use well under 3 MB of *database*,
+so if storage is filling and you are looking at table sizes, you are looking in the wrong
+place — but it now takes a great deal longer to fill.
 
 **Egress is next, and it is amplified by design.** `attachments.file_url` holds an object
 key and `listenAttachments()` mints a one-hour signed URL on every read (CLAUDE.md,

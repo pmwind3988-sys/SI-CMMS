@@ -249,12 +249,19 @@ function OverviewTab({ wo }) {
   // otherwise complete overview reads as missing data rather than as a field
   // that did not exist yet.
   const rows = [
+    // Department before Equipment, matching the order the raise form now asks in.
+    ["Department", departmentName(wo.department_id)],
     ["Equipment", wo.asset_name],
     ...(wo.area ? [["Area", wo.area]] : []),
-    ["Department", departmentName(wo.department_id)],
     ["Type", typeLabel(wo.type)],
     ["Production impact", impactLabel(wo.impact)],
-    ["Estimated downtime", `${wo.est_downtime_value} ${wo.est_downtime_unit}`],
+    // Estimated downtime is no longer asked for, so new work orders carry
+    // nothing here — and unguarded this printed the string "null null". Shown
+    // only for the work orders raised while the field existed, exactly the way
+    // Area above handles pre-0019 rows.
+    ...(wo.est_downtime_value != null
+      ? [["Estimated downtime", `${wo.est_downtime_value} ${wo.est_downtime_unit ?? ""}`.trim()]]
+      : []),
     ["Requested by", wo.requester_name],
     ["Requester phone", wo.requester_phone || "—"],
     ["Safety risk", wo.safety_risk?.flag ? `Yes (${wo.safety_risk.severity})` : "No"],

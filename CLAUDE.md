@@ -406,6 +406,79 @@ not once per row). It has to be server-side: `si_refresh_dashboard_stats()` re-c
 Manager/Admin, and 0018 lets a Superuser grant deletion to a Supervisor, who would then delete a
 work order and be refused the refresh.
 
+### Estimated downtime is no longer collected
+
+The field is gone from the raise form, and `createWorkOrder()` deliberately does not send
+`est_downtime_value` / `est_downtime_unit`. **No migration**: both columns are nullable
+(0001), so a new work order simply carries no estimate.
+
+The columns stay, and so do the export's two columns, because the estimates already
+recorded are part of those work orders' records. What that costs is one guard: the detail
+view rendered `` `${wo.est_downtime_value} ${wo.est_downtime_unit}` `` unconditionally,
+which prints the string **"null null"** the moment a work order has neither. It is now
+conditional, the same shape the `Area` row already used for rows raised before 0019 —
+shown for the work orders raised while the field existed, absent otherwise. Editing an old
+work order no longer sends those two keys either, so its estimate survives being edited.
+
+Consequence to expect rather than treat as a bug: the export's "Est. Downtime" and
+"Downtime Unit" columns are blank for everything raised from here on.
+
+### Priority is derived, not chosen (migration 0036)
+
+**`work_orders.priority` follows the production impact, and no longer can be overridden.**
+It was a suggestion the requester could reject; the four priority buttons and the
+`priority_touched` flag they set are gone from the raise form.
+
+The escalations are **kept**, and that was a deliberate choice against the narrower reading
+of "follows the impact": a safety flag still raises the priority to its severity's ceiling
+and an environmental flag to Medium's, so the derived value is the most urgent of the three
+inputs. Dropping them would have made `safety_severities.escalates_to_priority` decide
+nothing, and auxiliary equipment (P3) with a high safety risk would have stopped escalating
+to P1 — a safety regression arriving silently.
+
+**The rule lives in a trigger, because a read-only control decides nothing.** This schema
+has shipped that bug twice: `users.status` was written by the admin screen and read by no
+policy, trigger or predicate for four migrations (0026), and 0031's header makes the same
+argument about a retirement that only filters a dropdown. So `si_derive_priority(si_impact,
+jsonb, jsonb)` recomputes it and `a00_derive_work_order_priority` (BEFORE INSERT OR UPDATE)
+overwrites whatever arrives. Measured against PostgREST: sending `priority: 'P4'` on a work
+order whose impact derives P2 stores **P2**, and `priority_touched` comes back false.
+
+`suggestPriority()` in `lib/referenceData.js` is still there and still computes the same
+thing. It is not the rule — it is what lets the form show the answer, and the SLA targets
+that follow from it, before anything is submitted. **The two must stay in step**; change one
+without the other and the form promises one priority while the database stores another.
+
+Four details worth not undoing:
+
+- **`a00_` is load-bearing.** BEFORE row triggers fire in name order, and
+  `before_work_order_insert` (0003) computes *both SLA deadlines* from `new.priority`.
+  Behind it, the SLA would be calculated from whatever the client sent and then contradict
+  the priority actually stored. It also sorts ahead of `a0_guard_retired_reference` (0031),
+  so a direct caller passing a retired priority gets it replaced rather than refused for a
+  field they do not control — a retired *impact* is still refused, which is right, because
+  the impact is chosen.
+- **It fires on every UPDATE, not `update of impact, …`.** RLS grants rows, not columns, so
+  a column list would leave a bare `update work_orders set priority = 'P1'` unguarded, and
+  `updateWorkOrderFields()` forwards an arbitrary `fields` object. Same reasoning as 0033's
+  stamp trigger.
+- **0036 backfills**, precisely because of the point above: with the trigger on every
+  UPDATE, a row disagreeing with its impact would be corrected the next time anyone touched
+  it, so a technician accepting a job would bump its priority as a side effect. Correcting
+  them at migration time makes that atomic and leaves every later UPDATE a no-op. SLA
+  deadlines already set are **not** recomputed — they are a promise made when the work order
+  was raised.
+- **The form was reordered, not just disabled.** Production impact now sits *above*
+  priority, since a derived value printed above its own input reads backwards. Safety and
+  environmental risk stayed below it and each gained a visible *"Raises the priority to at
+  least Pn"* line: under the old design an override was a deliberate click where the eye
+  already was, and now flagging a risk changes a value that may be off the top of the
+  screen.
+
+`priority_touched` survives as a column and as the export's "Priority Overridden" column.
+It can only read "No" now, but an export is a record and churning a record's shape is worse
+than a constant column.
+
 ### Dates and times
 
 **`lib/datetime.js` pins `Asia/Kuala_Lumpur`. Everything older in the app does not.** Every
@@ -515,6 +588,20 @@ equipment are **editable tables**, not literals. The first six are keyed on Post
 migration 0009 grants UPDATE only — they can be relabelled but not added to. Departments and
 assets can be added freely and appear on the raise form immediately.
 
+Adding a value to one of the enum-keyed six therefore takes a migration, and **it takes two
+files, not one**. Migration 0035 adds `repairing` to `si_wo_type` (WO types are now
+Breakdown 1, Inspection 2, Project 3, Repairing 4) and does nothing else, because Postgres
+refuses to let a transaction *use* an enum value the same transaction added — the
+`insert into wo_types` naming it fails with *"unsafe use of new value"* — and the Supabase
+CLI wraps each migration file in a transaction. 0036 seeds the row. Nothing in the client
+hardcodes a type list, so a new type is otherwise purely additive: form, list and export
+all read the table.
+
+Note the vocabulary collision, which is deliberate: `repairing` is also a work order
+**status** in the 0001 flow. Different enums (`si_wo_status` vs `si_wo_type`), nothing
+joins them, and the type answers "what kind of job" where the status answers "how far has
+it got".
+
 **Any signed-in user may register a department (0019) or a piece of equipment (0032)**, because
 the raise form offers "+ Add new" in both pickers — the person on the floor with a fault to
 report is the one who notices the machine or the bay is missing. Insert only; the other verbs
@@ -527,9 +614,16 @@ Both write paths are `.insert()`, never `.upsert()`. PostgREST turns an upsert i
 `insert … on conflict do update`, which needs the UPDATE policy too — so RLS already refuses
 it — but stating it as an insert is what makes a collision come back as *"that already
 exists"* rather than as a policy error. `createAsset()` also refuses before it starts if no
-department is chosen: `assets.department_id` is `not null`, and the raise form asks for
-equipment *first* and fills the department in from it, which is right for every other case and
-exactly backwards for this one.
+department is chosen: `assets.department_id` is `not null`.
+
+That last one used to be awkward and no longer is. The raise form asked for equipment
+*first* and filled the department in from it — right for every other case and exactly
+backwards for registering a machine, since the person adding one had to go back up for the
+field they had just skipped. **The two are now swapped: department first, equipment
+second.** `handleAssetChange` is unchanged and still overwrites the department from the
+machine's own, which is the right way round — the asset is the more specific answer and
+knows its own owner, and the field stays editable afterwards for when the registered owner
+is not who should handle this particular fault.
 
 ### Retiring reference data (migration 0031)
 
@@ -633,6 +727,46 @@ and those rows share an identical `created_at`.
 The `attachments` bucket is private. `attachments.file_url` stores the **object key**;
 `listenAttachments()` mints a one-hour signed URL on read. 50MB cap with a mime allowlist,
 enforced by the bucket.
+
+**Photos are compressed in the browser before upload, and video is no longer accepted
+(migration 0036).**
+
+`lib/compressImage.js` decodes, draws to a canvas scaled to a 1920px long edge, and
+re-encodes as JPEG down a quality ladder (0.75 → 0.6 → 0.45), stopping as soon as the
+result is under half the original. Measured: a 4032×3024 photo came out **92.9% smaller**;
+a text-heavy transparent PNG, the adversarial case, only reached 49.6% — JPEG is bad at
+sharp text and PNG is good at it, and no rung of the ladder halves it without making the
+text unreadable.
+
+Four things there are load-bearing:
+
+- **It is called inside `addAttachment()`, not at the two call sites.** That function is
+  the chokepoint the raise form and the Attachments tab already share, so "the original is
+  never stored" is structural rather than something each caller remembers: only the
+  returned file is ever uploaded, which is also why `file_size_bytes` records the stored
+  size and not the camera's. There is no original to delete afterwards because none is
+  written.
+- **It never throws and never rejects.** Every failure returns the original file: an
+  undecodable format, a null blob, or a result that came out *larger* than the input. That
+  is what makes "any format works" true — HEIC, the iPhone default, has no decoder in
+  Chrome or Firefox at all (it decodes on Apple devices, and iOS usually hands over a JPEG
+  anyway when a photo is picked through `accept="image/*"`), so on those browsers a HEIC
+  uploads untouched rather than failing.
+- **JPEG, not WebP**, though WebP is smaller at equal quality and the bucket allows it.
+  These photos get opened on whatever is to hand in a plant; JPEG is the one raster format
+  nothing fails to decode.
+- **The canvas is filled white before the draw.** JPEG has no alpha, so without it every
+  transparent pixel composites against transparent black and a light HMI screenshot
+  arrives looking like a photo of a switched-off monitor. Verified by sampling the output:
+  RGBA 254,254,254,255.
+
+Video is **upload-removed, not read-removed**. 0036 drops `video/mp4`, `video/quicktime`
+and `video/webm` from the bucket allowlist, so it is a rule rather than a hidden button —
+but `si_file_type` keeps its `'video'` value (rows reference it, and an enum value cannot
+be removed anyway), the read policy is untouched, and `AttachmentsPanel` keeps its
+`<video controls>` branch. The Videos column renders only when the work order actually has
+one. Deleting the playback branch would have made those files unreachable from the app
+that stored them.
 
 ### Deleting user accounts (migration 0030)
 
@@ -829,6 +963,24 @@ app. 0034 adds none — it replaces 0033's stamp function and both dashboard fun
 and re-issues their grants, which it has to: a later `create or replace` resets options an
 earlier `alter` set, the same trap described above.
 
+0036 adds two — `si_derive_priority` and `si_force_derived_priority` — both SECURITY DEFINER
+with `search_path` pinned and `revoke all ... from public, anon, authenticated`, the trigger-body
+shape 0033 used. Verified from the browser's own anon key: `rpc('si_derive_priority')` returns
+*permission denied for function si_derive_priority*. **The advisor has not been run since**, and
+only the user can run it — so treat 0035/0036 as unaudited on everything the files cannot show
+(live grants rather than intended ones, extensions, auth configuration, anything changed in the
+dashboard).
+
+A note on `si_derive_priority` for anyone auditing statically: it is `stable`, not
+`immutable`, because it reads three lookup tables — marking it immutable would let Postgres
+cache a result across a relabelling. And its body failed on first push with *"operator does
+not exist: si_impact = text"*, because `impact_levels.code` is `si_impact` and the original
+wrote `i.code = p_impact::text`. plpgsql bodies are not parsed until called, so that was a
+runtime error in a function that created cleanly. **A successful `db push` is not evidence
+that a plpgsql function works** — exercise every branch. All ten of this one's were, on the
+live project: the four impacts alone, each safety severity, the environmental flag, both
+together, and a null impact.
+
 **Advisor run 2026-08-20 after 0034: 0 errors, 7 warnings, 2 info — none of them from 0031,
 0033 or 0034.** Five warnings are the deliberate `authenticated` grants on SECURITY DEFINER
 functions (`si_can_delete_work_orders`, `si_is_test_account`, `si_reference_is_retired`,
@@ -902,6 +1054,16 @@ has happened on this project, and is what 0013 exists to fix.
   Signing into a fixture and closing a real work order in four minutes puts four minutes in the
   average. Excluding it would instead lose a real resolution from the timing stats; 0034's
   header records why neither answer is wholly right.
+- **Image compression is best-effort by design, and two cases fall short of halving.** A
+  format the browser cannot decode uploads at full size — in practice HEIC on Chrome and
+  Firefox, which have no decoder for it; and a text-heavy PNG reached only 49.6% smaller in
+  testing, because JPEG is poor at sharp text and no rung of the quality ladder halves it
+  while keeping the text readable. Both return the original rather than failing, which is
+  the intended trade: never lose a photo of a fault to compression. Closing the HEIC half
+  would mean bundling libheif (~1.5MB of wasm) and was declined.
+- **Nothing recompresses what is already in the bucket.** Compression happens before upload,
+  so photos stored before migration 0036 are still full-size. A backfill script was
+  considered and declined: it would rewrite files that are part of a work order's record.
 - **Most accounts cannot receive email.** The seeded ones are all `@example.com`, which
   `si_is_placeholder_email` correctly refuses to send recovery links to — so for those
   accounts the *only* credential route is the Superuser issuing a temporary password. That

@@ -1,0 +1,28 @@
+-- ============================================================================
+-- 0035 — 'repairing' joins si_wo_type
+--
+-- One statement, alone in its own file, and that is the whole reason this
+-- migration exists separately from 0036.
+--
+-- Postgres will not let a transaction USE an enum value that the same
+-- transaction added: `alter type ... add value` followed by an insert
+-- referencing the new label fails with
+--
+--     unsafe use of new value "repairing" of enum type si_wo_type
+--
+-- The Supabase CLI wraps each migration file in a transaction, so the
+-- `insert into wo_types` that gives this label a row, a sort order and a
+-- description cannot live here. It is in 0036.
+--
+-- `if not exists` so a re-run is a no-op rather than a duplicate-label error;
+-- enum values cannot be removed, so there is no down side to this.
+--
+-- Note the collision of vocabulary, which is deliberate on the requester's
+-- part and worth stating so nobody "fixes" it later: `repairing` is already a
+-- WORK ORDER STATUS in the 0001 flow (`on_site -> repairing -> testing`). This
+-- is a work order TYPE, answering "what kind of job is this" rather than
+-- "where has it got to". The two enums are unrelated — si_wo_status and
+-- si_wo_type — and nothing joins them.
+-- ============================================================================
+
+alter type si_wo_type add value if not exists 'repairing';

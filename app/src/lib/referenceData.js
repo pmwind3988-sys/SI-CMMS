@@ -255,10 +255,19 @@ export function ReferenceDataProvider({ children }) {
       statusFlow: statuses.map((s) => s.code),
 
       /**
-       * The priority the form suggests, from impact plus the two risk flags.
-       * Same rule as before, but the impact -> priority mapping and the safety
-       * escalation ceiling are now rows (impact_levels.suggests_priority and
-       * safety_severities.escalates_to_priority) instead of literals.
+       * The priority a work order gets, from impact plus the two risk flags.
+       * The impact -> priority mapping and the safety escalation ceiling are
+       * rows (impact_levels.suggests_priority and
+       * safety_severities.escalates_to_priority) rather than literals.
+       *
+       * Named "suggest" from when it was one. It is no longer a suggestion:
+       * migration 0036 made priority read-only and derived, and
+       * `si_derive_priority` recomputes this same rule in a BEFORE
+       * INSERT/UPDATE trigger that overwrites whatever the client sends. This
+       * copy exists so the raise form can show the answer, and the SLA targets
+       * that follow from it, before anything is submitted — the two must stay
+       * in step, so change them together or the form will promise one priority
+       * and the database will store another.
        */
       suggestPriority: (impactCode, safety, env) => {
         const rank = (id) => priorityMap.get(id)?.rank ?? null;

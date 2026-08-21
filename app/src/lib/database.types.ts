@@ -1247,6 +1247,14 @@ export type Database = {
         Args: { p_department_id: string }
         Returns: string[]
       }
+      si_derive_priority: {
+        Args: {
+          p_env: Json
+          p_impact: Database["public"]["Enums"]["si_impact"]
+          p_safety: Json
+        }
+        Returns: Database["public"]["Enums"]["si_priority"]
+      }
       si_dummy_flags: {
         Args: { u: Database["public"]["Tables"]["users"]["Row"] }
         Returns: string[]
@@ -1429,7 +1437,7 @@ export type Database = {
         | "completed"
         | "verified"
         | "closed"
-      si_wo_type: "breakdown" | "inspection" | "project"
+      si_wo_type: "breakdown" | "inspection" | "project" | "repairing"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1590,7 +1598,7 @@ export const Constants = {
         "verified",
         "closed",
       ],
-      si_wo_type: ["breakdown", "inspection", "project"],
+      si_wo_type: ["breakdown", "inspection", "project", "repairing"],
     },
   },
 } as const

@@ -23,6 +23,7 @@
  * building remark text; it no longer establishes identity.
  */
 import { supabase, liveQuery, liveRow } from "./supabase";
+import { compressImage } from "./compressImage";
 import { ROLES, hasRole } from "./roles";
 
 const WO_SELECT = "*";
@@ -38,8 +39,6 @@ export async function createWorkOrder({
   type,
   priority,
   impact,
-  estDowntimeValue,
-  estDowntimeUnit,
   description,
   safetyRisk,
   environmentalRisk,
@@ -61,8 +60,10 @@ export async function createWorkOrder({
       priority,
       status: "open",
       impact,
-      est_downtime_value: estDowntimeValue === "" || estDowntimeValue == null ? null : Number(estDowntimeValue),
-      est_downtime_unit: estDowntimeUnit,
+      // est_downtime_value / est_downtime_unit are deliberately not sent. The
+      // field is gone from the raise form, and both columns are nullable, so a
+      // new work order simply carries no estimate. The columns stay for the
+      // work orders raised before it was removed.
       description,
       safety_risk: safetyRisk || { flag: false, severity: null },
       environmental_risk: environmentalRisk || { flag: false },
@@ -483,15 +484,32 @@ export async function editComment(commentId, newText) {
 }
 
 /* ------------------------------------------------------------------
-   ATTACHMENTS — Upload Photos / Upload Videos
+   ATTACHMENTS — Upload Photos / Documents
+
+   Video upload is gone (migration 0036 also drops the three video mime types
+   from the bucket, so it is refused rather than merely unoffered). Rows already
+   carrying file_type 'video' are untouched and still play in the viewer.
 -------------------------------------------------------------------*/
 export async function addAttachment(woId, actor, file, fileType) {
-  const safeName = file.name.replace(/[^\w.\-]/g, "_");
+  /* Compressed HERE rather than at the two call sites, because this function is
+     the chokepoint both of them already go through — the raise form and the
+     work order's Attachments tab. Doing it here is what makes "the original is
+     never stored" structural instead of a thing each caller has to remember:
+     only `upload` below sees a file, and it only ever sees this one.
+
+     compressImage() never rejects — an undecodable format (HEIC outside
+     Safari) or a result that came out larger returns the original untouched, so
+     nothing here needs a fallback. Everything downstream reads the compressed
+     file: `contentType` from its type, and file_size_bytes from its size, which
+     is why the recorded size is the stored size and not the camera's. */
+  const upload = fileType === "photo" ? await compressImage(file) : file;
+
+  const safeName = upload.name.replace(/[^\w.\-]/g, "_");
   const path = `work_orders/${woId}/${Date.now()}-${safeName}`;
 
   const { error: uploadError } = await supabase.storage
     .from("attachments")
-    .upload(path, file, { contentType: file.type, upsert: false });
+    .upload(path, upload, { contentType: upload.type, upsert: false });
   if (uploadError) throw uploadError;
 
   const { error } = await supabase.from("attachments").insert({
@@ -499,8 +517,8 @@ export async function addAttachment(woId, actor, file, fileType) {
     entity_id: woId,
     file_url: path, // the object key; a signed URL is minted on read
     storage_path: path,
-    file_type: fileType, // "photo" | "video" | "document"
-    file_size_bytes: file.size,
+    file_type: fileType, // "photo" | "document" ('video' is legacy-read-only)
+    file_size_bytes: upload.size,
     uploaded_by_id: actor.uid,
     uploaded_by_role: actor.role,
   });
