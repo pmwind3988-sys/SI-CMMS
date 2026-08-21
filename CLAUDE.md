@@ -966,10 +966,26 @@ earlier `alter` set, the same trap described above.
 0036 adds two — `si_derive_priority` and `si_force_derived_priority` — both SECURITY DEFINER
 with `search_path` pinned and `revoke all ... from public, anon, authenticated`, the trigger-body
 shape 0033 used. Verified from the browser's own anon key: `rpc('si_derive_priority')` returns
-*permission denied for function si_derive_priority*. **The advisor has not been run since**, and
-only the user can run it — so treat 0035/0036 as unaudited on everything the files cannot show
-(live grants rather than intended ones, extensions, auth configuration, anything changed in the
-dashboard).
+*permission denied for function si_derive_priority* — HTTP 401, code `42501`, against a control
+call that returns 200, so the probe distinguishes "revoked" from "everything fails". 0035 adds
+none.
+
+**Advisor run 2026-08-21 after 0036: 0 errors, 7 warnings, 2 info — the same seven warnings as
+the 0034 run below, entity for entity, and not one of them names either new function.** Five are
+the deliberate `authenticated` grants on `si_can_delete_work_orders`, `si_is_test_account`,
+`si_reference_is_retired`, `si_refresh_dashboard_stats` and `si_set_user_roles`; one is
+`si_rank`, still `Function Search Path Mutable`, still the function that exists in the database
+and in no migration; one is `Leaked Password Protection Disabled`. The info count is unchanged at
+two, contents not inspected. So 0035/0036 introduced nothing — which is the only thing this run
+establishes, and the useful reading of it is that the count did not move rather than that the
+count is low.
+
+Worth knowing for the next migration that adds a trigger function: **`si_force_derived_priority`
+cannot be probed the way `si_derive_priority` was.** PostgREST answers `PGRST202` ("could not
+find the function") for it — and does the same on the **service role**, and on 0003's
+`si_stamp_work_order`, so functions returning `trigger` are not published as RPCs at all.
+`PGRST202` from the anon key therefore proves nothing about grants on its own; check it against
+a privileged caller before reading it as "revoked".
 
 A note on `si_derive_priority` for anyone auditing statically: it is `stable`, not
 `immutable`, because it reads three lookup tables — marking it immutable would let Postgres
