@@ -16,6 +16,7 @@ import {
   AlertOctagon,
   CheckCheck,
   Share,
+  ThumbsUp,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useOutsideTap } from "../lib/useOutsideTap";
@@ -33,7 +34,7 @@ import {
   requestOsNotificationPermission,
 } from "../lib/osNotifications";
 
-const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon };
+const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp };
 
 // Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
 // Firebase Timestamp object — so test parseability, not for a .toDate method.

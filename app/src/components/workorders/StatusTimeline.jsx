@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, PauseCircle } from "lucide-react";
+import { CheckCircle2, PauseCircle, RotateCcw } from "lucide-react";
 import { listenWorkOrderHistory } from "../../lib/workOrders";
 import { useReferenceData } from "../../lib/referenceData";
 import { ErrorBanner } from "../ui/Surfaces";
@@ -33,7 +33,19 @@ export default function StatusTimeline({ wo }) {
     <div>
       {error && <ErrorBanner message={error} />}
       {STATUS_FLOW.map((s, i) => {
-        const event = (history || []).find((h) => h.to_status === s);
+        /* Every history row that landed on this status, not just the first.
+           The ladder is one rung per status, but a real trail is not monotonic:
+           `assigned -> open` (decline), `testing -> repairing` and
+           `completed -> repairing` all revisit a rung that has already been
+           passed. This used to be `.find()`, which returns the FIRST match — so
+           a decline collided with the work order's original `open` row, lost to
+           it, and the decline, its reason and every re-assignment after it were
+           in work_order_history and rendered nowhere. One rule fixes all three.
+           Ordering is the listener's (created_at ascending), so [0] is genuinely
+           the first arrival and the rest are in the order they happened. */
+        const events = (history || []).filter((h) => h.to_status === s);
+        const event = events[0];
+        const revisits = events.slice(1);
         const done = i <= flowIndex;
         const isCurrent = s === wo.status;
         return (
@@ -61,6 +73,31 @@ export default function StatusTimeline({ wo }) {
               ) : (
                 <div className="text-[12px] text-[#B7BEC6] mt-0.5">Pending</div>
               )}
+
+              {/* Return visits to this rung, in the order they happened. A
+                  decline shows up here under Open as `Assigned → Open`, which
+                  is what it literally is; a failed test and a reopen come out
+                  right for free, without a branch for either. Amber and
+                  indented so the rung still reads as one step that the work
+                  order came back to, not as several separate steps. */}
+              {revisits.map((r) => (
+                <div key={r.id} className="mt-2 border-l-2 border-[#F59E0B] pl-2.5">
+                  {/* The transition itself, not a word for its direction. The
+                      obvious label was "Back from X" and it is wrong for half
+                      these rows: `assigned -> open` is a step back, but
+                      `repairing -> testing` on a second attempt is a step
+                      forward that merely happens to revisit a rung. The arrow
+                      is true of every case and editorialises none of them. */}
+                  <div className="text-[11.5px] font-semibold text-[#B45309]">
+                    <RotateCcw size={11} className="inline mb-0.5 mr-1" />
+                    {statusLabel(r.from_status)} → {statusLabel(s)}
+                  </div>
+                  <div className="text-[12px] text-ink-soft">
+                    {r.actor_name} · {fmtTime(r.created_at)}
+                  </div>
+                  {r.remarks && <div className="text-[12px] text-ink mt-0.5">{r.remarks}</div>}
+                </div>
+              ))}
             </div>
           </div>
         );

@@ -35,7 +35,9 @@ import {
 import { isAssigneeOf, isRequesterOf, isManagerOrAdmin } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { ROLES, hasRole } from "../../lib/roles";
+import { handoffToast } from "../../lib/toastHandoff";
 import Button from "../ui/Button";
+import { ModalOverlay, Toast } from "../ui/Surfaces";
 import { inputClass } from "../ui/Field";
 
 function InfoBox({ children }) {
@@ -57,6 +59,8 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
 
   const [declineReason, setDeclineReason] = useState("");
   const [showDecline, setShowDecline] = useState(false);
+  const [confirmDecline, setConfirmDecline] = useState(false);
+  const [toast, setToast] = useState(null);
   const [sparePartReason, setSparePartReason] = useState("");
   const [showSparePart, setShowSparePart] = useState(false);
   const [testFailReason, setTestFailReason] = useState("");
@@ -93,6 +97,13 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
 
   const ErrorLine = () => (error ? <div className="text-danger text-[12.5px] mb-2">{error}</div> : null);
 
+  /* Matches the dismissal used in UsersAdmin and SettingsAdmin — Toast has no
+     timer of its own, deliberately, so each caller owns the lifetime. */
+  function flash(message) {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  }
+
   if (wo.status === "open") {
     if (isSupervisorLike)
       return (
@@ -111,27 +122,65 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
           <InfoBox>You've been assigned this work order. Accept it to start, or decline with a reason so the Supervisor can reassign.</InfoBox>
           <ErrorLine />
           <div className="flex flex-wrap gap-2 mb-3">
-            <Button variant="success" icon={CheckCircle2} disabled={busy} onClick={() => run(acceptWorkOrder)}>Accept</Button>
+            <Button variant="success" icon={CheckCircle2} disabled={busy} onClick={async () => {
+              const ok = await run(acceptWorkOrder);
+              /* Accept keeps the technician on the row, and the panel visibly
+                 re-renders into the accepted state — but that redraw is easy to
+                 miss on a phone held at arm's length next to a machine, and
+                 tapping twice because nothing seemed to happen is how a
+                 technician ends up unsure whether the job is theirs. */
+              if (ok) flash("Accepted — " + (wo.wo_number || "work order") + " is yours.");
+            }}>Accept</Button>
             <Button variant="danger" icon={Ban} onClick={() => setShowDecline((s) => !s)}>Decline</Button>
           </div>
           {showDecline && (
             <div className="flex flex-col gap-2 sm:flex-row">
               <input value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} placeholder="Reason for declining…" className={`${inputClass} flex-1`} />
-              <Button variant="danger" disabled={!declineReason || busy} onClick={async () => {
-                const ok = await run(declineWorkOrder, declineReason);
-                setShowDecline(false);
-                /* A decline hands the work order back to the Supervisor and
-                   clears the assignee, so work_orders_select stops returning it
-                   to the technician who declined — and Realtime stops delivering
-                   its changes too, since it filters by the same policy. Staying
-                   here would leave the last row this component saw frozen on
-                   screen, still offering Accept on a job that is no longer
-                   theirs. So the technician goes back to their list, where it is
-                   correctly absent. */
-                if (ok) router.push("/work-orders/");
-              }}>Confirm decline</Button>
+              <Button variant="danger" disabled={!declineReason.trim() || busy} onClick={() => setConfirmDecline(true)}>Confirm decline</Button>
             </div>
           )}
+
+          {/* Decline is the one transition that ends outside the caller's own
+              scope, cannot be undone from this screen, and puts the job back on
+              somebody else's desk — so it gets the extra step that Accept does
+              not, and reads the typed reason back before it goes. */}
+          {confirmDecline && (
+            <ModalOverlay onClose={() => setConfirmDecline(false)}>
+              <div className="bg-white rounded-t-xl sm:rounded-xl w-full sm:max-w-sm p-5">
+                <h2 className="text-[15px] font-bold text-ink mb-1.5">Decline {wo.wo_number}?</h2>
+                <p className="text-[12.5px] text-ink-soft mb-3">
+                  It goes back to the queue for a Supervisor to reassign, and leaves your list. Your Supervisor, the Managers and the Administrators are told, with your reason.
+                </p>
+                <div className="bg-canvas rounded px-3 py-2 mb-4 text-[12.5px] text-ink italic">“{declineReason.trim()}”</div>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="ghost" size="sm" onClick={() => setConfirmDecline(false)}>Keep it</Button>
+                  <Button variant="danger" size="sm" icon={Ban} disabled={busy} onClick={async () => {
+                    const ok = await run(declineWorkOrder, declineReason.trim());
+                    setConfirmDecline(false);
+                    setShowDecline(false);
+                    /* A decline hands the work order back to the Supervisor and
+                       clears the assignee, so work_orders_select stops returning it
+                       to the technician who declined — and Realtime stops delivering
+                       its changes too, since it filters by the same policy. Staying
+                       here would leave the last row this component saw frozen on
+                       screen, still offering Accept on a job that is no longer
+                       theirs. So the technician goes back to their list, where it is
+                       correctly absent.
+
+                       Which is also why the confirmation cannot be a toast in
+                       this component: it unmounts. The message is handed to the
+                       destination page through sessionStorage instead — see
+                       takeHandoffToast() in lib/toastHandoff.js. */
+                    if (ok) {
+                      handoffToast(`Declined — ${wo.wo_number} sent back for reassignment.`);
+                      router.push("/work-orders/");
+                    }
+                  }}>{busy ? "Declining…" : "Decline it"}</Button>
+                </div>
+              </div>
+            </ModalOverlay>
+          )}
+          <Toast message={toast} />
         </div>
       );
     }

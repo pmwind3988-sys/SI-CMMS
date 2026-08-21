@@ -663,6 +663,98 @@ what the queue shows everybody in order to repair one write. Making
 `si_transition_work_order` SECURITY DEFINER would fix decline by removing RLS from all
 twenty-two transitions.
 
+### Accepting and declining leave a trace now (migration 0038)
+
+Both transitions used to happen in near-silence. Three separate things caused that, and only
+one of them was in the database.
+
+**The timeline structurally could not show a decline.** `StatusTimeline` renders a fixed
+ladder of `statusFlow` and matched each rung with `history.find(h => h.to_status === s)`.
+A decline is `assigned → open`, so it collided with the work order's *original* `open` row
+and lost to it — `.find()` returns the first match. The decline, its reason and every
+re-assignment after it were sitting in `work_order_history` the whole time and rendered
+nowhere. It now collects **all** rows per rung: `events[0]` is the first arrival, the rest
+render as indented amber sub-entries. One rule, three fixes — `testing → repairing` and
+`completed → repairing` were invisible for exactly the same reason and come out right
+without a branch of their own.
+
+The sub-entry is labelled with the transition (`Assigned → Open`), not with a word for its
+direction. "Back from X" was the obvious label and it is wrong for half these rows:
+`repairing → testing` on a second attempt is a step *forward* that merely revisits a rung.
+Verified against a deliberately non-monotonic eleven-row trail.
+
+**The fan-out told one side each.** Accept notified the Requester only, decline the
+department Supervisors only, on 0003's reasoning that Manager and Admin watch the Dashboard.
+That holds for volume statistics; it does not hold for the two moments a work order either
+starts moving or comes back unstarted. Now:
+
+```
+accept  -> Requester (unchanged wording) + Supervisors + Managers + Admins
+decline -> Supervisors (unchanged) + Managers + Admins, and NOT the Requester
+```
+
+The asymmetry is deliberate. A decline is an internal routing problem the ops chain fixes in
+minutes, and telling the person who raised the fault that nobody has taken it invites a
+second work order for the same fault — they can still see it in full on the timeline, which
+is what the change above makes true. Three details:
+
+- **Deduplicated by id.** Since 0020 an account holds a *set* of roles, so a
+  Supervisor+Manager is in two of the three source sets and the naive version writes two
+  identical rows for one event. `distinct on (id) … order by id, rk desc` keeps one and
+  stamps `recipient_role` with the highest role held. Measured: Priya holding
+  `{supervisor,manager}` gets exactly one row, stamped `manager`.
+- **The actor is excluded.** `auth.uid()` is readable inside the trigger even though
+  `si_decline_work_order` is SECURITY DEFINER — that changes the database role, not the JWT.
+  Without it a Supervisor+Technician accepting their own assignment is informed by the system
+  that a technician accepted it. On decline there is no other way to identify them:
+  `b_stamp_work_order` has already cleared `assigned_to_id` before this AFTER trigger runs,
+  which is the whole reason 0037 exists.
+- **`si_admins()` is new**, mirroring `si_managers()`. It says `'admin' = any(roles)` rather
+  than leaning on `si_is_admin()`, so a Superuser is included — they hold the role, and being
+  invisible in Admin → Users is not a reason to stop their own notifications reaching them.
+
+`NOTIFICATION_META` gains an `accepted` entry, and `NotificationBell`'s `ICONS` map gains
+`ThumbsUp` with it. A type added server-side and not here renders as a grey generic bell,
+which is how a new notification type goes unnoticed.
+
+**A recipient may finally clear a notification.** `notifications_delete` had been
+`si_is_admin()` since 0002, whose header calls it "manual correction only" — so the
+fastest-growing table in the schema had no retention, no cron sweep, and no client of any
+role but Admin could remove a row. It is now `recipient_id = auth.uid() or si_is_admin()`.
+
+Hard delete, not an `is_cleared` flag: that is the only version that reclaims anything, and a
+flag would add a column to every row of that table in order to hide rows that are already
+hidden. `si_guard_notification_update` is BEFORE UPDATE and needs no amendment — there is no
+column to protect on a row that is going away. Worth contrasting with 0030's `users_delete`,
+where hiding a row through the SELECT policy did *not* stop a delete because a DELETE policy's
+`USING` is evaluated independently; here that independence is exactly what is wanted.
+
+Deleting a notification destroys no audit trail — `work_order_history` is the record of what
+happened and a notification is only ever a copy of it addressed to somebody. That is why this
+is allowed where deleting a `users` row with history is refused outright.
+
+Two things about the client half:
+
+- **`clearReadNotifications()` filters on `recipient_id` and `status` as well as the id list**,
+  though RLS already narrows the first. The ids come from a list rendered seconds ago; a row
+  marked unread since should match nothing rather than rely on the policy. Unread rows are out
+  of reach by construction, so one mistyped tap cannot destroy something nobody has read.
+- **RLS refusing a DELETE removes no rows and raises nothing** — measured: a delete aimed at
+  another recipient's notification returns `[]` with no error. So both functions select what
+  they deleted and throw when it is empty, the same shape `deleteWorkOrder()` uses.
+
+**The notification row is no longer a single `<button>`.** The dismiss control cannot live
+inside one — nested buttons are invalid HTML and both handlers fire — so the row is a flex
+container with two sibling buttons.
+
+**And decline gained a confirm step, accept a toast.** Decline is the one transition that ends
+outside the caller's own scope and cannot be undone from that screen, so it reads the typed
+reason back before it goes; accept does not, because a technician does it many times a day on
+a phone. The decline confirmation cannot be a toast in `WorkflowPanel` — that component routes
+away and unmounts — so it travels through `lib/toastHandoff.js` (sessionStorage, read-once) and
+is shown by `/work-orders`. Not a query parameter: that survives a refresh and a shared link,
+and a stale "Declined — WO-123 sent back" reappearing days later is worse than no confirmation.
+
 ### What the database owns (do not send these from the client)
 
 `wo_number` allocation, SLA deadlines, `resolved_at`/`closed_at`/`verified_at`/`sla_breached`,
@@ -1146,7 +1238,9 @@ has happened on this project, and is what 0013 exists to fix.
   only; migrations are the implementation.
 - `app/DATA_AND_STORAGE.md` — plan quotas and which one fills first (storage and egress, not
   the database), the SQL to check each, what grows unbounded (`notifications` has no retention
-  and no client may delete it), cleanup that reclaims space rather than just marking it dead,
+  and, until migration 0038, no client could delete it — a recipient may now clear their own
+  read rows, but there is still no server-side retention), cleanup that reclaims space rather
+  than just marking it dead,
   and the backup/export commands. **Free includes no backups at all.**
 - `app/BUILD_AND_DEPLOY.md` — includes three machine-specific Gradle problems on this PC.
 - `app/GO_LIVE.md` — env values, migrations, the access-token hook, seeding users.
@@ -1202,6 +1296,13 @@ has happened on this project, and is what 0013 exists to fix.
 - **Nothing recompresses what is already in the bucket.** Compression happens before upload,
   so photos stored before migration 0036 are still full-size. A backfill script was
   considered and declined: it would rewrite files that are part of a work order's record.
+- **Clearing notifications is manual, and 0038 made there be more of them to clear.** Every
+  Manager and every Administrator now gets a row per accept and per decline, plant-wide —
+  roughly two per work order each, on top of what they already received. That was chosen
+  deliberately over the narrower fan-out, but there is still no server-side retention, no
+  cron sweep and no per-account mute, so the only thing that ever shrinks `notifications` is
+  somebody pressing **Clear read**. A retention sweep is the obvious next step and is not
+  written.
 - **Most accounts cannot receive email.** The seeded ones are all `@example.com`, which
   `si_is_placeholder_email` correctly refuses to send recovery links to — so for those
   accounts the *only* credential route is the Superuser issuing a temporary password. That

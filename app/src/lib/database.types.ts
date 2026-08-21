@@ -1224,6 +1224,7 @@ export type Database = {
         }
         Returns: number
       }
+      si_admins: { Args: never; Returns: string[] }
       si_caller_rank: { Args: never; Returns: number }
       si_can_delete_work_orders: { Args: never; Returns: boolean }
       si_compute_dashboard_stats: { Args: never; Returns: undefined }
