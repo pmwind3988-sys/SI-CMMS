@@ -35,7 +35,7 @@
  *   npm run bootstrap:users     (once, creates the accounts this needs)
  *   npm run seed:demo
  */
-const { admin, projectLabel } = require("./_supabaseAdmin");
+const { admin, projectLabel, guardProductionWrite } = require("./_supabaseAdmin");
 
 const db = admin();
 
@@ -47,7 +47,12 @@ const DEPARTMENT_ID = "DEPT-MACHINING";
 async function userByEmail(email) {
   const { data, error } = await db
     .from("users")
-    .select("id, name, phone, role")
+    // No `role`: migration 0021 dropped users.role, and PostgREST answers a
+    // select naming a column that does not exist with an error rather than a
+    // null — so this script had been failing on its first lookup since 0021 was
+    // applied. Nothing here ever read it: actor_role on the history rows comes
+    // from the hardcoded events list below, not from the account.
+    .select("id, name, phone")
     .eq("email", email)
     .maybeSingle();
   if (error) throw new Error(`lookup ${email}: ${error.message}`);
@@ -62,6 +67,7 @@ async function userByEmail(email) {
 
 async function seed() {
   console.log(`Project: ${projectLabel()}\n`);
+  guardProductionWrite("seed:demo");
 
   const requester = await userByEmail("requester@example.com");
   const supervisor = await userByEmail("supervisor@example.com");

@@ -31,6 +31,40 @@ npm run bootstrap:users  # create the 6 role users
 npm run seed:demo        # one demo work order walked through the real workflow
 ```
 
+**There are two Supabase projects.** `SI-CMMS` (`iclphobvhjwdinxnqexw`) and
+`SI-CMMS-test` (`vfkozckhthrrmxaewnlt`), and which one every command above talks
+to is a mode you switch:
+
+```bash
+npm run env:which        # which project am I pointed at?
+npm run env:test         # point everything at test
+npm run env:prod         # point everything back
+npm run clone:config     # copy prod's departments/equipment/labels into test
+```
+
+Full detail in `app/TEST_ENVIRONMENT.md`. Four things matter here:
+
+- **The switch moves two things, not one.** `app/.env.local` is what the app and
+  `scripts/` read; `supabase/.temp/project-ref` is what `db push` and `db:types`
+  *write to*. Move only the first and `db push` applies an untested migration to
+  production while the app in front of you reads test — both commands succeed and
+  nothing warns. `switchEnv.js` moves both or exits non-zero, and `env:which`
+  fails if it ever finds them disagreeing.
+- **`app/.env.local` is generated now.** The real values live in
+  `app/.env.prod.local` and `app/.env.test.local` (both already gitignored by
+  `.env*.local`). Edit those and re-run the switch; edits to `.env.local` are
+  lost on the next flip.
+- **`bootstrap:users` and `seed:demo` refuse to run against production** unless
+  given `-- --force`, because the switch is what makes seeding the live system
+  possible in the first place. `db:push` is deliberately unguarded.
+- **Never run `supabase config push` while linked to production.** It pushes the
+  whole auth config with everything unstated filled from CLI defaults, silently
+  overwriting the dashboard — measured on test: MFA TOTP off, email confirmations
+  off, `otp_length` 8→6. There is no `npm run config:push` on purpose.
+
+Switching does not reload a running dev server: `NEXT_PUBLIC_*` is inlined at
+build time, so restart `npm run dev` or the switch looks like it did nothing.
+
 Android:
 
 ```bash
@@ -284,6 +318,30 @@ That guard was added directly to the hosted project and shipped `SECURITY INVOKE
 calling a helper granted only to `postgres`, so it raised `permission denied for function
 si_protected_override` on *every* write to `users` for *every* role. Migration 0013 fixes it.
 Every other guard on this schema is `SECURITY DEFINER`; that is not optional styling.
+
+**All three of those objects were missing from this directory until 2026-08-21, and that made
+the schema unbuildable.** `users.is_protected`, `si_protected_override()` and
+`si_guard_protected_user()` were created in the dashboard before `supabase/migrations/` existed;
+0013's own closing note said so and nothing acted on it for twenty-three migrations. Pushing
+0001-0036 into a new project stops dead at 0013 with *"function
+public.si_guard_protected_user() does not exist"* — 0013's first statement is an `alter function`
+on something no file ever created. Eight migrations assume all three are already there.
+
+They are now **reconstructed at the top of 0013, from the contract those migrations describe
+rather than copied from production.** Production's bodies have never been read: that needs
+`supabase db dump` (Docker), psql, or a management API token, and this machine has none of the
+three. So every statement is conditional on the object being *absent* — on production every test
+fails and nothing changes, on a fresh project a working equivalent is created. An unconditional
+`create or replace` would have overwritten the real guard with the guess, which is the one
+outcome worse than the drift. `0013` carries the SQL to print production's real definitions;
+until someone runs it, test's guard is contract-equivalent and not known to be identical.
+
+It had to live in 0013 because **no new migration file can sort between two existing ones.** The
+CLI orders by *filename*, and every digit is below `_` in ASCII, so `00125_…` sorts before
+`0012_…` rather than after — and it desynchronises the applied-version pairing, after which the
+CLI wants to re-apply 0012. A letter suffix sorts correctly and is ignored outright, because the
+version parser takes digits only. Both measured. 0013 is already applied on production, so
+editing it can never re-run there.
 
 ### Test accounts (migrations 0028, 0029)
 
@@ -1045,9 +1103,26 @@ has happened on this project, and is what 0013 exists to fix.
   and the backup/export commands. **Free includes no backups at all.**
 - `app/BUILD_AND_DEPLOY.md` — includes three machine-specific Gradle problems on this PC.
 - `app/GO_LIVE.md` — env values, migrations, the access-token hook, seeding users.
+- `app/TEST_ENVIRONMENT.md` — the two projects, the switch, what the config clone does and
+  does not copy, the Vercel Preview split that gives a staging site, and the ways test
+  deliberately differs from production (the fixtures are **not** marked `is_test_account`
+  there, so the demo work order counts in the dashboard statistics).
 
 ## Known gaps
 
+- **The six fixtures on the test project are not marked `is_test_account`.** 0028 backfills
+  that flag from `seed_source` in a one-time UPDATE, which on a fresh project runs before
+  `bootstrap:users` has created anybody. So on test the fixtures show in Admin → Users and in
+  the technician roster, and the demo work order carries `is_test_data = false` and counts in
+  the dashboard statistics. Useful — a demo work order you can see — but it means the one thing
+  the test project cannot exercise is the test-account hiding itself. The tell is `technicians`:
+  production returns `[]` to an Administrator, test returns the fixtures.
+- `npm run seed:demo` had been broken since migration 0021 and is fixed. It selected
+  `users.role`, which 0021 dropped, and PostgREST answers a select naming a missing column with
+  an error rather than a null — so it failed on its first lookup. Nothing read the value:
+  `actor_role` on the history rows comes from the script's own hardcoded event list. Worth
+  knowing because it means the demo work order cannot have been seeded on any project built
+  after 0021 until now.
 - Editing a work order's core fields while Open writes no history row (transitions are fully
   audited; the edit path isn't).
 - `verified` is a history state, not a resting state — `completed → closed` happens in one

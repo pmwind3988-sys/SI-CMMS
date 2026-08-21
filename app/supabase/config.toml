@@ -17,3 +17,42 @@ verify_jwt = true
 # like the cause, because the response never comes from our code.
 [functions.auth-signin]
 verify_jwt = false
+
+# ---------------------------------------------------------------------------
+# The access-token hook. WITHOUT THIS, EVERY POLICY SILENTLY DENIES.
+#
+# Supabase reserves the `role` claim for the Postgres role PostgREST assumes, so
+# the application roles travel as user_roles / user_role, injected here. An
+# account whose token lacks them signs in successfully and then sees an empty
+# app — no error anywhere, because si_roles() simply returns nothing and every
+# policy evaluates false.
+#
+# It used to be enabled by hand per project (Authentication -> Hooks ->
+# Customize Access Token). It is stated here so that standing up a project is
+# reproducible, and applied with `npx supabase config push`.
+#
+# ###########################################################################
+# NEVER RUN `supabase config push` WHILE LINKED TO PRODUCTION.
+#
+# It does not push the settings written in this file. It pushes the ENTIRE
+# auth config, filling everything unstated from CLI defaults — so it silently
+# overwrites whatever the dashboard says. Measured on the test project,
+# 2026-08-21, from this file as it stands:
+#
+#   [mfa.totp]   enroll_enabled  true  -> false
+#   [mfa.totp]   verify_enabled  true  -> false
+#   [email]      enable_confirmations true -> false
+#   [email]      max_frequency   1m0s  -> 1s
+#   [email]      otp_length      8     -> 6
+#
+# On a test project none of that matters. On production that is MFA turned
+# off, email confirmation turned off, and the OTP shortened — none of it
+# announced, and none of it in this file.
+#
+# There is deliberately no `npm run config:push` script, so this cannot be
+# reached by muscle memory. See app/TEST_ENVIRONMENT.md.
+# ###########################################################################
+# ---------------------------------------------------------------------------
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/public/custom_access_token_hook"

@@ -53,16 +53,23 @@ function loadEnvLocal() {
 
 loadEnvLocal();
 
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+// Named SUPABASE_URL, not URL. A module-scope `const URL` shadows the global
+// URL constructor, so `new URL(...)` below threw TypeError on every call and the
+// catch returned the bare address — the ref this label exists to show was never
+// printed by anything, including check:env.
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+/** The project ref of whichever project .env.local currently points at, or null. */
+function activeRef() {
+  const m = /^https:\/\/([a-z0-9]+)\.supabase\.co\/?$/.exec(SUPABASE_URL || "");
+  return m ? m[1] : null;
+}
+
 function projectLabel() {
-  if (!URL) return "(no NEXT_PUBLIC_SUPABASE_URL)";
-  try {
-    return `${new URL(URL).hostname.split(".")[0]} (${URL})`;
-  } catch {
-    return URL;
-  }
+  if (!SUPABASE_URL) return "(no NEXT_PUBLIC_SUPABASE_URL)";
+  const ref = activeRef();
+  return ref ? `${ref} (${SUPABASE_URL})` : SUPABASE_URL;
 }
 
 /**
@@ -99,7 +106,7 @@ let cached = null;
 function admin() {
   if (cached) return cached;
 
-  if (!URL) {
+  if (!SUPABASE_URL) {
     throw new Error(
       "NEXT_PUBLIC_SUPABASE_URL is not set.\n" +
         "  Add it to app/.env.local (Supabase Dashboard -> Project Settings -> API)."
@@ -127,10 +134,60 @@ function admin() {
     );
   }
 
-  cached = createClient(URL, SERVICE_KEY, {
+  cached = createClient(SUPABASE_URL, SERVICE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   return cached;
 }
 
-module.exports = { admin, projectLabel };
+/**
+ * Refuses to run a data-writing script against production.
+ *
+ * There are two projects now — production and SI-CMMS-test — and `npm run
+ * env:test` / `env:prod` flips between them by rewriting .env.local. That makes
+ * a new accident possible that could not happen when there was one project:
+ * forgetting which way the switch is thrown and seeding demo work orders, or
+ * resetting the six fixture passwords, on the live system.
+ *
+ * Production is identified by the SI_PROJECT_REF in app/.env.prod.local rather
+ * than by a ref hardcoded here, so this keeps working if the project is ever
+ * moved or rebuilt.
+ *
+ *   node scripts/seedDemoWorkOrder.js --force    do it anyway
+ *
+ * If .env.prod.local is absent we cannot tell the two apart. That warns rather
+ * than blocks: someone working from a single .env.local the way this repo did
+ * before the split should not be stopped by a guard that has nothing to compare
+ * against.
+ */
+function guardProductionWrite(what) {
+  const prodEnv = path.join(APP_DIR, ".env.prod.local");
+  const active = activeRef();
+
+  if (!fs.existsSync(prodEnv)) {
+    console.log(
+      `  (cannot tell test from production: app/.env.prod.local is absent,\n` +
+        `   so ${what} is running unguarded against ${active ?? "an unknown project"}.)\n`
+    );
+    return;
+  }
+
+  const match = /^\s*SI_PROJECT_REF\s*=\s*(\S+)\s*$/m.exec(fs.readFileSync(prodEnv, "utf8"));
+  const prodRef = match ? match[1] : null;
+  if (!prodRef || !active || active !== prodRef) return;
+
+  if (process.argv.includes("--force")) {
+    console.log(`  --force given: running ${what} against PRODUCTION (${prodRef}).\n`);
+    return;
+  }
+
+  console.error(
+    `\n  REFUSED — ${what} writes data, and .env.local points at PRODUCTION (${prodRef}).\n` +
+      `\n  Switch first:      npm run env:test` +
+      `\n  Check any time:    npm run env:which` +
+      `\n  Or, deliberately:  npm run ${what} -- --force\n`
+  );
+  process.exit(1);
+}
+
+module.exports = { admin, projectLabel, activeRef, guardProductionWrite };

@@ -25,12 +25,18 @@
  * Idempotent: re-running finds existing users by email and updates their
  * profile rather than failing.
  */
-const { admin, projectLabel } = require("./_supabaseAdmin");
+const { admin, projectLabel, guardProductionWrite } = require("./_supabaseAdmin");
 
 const db = admin();
 
 const PLANT_ID = "PLT001";
-const DEPARTMENT_ID = "DEPT-MACHINING"; // adjust to a real departments.id row
+// Preferred home for the seeded accounts — but only if it is still active. A
+// retired department is a real possibility and not a hypothetical: production
+// has retired DEPT-MACHINING, and cloning that reference data into a fresh
+// project put all six accounts in a department si_guard_retired_reference()
+// refuses on any work order naming it. Resolved against the database by
+// pickDepartment() below rather than trusted as a constant.
+const PREFERRED_DEPARTMENT_ID = "DEPT-MACHINING";
 
 const SEED_USERS = [
   { email: "requester@example.com",  password: "ChangeMe123!", name: "Ravi Kumar",  roles: ["requester"],  phone: "98450 11223", skills: [] },
@@ -54,8 +60,46 @@ async function findAuthUserByEmail(email) {
   }
 }
 
+/**
+ * The department to file these accounts under: the preferred one if it is still
+ * active, otherwise the first active one there is.
+ *
+ * Retirement is not advisory (migration 0031) — si_guard_retired_reference()
+ * refuses a work order naming a retired department, so an account whose home
+ * department has been retired cannot raise anything against it. Seeding into
+ * one produces six accounts that look fine and fail at the last step, which is
+ * the shape of bug this schema keeps documenting.
+ */
+async function pickDepartment() {
+  const { data, error } = await db
+    .from("departments")
+    .select("id, is_active")
+    .order("id");
+  if (error) throw new Error(`reading departments: ${error.message}`);
+
+  const active = data.filter((d) => d.is_active);
+  if (!active.length) {
+    throw new Error(
+      "Every department is retired, so there is nowhere to put these accounts.\n" +
+        "  Restore one in Admin -> Reference data, or run `npm run clone:config`."
+    );
+  }
+
+  const preferred = active.find((d) => d.id === PREFERRED_DEPARTMENT_ID);
+  if (preferred) return preferred.id;
+
+  console.log(
+    `${PREFERRED_DEPARTMENT_ID} is retired on this project, so these accounts go to ` +
+      `${active[0].id} instead.\n`
+  );
+  return active[0].id;
+}
+
 async function run() {
   console.log(`Project: ${projectLabel()}\n`);
+  guardProductionWrite("bootstrap:users");
+
+  const DEPARTMENT_ID = await pickDepartment();
 
   for (const u of SEED_USERS) {
     let authUser = await findAuthUserByEmail(u.email);

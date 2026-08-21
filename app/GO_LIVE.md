@@ -8,6 +8,13 @@ The backend is Supabase, hosting is Vercel. Firebase was removed on 2026-08-07.
 > with GitHub, and importing the project — lives in `../SETUP_SUPABASE_VERCEL.md`.
 > This file picks up from "the project exists" and covers the operational steps.
 
+> **There are two Supabase projects now.** This file describes production. The
+> second one, `SI-CMMS-test`, and the `npm run env:test` / `env:prod` switch that
+> points the toolchain at either, are in `TEST_ENVIRONMENT.md` — including the
+> shorter scripted version of Parts A through F for standing a project up from
+> nothing. Read that before following this file, because `app/.env.local` is a
+> generated file now: A1 below means editing `.env.prod.local`.
+
 ---
 
 ## Read this first — the two things that trip everyone up
