@@ -18,6 +18,7 @@ import {
   Share,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { useOutsideTap } from "../lib/useOutsideTap";
 import { listenNotifications, markNotificationRead, markAllNotificationsRead, pathForNotification, NOTIFICATION_META } from "../lib/notifications";
 import {
   appIsInBackground,
@@ -205,20 +206,23 @@ export default function NotificationBell() {
   // Tapping anywhere else closes it. On a phone the panel covers most of the
   // screen, so without this the only way out was the bell itself — which is
   // underneath it once the header stops being the top thing on the page.
+  //
+  // A *drag* outside is not that tap. The shield below is `sm:hidden`, so from
+  // `sm` up — every tablet — there is live page behind this panel, and closing
+  // on pointerdown killed it on the first frame of a scroll. Measured at 768px:
+  // dragging the page shut the panel every time. useOutsideTap carries the
+  // reasoning. Below `sm` this changes nothing: the shield is inside rootRef,
+  // so those touches were never "outside" to begin with, and a tap on it still
+  // dismisses through its own onClick.
+  useOutsideTap(rootRef, open, () => setOpen(false));
+
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (e) => {
-      if (!rootRef.current?.contains(e.target)) setOpen(false);
-    };
     const onKey = (e) => {
       if (e.key === "Escape") setOpen(false);
     };
-    document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
   const unread = items.filter((n) => n.status !== "read");

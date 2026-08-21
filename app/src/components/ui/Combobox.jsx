@@ -24,6 +24,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Search } from "lucide-react";
+import { useOutsideTap } from "../../lib/useOutsideTap";
 import { inputClass } from "./Field";
 
 export default function Combobox({
@@ -73,14 +74,12 @@ export default function Combobox({
     setActive(0);
   }, [query, open]);
 
-  useEffect(() => {
-    if (!open) return;
-    function onPointerDown(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) close();
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
+  // A tap outside is a cancel; a *drag* outside is the user scrolling the page,
+  // which on a phone is the ordinary way to bring the rest of this panel into
+  // view — opening it focuses the search field, raising the soft keyboard and
+  // leaving the list half offscreen. See useOutsideTap for why the two have to
+  // be told apart on pointerup rather than on pointerdown.
+  useOutsideTap(wrapRef, open, close);
 
   function close() {
     setOpen(false);
@@ -160,13 +159,16 @@ export default function Combobox({
               <button
                 key={o.value}
                 type="button"
-                // pointerdown, not click: the outside-click listener above also
-                // runs on pointerdown, and a blur-then-click ordering would close
-                // the panel before the click landed.
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  pick(o);
-                }}
+                // click, not pointerdown. pointerdown fires the instant a finger
+                // lands, before the browser has decided whether the gesture is a
+                // tap or the start of a scroll — so dragging to scroll this list
+                // selected whichever row the finger touched down on and closed
+                // the panel, which made any list taller than max-h-64 unreachable
+                // on a phone. click is the event carrying that discrimination:
+                // the browser withholds it when a touch turns into a scroll. The
+                // preventDefault() went with it, since it was also cancelling the
+                // native scroll gesture on the row itself.
+                onClick={() => pick(o)}
                 onMouseEnter={() => setActive(i)}
                 className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13.5px] ${
                   i === active ? "bg-canvas" : "bg-white"
@@ -189,8 +191,7 @@ export default function Combobox({
             {canCreate && (
               <button
                 type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
+                onClick={() => {
                   onCreate(trimmed);
                   close();
                 }}
