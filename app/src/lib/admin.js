@@ -373,9 +373,22 @@ export async function updateTechnicianRecord(userId, { skills, availabilityStatu
 -------------------------------------------------------------------*/
 
 export async function upsertDepartment({ id, name, code, plantId }) {
+  /* Trimmed here, and this is not cosmetic. createDepartment() below has always
+     trimmed; this path — Admin -> Settings -> Departments — did not, and
+     production carried a department actually named "Maintenance " for it. The
+     trailing space is invisible in every list it appears in, sorts oddly, and
+     makes a second "Maintenance" typed without it read as a different
+     department rather than a collision. `code` too, since it is unique and
+     " MTN" and "MTN" are two different codes. */
+  const clean = String(name || "").trim();
+  if (!clean) throw new Error("Give the department a name.");
+  const cleanCode = String(code || "").trim();
   const { error } = await supabase
     .from("departments")
-    .upsert({ id, name, code: code || id, plant_id: plantId || "PLT001" }, { onConflict: "id" });
+    .upsert(
+      { id, name: clean, code: cleanCode || id, plant_id: plantId || "PLT001" },
+      { onConflict: "id" }
+    );
   if (error) throw error;
 }
 
@@ -486,11 +499,16 @@ export async function createAsset({ name, departmentId, plantId }) {
 }
 
 export async function upsertAsset({ id, assetCode, name, departmentId, criticality, category, plantId, status }) {
+  // Same trimming as upsertDepartment, for the same reason — and `name` here is
+  // denormalised onto work_orders.asset_name, so a stray space is copied onto
+  // every work order raised against the machine afterwards.
+  const clean = String(name || "").trim();
+  if (!clean) throw new Error("Give the machine a name.");
   const { error } = await supabase.from("assets").upsert(
     {
       id,
-      asset_code: assetCode || id,
-      name,
+      asset_code: String(assetCode || "").trim() || id,
+      name: clean,
       department_id: departmentId,
       criticality,
       category: category || null,
