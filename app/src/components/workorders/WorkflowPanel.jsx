@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
   PlayCircle,
@@ -50,6 +51,7 @@ function InfoBox({ children }) {
 
 export default function WorkflowPanel({ wo, onGotoAssign }) {
   const { user } = useAuth();
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -69,17 +71,21 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
   const isSupervisorLike = hasRole(user, ROLES.SUPERVISOR) || isManagerOrAdmin(user);
   const actor = { uid: user.uid, name: user.name, role: user.role };
 
+  /** Returns whether the transition went through, for the callers that have to
+      leave the page afterwards — see the decline below. */
   async function run(fn, ...args) {
     setBusy(true);
     setError(null);
     try {
       await fn(wo.id, actor, ...args);
+      return true;
     } catch (e) {
       // The transition trigger and the column guards raise messages written for
       // the person who hit them ("a requester may not perform \"Assign
       // technician\"", "\"resolution_notes\" is required for \"Mark completed\"").
       // Those are far more useful than a generic connection warning.
       setError(describeError(e, "Not saved — try again."));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -111,7 +117,19 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
           {showDecline && (
             <div className="flex flex-col gap-2 sm:flex-row">
               <input value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} placeholder="Reason for declining…" className={`${inputClass} flex-1`} />
-              <Button variant="danger" disabled={!declineReason || busy} onClick={async () => { await run(declineWorkOrder, declineReason); setShowDecline(false); }}>Confirm decline</Button>
+              <Button variant="danger" disabled={!declineReason || busy} onClick={async () => {
+                const ok = await run(declineWorkOrder, declineReason);
+                setShowDecline(false);
+                /* A decline hands the work order back to the Supervisor and
+                   clears the assignee, so work_orders_select stops returning it
+                   to the technician who declined — and Realtime stops delivering
+                   its changes too, since it filters by the same policy. Staying
+                   here would leave the last row this component saw frozen on
+                   screen, still offering Accept on a job that is no longer
+                   theirs. So the technician goes back to their list, where it is
+                   correctly absent. */
+                if (ok) router.push("/work-orders/");
+              }}>Confirm decline</Button>
             </div>
           )}
         </div>

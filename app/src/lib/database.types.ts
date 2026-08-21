@@ -1242,6 +1242,10 @@ export type Database = {
           title: string
         }[]
       }
+      si_decline_work_order: {
+        Args: { p_reason: string; p_wo_id: string }
+        Returns: undefined
+      }
       si_department_id: { Args: never; Returns: string }
       si_department_supervisors: {
         Args: { p_department_id: string }

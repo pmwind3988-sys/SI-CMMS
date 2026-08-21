@@ -20,6 +20,33 @@ import { PriorityBadge } from "../ui/Badges";
  * wo_status_transitions).
  * `existing` absent -> Create / Raise Work Order.
  */
+/**
+ * The on-screen label for each key validate() can return, so a blocked submit
+ * can say WHERE to look.
+ *
+ * Every one of these already renders a precise hint beside its own field, and
+ * that is still the better message — but it is beside the *field*, and the
+ * button sits at the bottom of a sidebar of its own. `Production impact` is the
+ * case that proves it: a radio group halfway up the form with no default, so a
+ * form filled in from the top and submitted from the bottom showed nothing at
+ * all near the pointer and read as a dead button.
+ *
+ * Module scope, not inside the component: `blockedFields` is derived near the
+ * top of the render and this would otherwise be read before its own `const`
+ * initialised — a ReferenceError on every render rather than a wrong label.
+ *
+ * Keep these in step with the `label` on each Field, since the whole value of
+ * the summary is that the words match what the eye is hunting for.
+ */
+const ERROR_FIELD_LABELS = {
+  department: "Department",
+  asset: "Equipment",
+  complaint: "Complaint",
+  impact: "Production impact",
+  requester: "Requester",
+  phone: "Phone number",
+};
+
 export default function RaiseWorkOrderForm({ existing }) {
   const { user } = useAuth();
   /* Both halves of every retirable set (migration 0031). The active* lists are
@@ -52,6 +79,9 @@ export default function RaiseWorkOrderForm({ existing }) {
   const [area, setArea] = useState(existing?.area || "");
   const [creatingDept, setCreatingDept] = useState(false);
   const [creatingAsset, setCreatingAsset] = useState(false);
+  /* Equipment is scoped to the chosen department by default; this is the escape
+     hatch back to the whole plant. See assetOptions below. */
+  const [showAllAssets, setShowAllAssets] = useState(false);
   const [type, setType] = useState(existing?.type || "breakdown");
   const [complaint, setComplaint] = useState(existing?.description || "");
   const [impact, setImpact] = useState(existing?.impact || "");
@@ -139,7 +169,50 @@ export default function RaiseWorkOrderForm({ existing }) {
     }
   }, [ready, isEdit, activeTypes, activeSeverities, type, safetySeverity]);
 
-  const assetOptions = offeredAssets.map((m) => ({
+  /* Ordered by ERROR_FIELD_LABELS rather than by Object.keys(errors), so the
+     summary reads top-to-bottom in the order the fields appear on screen. */
+  const blockedFields = Object.keys(ERROR_FIELD_LABELS)
+    .filter((k) => errors[k])
+    .map((k) => ERROR_FIELD_LABELS[k]);
+
+  /**
+   * Equipment, narrowed to the chosen department — a *display* narrowing, and
+   * only that.
+   *
+   * Migration 0019 unfiltered this list on purpose: whoever notices a fault
+   * files it, so a work order against another department's machine has to stay
+   * possible. That reasoning is about what may be SUBMITTED, and nothing here
+   * changes it — the policy still accepts any asset, `handleAssetChange` still
+   * exists, and "Show equipment from every department" is one tap away. What it
+   * fixes is that every asset on site in one flat list is a picker you scroll
+   * rather than a question you answer, and the department has just been asked
+   * for one field above.
+   *
+   * Three details:
+   *  - `includingCurrent` again, for the same reason as everywhere else: an
+   *    asset already selected must never drop out of its own picker. It cannot
+   *    normally be out of scope (handleAssetChange moves the department to the
+   *    machine's own), but it can be when EDITING a work order whose pair was
+   *    deliberately left disagreeing.
+   *  - With no department chosen the whole list is offered, so the form still
+   *    works answered in either order.
+   *  - The toggle resets when the department changes. Left sticky, choosing a
+   *    department would silently stop narrowing after the first time somebody
+   *    widened it.
+   */
+  const departmentAssets =
+    departmentId && !showAllAssets
+      ? includingCurrent(
+          offeredAssets.filter((m) => m.department_id === departmentId),
+          offeredAssets,
+          assetId || null,
+          "id"
+        )
+      : offeredAssets;
+
+  const hiddenAssetCount = offeredAssets.length - departmentAssets.length;
+
+  const assetOptions = departmentAssets.map((m) => ({
     value: m.id,
     label: m.name,
     hint: `${m.asset_code || m.id} · ${departmentName(m.department_id)}`,
@@ -166,6 +239,8 @@ export default function RaiseWorkOrderForm({ existing }) {
    */
   function handleDepartmentChange(id) {
     setDepartmentId(id);
+    // Back to that department's own equipment; see assetOptions.
+    setShowAllAssets(false);
   }
 
   /**
@@ -346,15 +421,35 @@ export default function RaiseWorkOrderForm({ existing }) {
                 loading={!ready || creatingAsset}
                 loadingLabel={creatingAsset ? "Adding…" : "Loading…"}
                 placeholder="Search equipment by name, asset code or department…"
-                emptyLabel="No equipment registered yet"
+                emptyLabel={
+                  departmentId && !showAllAssets
+                    ? "No equipment in this department yet"
+                    : "No equipment registered yet"
+                }
                 noMatchLabel="No equipment matches that"
                 onCreate={handleCreateAsset}
                 createLabel="Add equipment"
               />
               <p className="mt-1.5 text-[11.5px] text-ink-soft">
-                Can&apos;t find the machine? With the department above set, type the name here to
-                register it.
+                {departmentId && !showAllAssets
+                  ? `Showing ${departmentName(departmentId)}'s equipment. Can't find the machine? Type the name here to register it.`
+                  : "Can't find the machine? With the department above set, type the name here to register it."}
               </p>
+              {/* Only when something is actually hidden — a link offering to
+                  reveal nothing reads as a fault in the list. Both directions,
+                  because narrowing has to be undoable: the fault may well be on
+                  a machine another department maintains (migration 0019). */}
+              {departmentId && (hiddenAssetCount > 0 || showAllAssets) && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllAssets((s) => !s)}
+                  className="mt-1.5 text-[11.5px] font-medium text-navy underline underline-offset-2"
+                >
+                  {showAllAssets
+                    ? `Show only ${departmentName(departmentId)}'s equipment`
+                    : `Show equipment from every department (${hiddenAssetCount} more)`}
+                </button>
+              )}
             </Field>
 
             <Field label="Area">
@@ -577,6 +672,21 @@ export default function RaiseWorkOrderForm({ existing }) {
               <p className="text-[12.5px] text-[#B9C9E8]">Fill in the form to see the priority and SLA targets here.</p>
             )}
           </div>
+          {/* Goes stale between presses exactly as the per-field hints do — both
+              are recomputed by the next handleSubmit — so the two never disagree. */}
+          {blockedFields.length > 0 && (
+            <div
+              role="alert"
+              className="mt-4 flex items-start gap-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-3 py-2.5 text-[12.5px] text-danger"
+            >
+              <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+              <span className="min-w-0">
+                {blockedFields.length === 1
+                  ? `${blockedFields[0]} still needs an answer — scroll up to it.`
+                  : `${blockedFields.length} fields still need an answer: ${blockedFields.join(", ")}.`}
+              </span>
+            </div>
+          )}
           <div className="mt-4 flex gap-2">
             <Button variant="amber" icon={isEdit ? Save : Send} onClick={handleSubmit} disabled={submitting} className="flex-1 justify-center">
               {submitting ? "Saving…" : isEdit ? "Save Changes" : "Submit"}

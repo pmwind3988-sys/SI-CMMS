@@ -626,6 +626,43 @@ calls the `si_transition_work_order` RPC: one transaction, work order + history 
 with `actor_id`/`actor_name`/`actor_role` read server-side from `auth.uid()` rather than
 taken from arguments. Add new transitions there, not as raw updates.
 
+**Decline is the one exception, and migration 0037 is why.** A technician declining an
+assigned job was refused with a raw `new row violates row-level security policy for table
+"work_orders"` — which `describeError()` correctly hides, so what they actually read was
+"You don't have permission to do that." Accept, from the same session on the same row,
+worked.
+
+Nothing was wrong with either policy. **Postgres applies the SELECT policy to an UPDATE's
+NEW row**, because the statement has to read the table — and a decline is implemented by
+`si_stamp_work_order` clearing `assigned_to_id`, so `work_orders_select`'s technician
+branch compares NULL to `auth.uid()` and refuses the technician sight of the row they have
+just handed back. It is the only transition that deliberately ends outside the caller's own
+scope, which is why it is the only one that failed. Proven by `alter policy
+work_orders_select ... using (true)` inside a rolled-back transaction, and it is not the
+`returning *`: the bare UPDATE fails identically.
+
+So `declineWorkOrder()` calls **`si_decline_work_order` (SECURITY DEFINER)** instead of
+`transition()`. Three things about that door:
+
+- **The matrix is still the boundary.** Triggers read `auth.uid()` and the JWT, not the
+  database role, so `a_guard_work_order_transition` fires on this UPDATE exactly as on any
+  other. Measured after the migration: a *different* technician, a Requester and a
+  Supervisor are all refused, so is declining from `accepted`, so is a blank reason, and a
+  technician still cannot reassign. Anon cannot call the function at all.
+- **Visibility is restated in the body** — a copy of `work_orders_select`, not a summary of
+  it. RLS does not apply inside, so without it the function would reach any work order and
+  leave the trigger as the only check. If that policy changes, this changes with it, the same
+  way the three enforcement points on `users` do.
+- **The client leaves the page.** Once declined, the row is correctly invisible to the
+  technician *and* Realtime stops delivering its changes, so `WorkflowPanel` would sit on a
+  frozen copy still offering Accept. It routes back to `/work-orders/`, where the job is
+  gone and the Supervisor's "needs reassignment" notification has been written.
+
+Widening `work_orders_select` was the tempting fix and is the wrong one: it would change
+what the queue shows everybody in order to repair one write. Making
+`si_transition_work_order` SECURITY DEFINER would fix decline by removing RLS from all
+twenty-two transitions.
+
 ### What the database owns (do not send these from the client)
 
 `wo_number` allocation, SLA deadlines, `resolved_at`/`closed_at`/`verified_at`/`sla_breached`,
@@ -673,6 +710,16 @@ Both write paths are `.insert()`, never `.upsert()`. PostgREST turns an upsert i
 it — but stating it as an insert is what makes a collision come back as *"that already
 exists"* rather than as a policy error. `createAsset()` also refuses before it starts if no
 department is chosen: `assets.department_id` is `not null`.
+
+**Equipment is offered from the chosen department first**, with "Show equipment from every
+department (n more)" underneath it. That is a display narrowing and nothing more: 0019's point
+was about what may be *submitted*, the policy still accepts any asset, `handleAssetChange`
+still moves the department to the machine's own, and the toggle resets when the department
+changes so choosing one always narrows again. What it fixes is that every machine on site in
+one flat list is a picker you scroll rather than a question you answer — and the department
+has just been asked for, one field above. `includingCurrent()` applies here too, so an asset
+already selected can never drop out of its own picker while editing a work order whose pair
+was deliberately left disagreeing.
 
 That last one used to be awkward and no longer is. The raise form asked for equipment
 *first* and filled the department in from it — right for every other case and exactly

@@ -582,15 +582,25 @@ export async function acceptWorkOrder(woId) {
   await transition(woId, "accepted", { remarks: "Accepted by technician" });
 }
 
-/** matrix: assigned -> open, requires decline_reason. The trigger clears the
-    assignee and increments decline_count. */
+/**
+ * matrix: assigned -> open, requires decline_reason. The trigger clears the
+ * assignee and increments decline_count.
+ *
+ * The one transition that does NOT go through `transition()`, and migration
+ * 0037 is the reason: clearing the assignee moves the row out of the declining
+ * technician's own SELECT scope, and Postgres applies the SELECT policy to an
+ * UPDATE's *new* row — so the invoker-rights RPC was refused with a raw
+ * row-level-security error, which the user saw as "You don't have permission to
+ * do that." `si_decline_work_order` is a SECURITY DEFINER path for this move
+ * alone; the transition matrix still decides who may call it, and the remark
+ * ("Declined: …") is built server-side there, like actor_id/name/role.
+ */
 export async function declineWorkOrder(woId, actor, reason) {
-  // The remark is just the reason: who declined is already the history row's
-  // actor_name, which the server fills in from the session.
-  await transition(woId, "open", {
-    fields: { decline_reason: reason },
-    remarks: `Declined: ${reason}`,
+  const { error } = await supabase.rpc("si_decline_work_order", {
+    p_wo_id: woId,
+    p_reason: reason,
   });
+  if (error) throw error;
 }
 
 /** matrix: accepted -> on_the_way */
