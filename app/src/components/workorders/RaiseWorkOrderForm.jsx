@@ -8,6 +8,7 @@ import { createWorkOrder, updateWorkOrderFields, addAttachment } from "../../lib
 import { useReferenceData, includingCurrent } from "../../lib/referenceData";
 import { createAsset, createDepartment } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
+import { registerDraftSource, takeDraft } from "../../lib/draftRecovery";
 import Field, { inputClass } from "../ui/Field";
 import Combobox from "../ui/Combobox";
 import Button from "../ui/Button";
@@ -94,8 +95,126 @@ export default function RaiseWorkOrderForm({ existing }) {
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  /** Set when this form was rebuilt from a draft rescued off a failed session. */
+  const [restored, setRestored] = useState(false);
 
   const photoInput = useRef(null);
+
+  /* ---------------------------------------------------------------------- *
+   * Surviving a forced sign-in.
+   *
+   * This is the most expensive thing in the app to lose: it is typed on a
+   * phone, on a plant floor, by somebody standing in front of the fault. If a
+   * session cannot be renewed silently the user has to sign in again, and
+   * signing in means leaving this page.
+   *
+   * See lib/draftRecovery.js for the storage rules. Two things about the wiring
+   * here:
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * Edit drafts and new-work-order drafts must never meet.
+   *
+   * Restoring an edit of WO-118 into a blank raise form would silently re-file
+   * one machine's fault against whatever the form happened to be pointing at —
+   * and restoring it into a DIFFERENT work order's edit form is worse. The id
+   * in the key makes both impossible rather than unlikely.
+   */
+  const draftKey = existing ? `workorder:edit:${existing.id}` : "workorder:new";
+
+  /**
+   * Everything worth rescuing, and nothing else.
+   *
+   * `photos` is absent and cannot be added: those are live browser File
+   * handles, not data. They have no serialisable form, they are not readable
+   * back from sessionStorage, and a 4MB photo would blow the storage quota even
+   * if they were. The restore notice says so out loud rather than letting
+   * somebody submit a fault report believing the picture is still attached.
+   *
+   * Transient state is absent too — `errors`, `submitting`, `submitError`,
+   * `creatingDept`, `creatingAsset`. Restoring a validation error the user has
+   * not earned yet, or a spinner for a submit that never happened, would be
+   * restoring the interruption rather than the work.
+   */
+  const snapshot = () => ({
+    departmentId,
+    assetId,
+    area,
+    showAllAssets,
+    type,
+    complaint,
+    impact,
+    safetyFlag,
+    safetySeverity,
+    envFlag,
+    requester,
+    phone,
+  });
+
+  /**
+   * Read by the registered source instead of the values it closed over.
+   *
+   * registerDraftSource runs in an effect with an empty dependency list — it
+   * must, or every keystroke would tear the registration down and rebuild it —
+   * so the function it registers is the FIRST render's, and would snapshot an
+   * empty form no matter what had been typed since. Pointing it at a ref
+   * refreshed on every render is what makes it read the current values. This is
+   * the bug that would make the whole feature look like it worked and save
+   * nothing.
+   */
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+
+  /**
+   * What the form looked like before anybody touched it.
+   *
+   * An untouched form declines to be saved — returning null from the source —
+   * because a restored empty draft is a confusing no-op, and in edit mode a
+   * "restored" banner over the values the work order already had would be a
+   * lie. Comparing against the initial state covers both modes without asking
+   * every field to report that it changed.
+   */
+  const pristine = useRef(null);
+  if (pristine.current === null) pristine.current = JSON.stringify(snapshot());
+
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    return registerDraftSource(draftKey, () => {
+      const current = snapshotRef.current();
+      return JSON.stringify(current) === pristine.current ? null : current;
+    });
+  }, [user?.uid, draftKey]);
+
+  /**
+   * Put a rescued draft back, once, on mount.
+   *
+   * takeDraft removes it as it reads it, so a browser Back into this page does
+   * not resurrect text the user has already moved on from — the same read-once
+   * discipline lib/toastHandoff.js uses. Ownership is enforced by the uid being
+   * part of the key: a different account signing in on the same terminal looks
+   * under its own uid and finds nothing.
+   */
+  useEffect(() => {
+    if (!user?.uid) return;
+    const draft = takeDraft(user.uid, draftKey);
+    if (!draft) return;
+    if (draft.departmentId !== undefined) setDepartmentId(draft.departmentId);
+    if (draft.assetId !== undefined) setAssetId(draft.assetId);
+    if (draft.area !== undefined) setArea(draft.area);
+    if (draft.showAllAssets !== undefined) setShowAllAssets(draft.showAllAssets);
+    if (draft.type !== undefined) setType(draft.type);
+    if (draft.complaint !== undefined) setComplaint(draft.complaint);
+    if (draft.impact !== undefined) setImpact(draft.impact);
+    if (draft.safetyFlag !== undefined) setSafetyFlag(draft.safetyFlag);
+    if (draft.safetySeverity !== undefined) setSafetySeverity(draft.safetySeverity);
+    if (draft.envFlag !== undefined) setEnvFlag(draft.envFlag);
+    if (draft.requester !== undefined) setRequester(draft.requester);
+    if (draft.phone !== undefined) setPhone(draft.phone);
+    setRestored(true);
+    // Mount only. draftKey and uid cannot change without this component being
+    // rebuilt for a different work order, which should take its own draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, draftKey]);
 
   const asset = assetById(assetId);
   const safety = { flag: safetyFlag, severity: safetySeverity };
@@ -365,6 +484,27 @@ export default function RaiseWorkOrderForm({ existing }) {
           ? "Core details can be corrected while this work order is still Open — before a technician is assigned."
           : "Priority is set from the production impact, and escalates for safety or environmental risk."}
       </p>
+
+      {/**
+        * The restore notice.
+        *
+        * Amber and informational rather than red: nothing went wrong from the
+        * user's side and nothing needs fixing — except the photos, which is
+        * exactly why the sentence names them. A silent restore would be worse
+        * than no restore at all here, because somebody who attached three
+        * pictures of a leaking seal before being signed out would otherwise
+        * submit the report believing they were still there.
+        */}
+      {restored && (
+        <div className="mb-4 flex items-start gap-2 rounded border border-[#F59E0B55] bg-[#FEF3C7] px-4 py-3 text-[13px] text-[#78350F]">
+          <Save size={15} className="mt-0.5 flex-shrink-0" />
+          <span className="min-w-0">
+            Restored what you had typed before your session ended.{" "}
+            <strong className="font-semibold">Any photos need attaching again</strong> — those
+            couldn’t be saved.
+          </span>
+        </div>
+      )}
 
       {submitError && <ErrorBanner message={submitError} />}
 

@@ -8,19 +8,58 @@
  * post-login redirect (that one always goes to the role's own dashboard,
  * per spec, regardless of `next`).
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useAuth } from "../context/AuthContext";
+import { useAuth, SESSION_RECOVERING, SESSION_LOST } from "../context/AuthContext";
+import { onRecovered } from "../lib/sessionRecovery";
+import { SessionRecoveryBanner, Toast } from "./ui/Surfaces";
 import AppShell from "./AppShell";
 
 export default function RequireAuth({ children }) {
-  const { user, loading } = useAuth();
+  const { user, loading, sessionState, recoveryReason } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   const onChangePassword = (pathname || "").startsWith("/change-password");
+  const recovering = sessionState === SESSION_RECOVERING;
+
+  /**
+   * The receipt for a recovery the user watched happen.
+   *
+   * Without it the banner simply vanishes, which is indistinguishable from it
+   * having been dismissed or from the app having given up quietly. Two seconds
+   * of "Signed back in" is what turns a disappearing warning into a resolved
+   * one.
+   */
+  const [recoveredToast, setRecoveredToast] = useState(false);
+  useEffect(() => {
+    const stopListening = onRecovered(() => setRecoveredToast(true));
+    return stopListening;
+  }, []);
+  useEffect(() => {
+    if (!recoveredToast) return undefined;
+    const timer = setTimeout(() => setRecoveredToast(false), 2600);
+    return () => clearTimeout(timer);
+  }, [recoveredToast]);
 
   useEffect(() => {
+    /**
+     * THE HOLD.
+     *
+     * `recovering` means the token stopped working and a new one is being
+     * fetched without a password. Redirecting now would unmount the tree — and
+     * the tree is where the unsaved work order lives, both as something the
+     * user can still see and as the only thing that can be asked for a snapshot
+     * if recovery does end up failing. So this effect does nothing at all until
+     * the session is either back or definitively gone.
+     *
+     * `user` is deliberately still populated during recovery (see the
+     * SIGNED_OUT branch in AuthContext), so the `!user` test below is already
+     * false here. The explicit guard is belt and braces on the one condition
+     * this component must never get wrong.
+     */
+    if (recovering) return;
+
     if (!loading && !user) {
       // Keep the query string: work order ids live in `?id=`, so dropping it
       // would return the user to a detail page with nothing selected. Read it
@@ -29,7 +68,15 @@ export default function RequireAuth({ children }) {
       // static export build rejects.
       const search = typeof window !== "undefined" ? window.location.search : "";
       const target = `${pathname || "/"}${search}`;
-      router.replace(`/login?next=${encodeURIComponent(target)}`);
+      /**
+       * `reason=expired` is what separates "you are not signed in" from "you
+       * were signed in and something ended it". The login page needs the
+       * distinction for two reasons: it changes the sentence at the top of the
+       * form, and it is the only case in which landing anywhere other than the
+       * role dashboard is permitted.
+       */
+      const reason = sessionState === SESSION_LOST ? "&reason=expired" : "";
+      router.replace(`/login?next=${encodeURIComponent(target)}${reason}`);
       return;
     }
     /**
@@ -49,7 +96,7 @@ export default function RequireAuth({ children }) {
     if (!loading && user?.mustChangePassword && !onChangePassword) {
       router.replace("/change-password/");
     }
-  }, [loading, user, pathname, router, onChangePassword]);
+  }, [loading, user, pathname, router, onChangePassword, recovering, sessionState]);
 
   if (loading) {
     return (
@@ -60,5 +107,11 @@ export default function RequireAuth({ children }) {
   }
   if (!user) return null;
 
-  return <AppShell>{children}</AppShell>;
+  return (
+    <>
+      {recovering && <SessionRecoveryBanner reason={recoveryReason} />}
+      <AppShell>{children}</AppShell>
+      {recoveredToast && <Toast message="Signed back in." />}
+    </>
+  );
 }

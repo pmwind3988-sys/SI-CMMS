@@ -1,6 +1,7 @@
 "use client";
 
 import { createClient } from "@supabase/supabase-js";
+import { isAuthExpiryError, reportAuthFailure, onRecovered } from "./sessionRecovery";
 
 /**
  * SI — Service Inside · Supabase client
@@ -214,6 +215,31 @@ export function liveQuery({ table, filter, run, cb, onError }) {
     const { data, error } = await run();
     if (cancelled) return;
     if (error) {
+      /**
+       * An expired token is not this listener's problem to report.
+       *
+       * PostgREST answers one with PGRST301, and an expired token fails EVERY
+       * mounted listener at once — a work order detail page runs five. Left to
+       * the ordinary path, the user gets a screen of identical red boxes
+       * reading "JWT expired", which names the mechanism and tells them nothing
+       * they can act on, while the app quietly does nothing about it.
+       *
+       * So it goes to the recovery machine instead, which coalesces the lot
+       * into one banner and one refresh, and onError is deliberately NOT
+       * called: there is nothing for the component to show that the banner is
+       * not already saying better. If recovery succeeds, the onRecovered
+       * subscription below re-runs this query and the data simply appears. If
+       * it fails, the user is on their way to /login and this component is
+       * about to unmount.
+       *
+       * Narrow on purpose. Everything that is not an auth expiry still reaches
+       * onError exactly as before — a broken policy or a bad column must stay
+       * visible, not disappear into a spinner that never resolves.
+       */
+      if (isAuthExpiryError(error)) {
+        reportAuthFailure(error);
+        return;
+      }
       onError?.(error);
       return;
     }
@@ -221,6 +247,16 @@ export function liveQuery({ table, filter, run, cb, onError }) {
   };
 
   refresh();
+
+  /**
+   * Re-run once the session is working again.
+   *
+   * Without this a listener that failed during the gap sits on stale or empty
+   * data until something happens to change a row it watches — which on a quiet
+   * work order is never. The user would be signed back in, told so, and still
+   * looking at an empty list.
+   */
+  const stopWatchingRecovery = onRecovered(refresh);
 
   // One channel, one binding per table. `filter` describes the first table
   // only — it is a column predicate, and there is no caller that wants the same
@@ -240,6 +276,7 @@ export function liveQuery({ table, filter, run, cb, onError }) {
 
   return () => {
     cancelled = true;
+    stopWatchingRecovery();
     supabase.removeChannel(channel);
   };
 }

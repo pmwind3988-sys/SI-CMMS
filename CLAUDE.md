@@ -258,6 +258,97 @@ because the key is a number anyone can read off a badge: a lockout would be a
 denial-of-service. A held request does not increment the counter, so nobody can extend
 somebody else's delay by hammering it.
 
+### A stale session no longer costs the user their work
+
+**No migration — this is entirely client-side, and nothing about the authorization
+boundary changes.**
+
+A session stops working in three quite different ways, and the app used to treat all
+three as the worst one: redirect to `/login`, discarding whatever was on screen. On a
+phone, on a plant floor, that is a typed fault report gone.
+
+1. **The access token expired, the refresh token is fine.** By far the most common — a
+   tab open since Friday, a phone that slept. Recoverable with no password.
+2. **The network is down.** The session is perfectly good. Signing anyone out over this
+   destroys work in order to react to a condition that fixes itself.
+3. **The refresh token was rejected** — revoked, the password changed elsewhere, the
+   account deactivated. Nothing can re-authenticate without the password, so the only
+   thing left to do well is lose nothing on the way to the sign-in screen.
+
+`AuthContext` owns `sessionState` (`active` / `recovering` / `lost`).
+`lib/sessionRecovery.js` is the bus that feeds it — React-free and Supabase-free, because
+`lib/supabase.js` imports it and the reverse would be a cycle. `lib/draftRecovery.js` is
+the snapshot store.
+
+Six things there are load-bearing:
+
+- **`user` deliberately keeps its value while `recovering`.** `RequireAuth` holds the page
+  instead of redirecting, which is the whole mechanism — the tree is both what the user can
+  still see and the only thing that can be *asked* for a snapshot if recovery fails. Nulling
+  `user` instead makes every mounted component dereference null and crashes the page this
+  exists to protect. It is safe for the reason stated at the top of this file: the database
+  is the authorization boundary, so a stale client object grants nothing and every request
+  still carries whatever token actually exists — during recovery, none.
+- **`snapshotDrafts()` must run BEFORE `setUser(null)`.** Clearing the user is what unmounts
+  the tree, and a draft is captured by asking the live component for its state. Reversed,
+  the feature still compiles, still shows the right banner, still lands on the right page,
+  and silently saves nothing every time. Measured: with the tree gone, the registry is empty
+  and 0 drafts are written.
+- **The registered snapshot function must read a ref, not its closure.** `registerDraftSource`
+  runs in an effect with `[]` deps — it has to, or every keystroke rebuilds the registration —
+  so the function it registers is the *first* render's. Measured with the ref removed: a full
+  complaint typed into the real form, **0 drafts saved**. That is the failure mode this whole
+  feature is most likely to ship with, because everything else about it still looks correct.
+- **The uid is part of every draft key.** A draft holds free text about a fault plus a name
+  and phone number, and the entire premise is that a sign-in screen is about to appear —
+  where, on a shared workshop terminal, a *different person* may sign in. They look under
+  their own uid and find nothing; `clearDraftsFor()` then removes the previous holder's
+  drafts outright, because "unreachable" and "not there" are different claims and only one
+  is worth making. Same distinction migration 0029 turned on.
+- **Only a retryable failure retries; only an affirmative rejection ends the session.** Being
+  offline is not being signed out. `isRetryableFailure()` mirrors the judgement supabase-js
+  itself makes — it preserves a session through `AuthRetryableFetchError` and only tears one
+  down when the refresh token is refused.
+- **`isAuthExpiryError()` is deliberately narrow.** Widening it is how a genuine bug — a
+  broken policy, a bad column — stops reaching `onError` and turns into a "signing you back
+  in…" banner that never diagnoses itself. An RLS denial, a trigger message and a missing
+  column are all explicitly *not* expiry.
+
+**`liveQuery` reports expiry to the bus instead of to `onError`, and re-runs on recovery.**
+Measured on the live test project with a token the server refuses: **eleven** listeners
+failed at once with `PGRST301` on one page load. Without this the user gets eleven identical
+red boxes reading "JWT expired", which names the mechanism and tells them nothing. With it:
+one banner, one refresh, zero error boxes, and the list refills itself — the re-run matters
+because a listener that failed during the gap otherwise waits for a row to change, which on
+a quiet work order is never.
+
+**`RECOVERY_GRACE_MS` exists because of a measurement, not a theory.** That same page load
+produced eleven reports and **two** recoveries: ten coalesced into one refresh, and a
+straggler whose request had left with the already-replaced token landed afterwards and
+started a second, pointless one. Ignoring failures for two seconds after a success took it
+to eleven reports, one recovery. It converges either way — this buys a round trip, not
+correctness.
+
+**Signing out during recovery is handled explicitly, and has to be.** Pressing Sign out while
+the banner is up is the obvious response to it taking a while. Without stopping the loop
+there, its next attempt was refused, `abandonRecovery()` filed a resume ticket, and a user
+who had deliberately signed out was met with "Your session ended" and an offer to resume —
+and `sessionState` was left on `recovering`, the one state `RequireAuth` refuses to redirect
+out of, so the app cleared the user, declined to navigate, and rendered nothing at all.
+
+**One documented exception to "role decides the landing page".** The FSD rule stands for a
+fresh sign-in. After an expiry, `?reason=expired` plus a resume ticket sends the user back to
+where they were — **only when the signed-in uid matches the interrupted one**. Anyone else
+gets their own dashboard and the previous holder's drafts are destroyed. This also closes a
+standing inconsistency: `RequireAuth` has always set `next` "for session-expiry mid-use" and
+the login page never read it.
+
+Scope, deliberately: **the raise/edit work order form only.** Comment drafts, the
+WorkflowPanel reasons and the admin forms are not preserved. Photos are not preserved
+anywhere and cannot be — they are live browser `File` handles with no serialisable form —
+which is why the restore notice names them rather than letting somebody submit a fault
+report believing the picture is still attached.
+
 ### The role hierarchy (migration 0015)
 
 ```
@@ -1303,6 +1394,16 @@ has happened on this project, and is what 0013 exists to fix.
   cron sweep and no per-account mute, so the only thing that ever shrinks `notifications` is
   somebody pressing **Clear read**. A retention sweep is the obvious next step and is not
   written.
+- **Only the work order form survives a forced sign-in.** Session recovery holds the page
+  for every screen, so nothing is lost on the recoverable path anywhere. But on the
+  unrecoverable path only the raise/edit form snapshots itself: an unsent comment, the
+  WorkflowPanel's completion notes and decline reason, and any in-progress admin form are
+  still lost. Each is a `registerDraftSource` call away — the mechanism is general and the
+  scope was the deliberate part.
+- **A recovery faster than a paint still flashes the banner.** Measured recoveries against
+  the test project completed inside the initial mount, so the strip appears and vanishes
+  within a few hundred milliseconds. Honest, and arguably useful, but it is a flash rather
+  than a message. Suppressing it below ~400ms would need a delay timer and was not written.
 - **Most accounts cannot receive email.** The seeded ones are all `@example.com`, which
   `si_is_placeholder_email` correctly refuses to send recovery links to — so for those
   accounts the *only* credential route is the Superuser issuing a temporary password. That

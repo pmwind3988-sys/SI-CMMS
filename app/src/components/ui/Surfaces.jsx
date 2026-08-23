@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
+import { CheckCircle2, AlertTriangle, RefreshCw, Loader2, WifiOff } from "lucide-react";
 
 export function Card({ children, className = "", ...rest }) {
   return (
@@ -54,6 +54,43 @@ export function Toast({ message }) {
     <div className="fixed inset-x-4 bottom-[calc(1.5rem+env(safe-area-inset-bottom))] z-50 flex items-center gap-2 rounded bg-navy px-4 py-3 text-[13px] text-white shadow-lg sm:inset-x-auto sm:right-6">
       <CheckCircle2 size={15} className="text-accent" />
       {message}
+    </div>
+  );
+}
+
+/**
+ * The strip that appears while a stale session is being renewed.
+ *
+ * Deliberately NOT a modal. The page underneath is still mounted and still
+ * readable, and the whole design goal is that a recovery costs the user
+ * nothing — dimming the screen would interrupt somebody who was only reading,
+ * and hide the half-filled form they are worried about.
+ *
+ * `sticky top-0` rather than `fixed`: it takes part in the layout, so it pushes
+ * the header down for the few seconds it exists instead of covering it. A fixed
+ * strip sat on top of the work order title and read as a rendering fault.
+ *
+ * `role="status"` with aria-live polite — announced to a screen reader, but not
+ * interrupting whatever it was already reading.
+ */
+export function SessionRecoveryBanner({ reason = "expired" }) {
+  const offline = reason === "offline";
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="sticky top-0 z-40 flex items-center justify-center gap-2 bg-[#FEF3C7] px-4 py-2 text-[12.5px] font-medium text-[#78350F] shadow-sm"
+    >
+      {offline ? (
+        <WifiOff size={14} className="flex-shrink-0" />
+      ) : (
+        <Loader2 size={14} className="flex-shrink-0 animate-spin" />
+      )}
+      <span className="min-w-0">
+        {offline
+          ? "Can’t reach the server — retrying. Your work is safe."
+          : "Session expired — signing you back in…"}
+      </span>
     </div>
   );
 }

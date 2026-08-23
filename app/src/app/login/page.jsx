@@ -13,6 +13,11 @@ import Link from "next/link";
 import { ArrowRight, Loader2, ShieldCheck } from "lucide-react";
 import { useAuth, GENERIC_SIGNIN_FAILURE } from "../../context/AuthContext";
 import { rememberedEmail, wasRememberMeChecked } from "../../lib/supabase";
+import {
+  peekResumeTicket,
+  clearResumeTicket,
+  clearDraftsFor,
+} from "../../lib/draftRecovery";
 import { dashboardPathForRole } from "../../lib/roles";
 import Field, { inputClass } from "../../components/ui/Field";
 import PasswordInput from "../../components/ui/PasswordInput";
@@ -55,6 +60,12 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(true);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
+  /**
+   * Set when we arrived here because a session ended rather than because
+   * nobody was signed in. Holds the ticket AuthContext wrote on the way out —
+   * who was interrupted, where, and whether anything was actually saved.
+   */
+  const [expired, setExpired] = useState(null);
 
   /**
    * Read in an effect rather than as a useState initialiser. This page is part
@@ -68,6 +79,22 @@ export default function LoginPage() {
     // Whatever was typed last time — an address or a number.
     const saved = rememberedEmail();
     if (saved) setIdentifier(saved);
+
+    /**
+     * Both halves are required before anything is promised.
+     *
+     * `reason=expired` says how the user got here; the ticket says whether
+     * there is actually something to go back to. Reading only the query
+     * parameter would let a hand-typed or bookmarked ?reason=expired produce a
+     * "your work is waiting" message with nothing behind it — and the same URL
+     * arriving days later would say it again. Read off window rather than via
+     * useSearchParams, which would need a Suspense boundary the static export
+     * build rejects.
+     */
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("reason") !== "expired") return;
+    const ticket = peekResumeTicket();
+    if (ticket?.uid) setExpired(ticket);
   }, []);
 
   /**
@@ -121,7 +148,42 @@ export default function LoginPage() {
 
     setStatus("checking");
     try {
-      const { role, mustChangePassword } = await signIn(identifier, password, rememberMe);
+      const { user: signedIn, role, mustChangePassword } = await signIn(
+        identifier,
+        password,
+        rememberMe,
+      );
+
+      /**
+       * Where to land — and the one documented exception to "role decides".
+       *
+       * The rule in CLAUDE.md and the FSD is that the landing page is the
+       * signed-in role's own dashboard, never browsing history. That rule is
+       * about a fresh sign-in, and it stays. This is the other case: the user
+       * was already working, the session ended underneath them, and their
+       * half-typed work order is sitting in storage waiting for the page it
+       * belongs to. Sending them to a dashboard instead would mean rescuing the
+       * draft and then hiding it.
+       *
+       * THE UID TEST IS THE WHOLE SAFETY ARGUMENT. A sign-in screen raised by
+       * an expiry is exactly where a second person walks up to a shared
+       * workshop terminal — so resuming is permitted only when the account that
+       * signed in is the account that was interrupted. Anyone else gets their
+       * own dashboard, and the previous holder's drafts are destroyed rather
+       * than left sitting in the tab. They were never readable across accounts
+       * (the uid is part of every draft key), but unreachable and absent are
+       * different claims and only one of them is worth making.
+       */
+      let resumeTo = null;
+      const ticket = peekResumeTicket();
+      if (ticket?.uid) {
+        if (signedIn?.id && ticket.uid === signedIn.id) {
+          resumeTo = ticket.next || null;
+        } else {
+          clearDraftsFor(ticket.uid);
+        }
+        clearResumeTicket();
+      }
 
       /**
        * Checked BEFORE the no-role branch below, because it is the reason the
@@ -160,7 +222,10 @@ export default function LoginPage() {
         return;
       }
       setStatus("success");
-      router.replace(dashboardPathForRole(role));
+      /* resumeTo is same-account-only and comes from a ticket this app wrote,
+         never from the URL — so it is always an in-app path, and it cannot be
+         used to point somebody at a page they did not come from. */
+      router.replace(resumeTo || dashboardPathForRole(role));
     } catch (e) {
       setStatus("idle");
       setError(friendlyError(e));
@@ -219,6 +284,25 @@ export default function LoginPage() {
               ? `Use your @${COMPANY_EMAIL_DOMAIN} email address, or your employee ID.`
               : "Use your company email address, or your employee ID."}
           </p>
+          {/**
+            * Why they are looking at this screen.
+            *
+            * Without it, being thrown to a sign-in form mid-job reads as the
+            * app having lost their work — which is the thing that makes people
+            * stop trusting it and start keeping a paper pad. The second
+            * sentence is conditional on drafts having ACTUALLY been saved,
+            * because a promise of restored work that turns out to be an empty
+            * form is worse than no promise. `expired` is only set when the
+            * ticket exists, so this cannot appear on an ordinary sign-in.
+            */}
+          {expired && !error && (
+            <div className="mb-4 rounded border border-[#F59E0B55] bg-[#FEF3C7] px-4 py-3 text-[13px] text-[#78350F]">
+              Your session ended, so you’ll need to sign in again.
+              {expired.drafts > 0
+                ? " Sign in as the same person and you’ll go straight back to what you were doing, with what you had typed still there."
+                : " You’ll be taken back to the page you were on."}
+            </div>
+          )}
           {error && <ErrorBanner message={error} />}
           <form onSubmit={handleSubmit}>
             <Field label="Company email or employee ID" required>
