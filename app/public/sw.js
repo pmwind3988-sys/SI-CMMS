@@ -58,6 +58,13 @@ self.addEventListener("push", (event) => {
         /* not our payload, or not JSON — fall through to the generic below */
       }
 
+      // A payload that parses but isn't a plain object (null, a bare string, a
+      // number, an array) would make every `data.x` access below throw outside
+      // this try/catch, which is a rejected `waitUntil` promise and therefore a
+      // push that shows nothing at all — the one outcome this handler must
+      // never produce. Coerce anything that isn't a non-null object back to {}.
+      if (typeof data !== "object" || data === null) data = {};
+
       const title = data.title || "SI — Service Inside";
       await self.registration.showNotification(title, {
         body: data.body || "You have a new notification.",
@@ -65,8 +72,13 @@ self.addEventListener("push", (event) => {
         badge: "/icons/icon-192.png",
         // The notification's own id, so a second alert about a DIFFERENT event
         // does not silently replace the first. renotify makes a repeat of the
-        // SAME id alert again rather than updating in place.
-        tag: data.id || "si-notification",
+        // SAME id alert again rather than updating in place. When there is no
+        // id — a malformed payload, or a parse failure above — falling back to
+        // a constant string would reintroduce exactly that collision: two such
+        // pushes in a row would collapse onto one tag and the second would
+        // replace the first instead of coexisting. A fresh random value per
+        // push keeps them apart.
+        tag: data.id || crypto.randomUUID(),
         renotify: true,
         // Android only; desktop ignores it and iOS has no vibration API at all.
         vibrate: [200, 100, 200, 100, 400],
