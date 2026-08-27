@@ -2,9 +2,8 @@
 
 **Date:** 2026-08-27
 **Status:** design, approved in chat, not implemented
-**Migration:** 0039 (next free number — 0038 is the last on disk; the commit
-titled "0039: a stale session recovers itself" was client-side only and added no
-migration file)
+**Migration:** 0042 (next free number. This branch was cut before 0039-0041
+landed on main and has since been merged up; 0041 is now the last on disk)
 
 ---
 
