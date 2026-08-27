@@ -2,6 +2,17 @@
 
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from "recharts";
 import { useIsNarrow } from "../../lib/useMediaQuery";
+import ChartLegend, { EXCLUDES_TEST_DATA } from "./ChartLegend";
+
+// The two colours are the only thing on this chart that carries meaning and is
+// nowhere stated. `i < 3` below is what draws them; this restates that rule
+// rather than recomputing it, so the two cannot disagree.
+const LEGEND = [
+  { color: "#EF4444", label: "Top 3", note: "the three machines with the most work orders" },
+  { color: "#F59E0B", label: "The rest of the top ten", note: "ranked by work order count" },
+  { label: "Horizontal axis", note: "how many work orders that machine has had" },
+  EXCLUDES_TEST_DATA,
+];
 
 export default function MachineBreakdownChart({ data }) {
   const rows = data || [];
@@ -12,7 +23,8 @@ export default function MachineBreakdownChart({ data }) {
   return (
     <div className="bg-white border border-border rounded-xl shadow-card p-3 sm:p-4">
       <div className="text-[13.5px] font-bold text-ink mb-1">Machine Breakdown</div>
-      <div className="text-[11.5px] text-ink-soft mb-3">Top 10 equipment by work order count</div>
+      <div className="text-[11.5px] text-ink-soft mb-2">Top 10 equipment by work order count</div>
+      <ChartLegend items={LEGEND} />
       <div style={{ height: 280 }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} layout="vertical" margin={{ left: narrow ? 0 : 8, right: narrow ? 8 : 16 }}>

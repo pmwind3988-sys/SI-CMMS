@@ -64,7 +64,7 @@ only people ranked lower than you.
 | Assign a technician | No | No | Yes | Yes | Yes | Yes |
 | Reassign to a different technician | No | No | Yes | Yes | Yes | Yes |
 | Accept or decline an assignment | No | Own | No | Yes | Yes | Yes |
-| On the way / On site / Start repair | No | Own | No | Yes | Yes | Yes |
+| Start work | No | Own | No | Yes | Yes | Yes |
 | Waiting for spare part, and resume | No | Own | No | Yes | Yes | Yes |
 | Start testing / record a failed test | No | Own | No | Yes | Yes | Yes |
 | Mark completed | No | Own | No | Yes | Yes | Yes |
@@ -156,7 +156,7 @@ The person who reports a problem and confirms it was fixed.
 
 - See anybody else's work orders. Their dashboard and list contain only their own.
 - Assign work to a technician, or choose who gets it.
-- Do any of the field steps — Accept, On the way, On site, Repairing, Testing,
+- Do any of the field steps — Accept, Start work, Repairing, Testing and
   Completed all belong to the technician.
 - Change their own work order after it has been assigned. From that point the
   workflow is the only way anything changes.
@@ -174,9 +174,8 @@ The person who does the work.
 - See the jobs **assigned to them**, newest first, with the SLA clock on each.
 - **Accept** an assignment, or **Decline** it with a reason — declining clears them
   off the job and puts it back in the Supervisor's queue.
-- Walk the job forward: On the way → On site → Start repair → (Waiting for spare
-  part, with a reason, and back) → Start testing → **Mark completed** with
-  resolution notes.
+- Walk the job forward: **Start work** → (Waiting for spare part, with a reason,
+  and back) → Start testing → **Mark completed** with resolution notes.
 - Record a **failed test**, with a reason, which sends the job back to Repairing.
 - Comment and attach photos — before/after pictures, part numbers, meter readings.
 - Edit and delete their own comments.
@@ -203,7 +202,7 @@ The person who triages the queue and decides who does what.
   is no longer limited to their own department.)
 - **Assign** an open work order to a technician.
 - **Reassign** a job at any stage — before acceptance, or mid-flight while the
-  technician is travelling, on site, repairing, waiting for a part or testing.
+  technician is repairing, waiting for a part or testing.
   Reassigning mid-flight requires choosing a *different* technician.
 - Raise a work order on somebody's behalf.
 - Edit any work order's details while it is still Open.
@@ -335,7 +334,7 @@ The sequence is fixed. **No status can be skipped** by anyone except an
 Administrator.
 
 ```
-Open → Assigned → Accepted → On the way → On site → Repairing
+Open → Assigned → Accepted → Repairing
      → Waiting for spare part ⇄ Repairing → Testing → Completed → Closed
 ```
 
@@ -344,9 +343,7 @@ Open → Assigned → Accepted → On the way → On site → Repairing
 | Open → Assigned | Assign technician | Supervisor, Manager, Admin | A technician (not themselves) |
 | Assigned → Accepted | Accept | The assigned Technician, Manager, Admin | — |
 | Assigned → Open | Decline | The assigned Technician, Manager, Admin | A decline reason |
-| Accepted → On the way | Start travel | The assigned Technician, Manager, Admin | — |
-| On the way → On site | Arrive on site | The assigned Technician, Manager, Admin | — |
-| On site → Repairing | Start repair | The assigned Technician, Manager, Admin | — |
+| Accepted → Repairing | Start work | The assigned Technician, Manager, Admin | — |
 | Repairing → Waiting for spare part | Waiting for spare part | The assigned Technician, Manager, Admin | A reason |
 | Waiting for spare part → Repairing | Resume repair | The assigned Technician, Manager, Admin | — |
 | Repairing → Testing | Start testing | The assigned Technician, Manager, Admin | — |

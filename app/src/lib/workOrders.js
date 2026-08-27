@@ -512,6 +512,18 @@ export async function addAttachment(woId, actor, file, fileType) {
     .upload(path, upload, { contentType: upload.type, upsert: false });
   if (uploadError) throw uploadError;
 
+  /* uploaded_by_id / _name / _role and wo_status are stamped by
+     `a_stamp_attachment` (migration 0039), not sent from here. `uploaded_by_id`
+     is still passed because the seed scripts insert on the service role, where
+     auth.uid() is null and the trigger coalesces to whatever arrived — for a
+     browser insert the trigger overwrites it either way.
+
+     The phase in particular must not come from the client: a field the UI
+     supplies is a field the UI can omit, and this schema has shipped that twice
+     (users.status in 0026, and 0031's argument about a flag that only filters a
+     dropdown). Measured after the migration: an insert claiming
+     'Somebody Else' / 'admin' / 'closed' stored the caller's real name, their
+     real role and the work order's real status. */
   const { error } = await supabase.from("attachments").insert({
     entity_type: "work_order",
     entity_id: woId,
@@ -520,7 +532,6 @@ export async function addAttachment(woId, actor, file, fileType) {
     file_type: fileType, // "photo" | "document" ('video' is legacy-read-only)
     file_size_bytes: upload.size,
     uploaded_by_id: actor.uid,
-    uploaded_by_role: actor.role,
   });
   if (error) throw error;
 
@@ -603,19 +614,17 @@ export async function declineWorkOrder(woId, actor, reason) {
   if (error) throw error;
 }
 
-/** matrix: accepted -> on_the_way */
-export async function startTravel(woId) {
-  await transition(woId, "on_the_way", { remarks: "Technician en route" });
-}
-
-/** matrix: on_the_way -> on_site */
-export async function arriveOnSite(woId) {
-  await transition(woId, "on_site", { remarks: "Arrived on site" });
-}
-
-/** matrix: on_site -> repairing */
+/**
+ * matrix: accepted -> repairing
+ *
+ * Migration 0039 removed `on_the_way` and `on_site`, so the technician goes from
+ * accepting a job to working on it in one press. `startTravel` and
+ * `arriveOnSite` are gone with them — the matrix rows they wrote against were
+ * deleted, so calling either would have been refused by the transition guard
+ * rather than merely doing nothing.
+ */
 export async function startRepair(woId) {
-  await transition(woId, "repairing", { remarks: "Started repair" });
+  await transition(woId, "repairing", { remarks: "Started work" });
 }
 
 /** matrix: repairing -> waiting_spare_part, requires spare_part_reason */

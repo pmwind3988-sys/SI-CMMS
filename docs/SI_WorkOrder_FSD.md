@@ -1,8 +1,44 @@
 # SI — Service Inside
 ## Functional Specification Document (FSD)
 ## Work Order Management Module
-**Version 1.0 · July 23, 2026 · Status: Official specification for development**
+**Version 1.5 · August 27, 2026 · Status: Official specification for development**
 **No code in this document, per instruction.**
+
+> **Revision 1.2 — the Technician flow loses two steps.** `On The Way` and
+> `On Site` are removed. A Technician who has accepted a job goes straight to
+> repairing it, and the action that starts that is called **Start Work** rather
+> than Start Repair. Sections 1, 3, 8, 9.1, 9.2, 12 and 15.2 are amended. Nothing else
+> about the flow changes: no step may still be skipped, the two backward
+> transitions and the two loops are unaffected, and work orders raised before
+> this revision keep both steps in their recorded history — an audit trail is
+> not rewritten by a change to the specification (Section 14).
+
+> **Revision 1.3 — priority can no longer be overridden, and two collected
+> fields are withdrawn.** Priority is now derived from Production Impact and the
+> two risk flags and nothing else: the manual override described in 1.0's
+> Section 7.3 is gone, along with the four priority buttons on the raise form.
+> **Estimated downtime** is no longer collected, and **video attachments** are
+> no longer accepted. Sections 4, 6, 7.3, 8, 10.1 and 11.4 are amended. The
+> escalation rules themselves are unchanged — a safety flag still forces at
+> least P2 and P1 at High severity, and an environmental flag still forces at
+> least P2.
+
+> **Revision 1.4 — an account holds a set of roles, and a work order can be
+> deleted.** Two things this document has described incorrectly since 1.0, both
+> load-bearing. An account is no longer one role: it holds any combination, and
+> its authorization is their union. And Section 4 rule 7's "a work order is
+> never deleted" is not true — deletion exists as a capability that must be
+> granted, and is off for everybody but Administrators by default. Sections 2,
+> 4, 12 and the new 12.1 and 12.2 are amended.
+
+> **Revision 1.5 — "requester" means whoever raised the work order.** A
+> clarification of 1.4's role model with real consequences. The person who
+> raised a work order is its requester and may verify, reopen and edit it,
+> whatever roles their account carries. Previously this was read as "an account
+> holding the Requester role", so a Supervisor or Technician who reported a
+> fault could not close it — and an Administrator or HOD who reported one was
+> offered the unresponsive-requester override on their own work order. Sections
+> 4 rule 5 and 12 are amended.
 
 ---
 
@@ -12,7 +48,7 @@ The Work Order Management module is the system of record for every maintenance r
 
 - Give any employee (**Requester**) a fast, guided way to report a problem, with the system — not the employee — deciding how urgent it is.
 - Give a **Supervisor** a single queue of unassigned work and a way to put the right **Technician** on it.
-- Give a Technician a step-by-step field-service flow that matches how a repair actually unfolds (travel, arrival, repair, waiting on parts if needed, testing, completion) rather than a generic "in progress" bucket.
+- Give a Technician a step-by-step field-service flow that matches how a repair actually unfolds (acceptance, repair, waiting on parts if needed, testing, completion) rather than a generic "in progress" bucket.
 - Give the Requester a closing say — a work order is not closed because a technician says so, it is closed because the person who reported the problem confirms it's resolved.
 - Give an **HOD** narrow, specific override authority so the process never permanently stalls on an unresponsive requester, without giving that authority the power to skip any other step.
 - Produce an immutable, timestamped record of every one of those steps, sufficient for compliance and postmortem review, without anyone — including HOD — being able to edit history after the fact.
@@ -29,8 +65,46 @@ This document is the authoritative specification. Where the shipped implementati
 | **Technician** | Executes the repair. Owns every step of the field-service flow from acceptance through marking the fix complete. | Mobile, shop-floor use |
 | **Supervisor** | Triages incoming requests and assigns technicians. Can reassign at any point before completion. | Desktop-first |
 | **HOD** (Head of Department) | Oversight and a single narrow escalation power: force-closing a work order stuck awaiting a requester's verification. Cannot skip any earlier step. | Desktop-first |
+| **Administrator** | Administers accounts, reference data and system settings. Holds every work order capability the four roles above hold, so that a stuck record can always be corrected. Not a maintenance role — an Administrator is not expected to appear in the technician roster or on any queue. | Desktop-first |
+| **Superuser** | An Administrator marked protected. Exists so the account that administers Administrators is not itself administrable from inside the app. Grants the two capabilities nobody else has: setting another person's credentials, and switching on deletion. | Desktop-first |
 
-A person may hold exactly one role for the purposes of this module's authorization logic. A Supervisor or HOD may raise a work order on behalf of someone else (e.g., a phoned-in report), but the module does not model "acting as another role" beyond that one exception.
+**HOD is implemented under the name Manager.** The two are the same role; this
+document uses HOD because that is the plant's word for it.
+
+### 2.1 An account holds a set of roles
+
+A person holds **any combination** of the roles above, not exactly one. One
+account can be a Supervisor and a Technician, which is the ordinary case in a
+small maintenance team.
+
+Four rules follow, and they are the whole model:
+
+1. **Authorization is the union.** An account may do anything any of its roles
+   may do. There is no "acting as" and no role switch that grants or withholds
+   anything — a Supervisor+Technician can assign work *and* be assigned work, at
+   the same time, with no mode to change first.
+2. **Seniority is the highest role held.** Wherever this document says one role
+   outranks another, the comparison uses the most senior role an account holds.
+   A Supervisor+Technician ranks as a Supervisor. The order is
+   Requester → Technician → Supervisor → HOD → Administrator → Superuser.
+3. **Nobody assigns work to themselves.** A Supervisor+Technician may not assign
+   a work order to their own account, and neither may an Administrator or a
+   Superuser. The accepted consequence: where one person is the only active
+   Supervisor *and* the only active Technician, somebody else has to do the
+   assigning.
+4. **Any screen that offers a choice of role is showing a view, never granting
+   one.** A person holding several roles sees a control for choosing which
+   queue they are looking at. It changes what is displayed and nothing else. No
+   capability may ever depend on it, or an authorization boundary ends up living
+   in a display preference.
+
+A Supervisor, HOD or Administrator may raise a work order on behalf of someone
+else (e.g., a phoned-in report). That is a property of those roles, not an
+exception to the rules above.
+
+A role change takes effect when the account's session credentials are next
+issued, not instantly — in practice within the hour, or immediately on signing
+out and back in. The same latency applies to deactivating an account.
 
 ---
 
@@ -42,7 +116,7 @@ The module implements one linear path, with exactly two permitted backward loops
 2. **Supervisor is notified** immediately and sees the request in an "needs assignment" queue.
 3. **Supervisor assigns a Technician.** The Technician is notified.
 4. **Technician accepts** (or declines, sending it back to the queue for reassignment).
-5. **Technician travels to, then arrives at, the equipment**, then **begins the repair**.
+5. **Technician starts work** once they are at the equipment. Travel and arrival are not recorded as separate steps — the moment that matters to everyone waiting is when work actually begins on the machine.
 6. If a part is needed, the **Technician marks the job waiting on a spare part**, then resumes repair once it arrives.
 7. Once the Technician believes the issue is fixed, they move the job into **testing**. If the test fails, it goes back to repair. If it passes, the Technician marks it **completed** with notes describing what was done.
 8. **Requester is notified** to verify. The Requester either **confirms the fix** (the work order is verified and closed in one action) or says **it's not fixed**, sending it back to repair with a reason.
@@ -54,13 +128,15 @@ No step in this sequence may be skipped by any role, including HOD. See Section 
 
 ## 4. Business Rules
 
-1. **Priority is a system decision, not a free-text field.** It is derived from Production Impact plus any Safety/Environmental Risk flags at creation time, and may be manually overridden by whoever is raising the work order — but the override is visible as an override, not silently blended into the record.
+1. **Priority is a system decision, and only a system decision.** It is derived from Production Impact plus any Safety/Environmental Risk flags, and nobody — Requester, Supervisor or HOD — may set it directly. Whoever raises the work order answers the questions; the system answers the priority. Derivation is enforced where the record is written, not only in the form, so a priority arriving from anywhere else is replaced rather than accepted.
 2. **Safety risk always escalates priority to at least P2, and to P1 if severity is High**, regardless of what Production Impact alone would suggest. A cosmetic issue with a High safety risk is still at least P1.
 3. **Environmental risk always escalates priority to at least P2.**
 4. **Only the technician a work order is currently assigned to may act on it.** A second technician viewing the same work order sees a read-only description of what's happening, never an action button that isn't theirs to press.
-5. **Only the original requester may verify or reopen a completed work order.** A Supervisor cannot verify on a requester's behalf; only HOD's narrow override exists for that gap.
+5. **Only the person who raised a work order may verify or reopen it.** This is a fact about the work order, not about the role the person holds: anyone can report a fault, so anyone can be a requester, and a Supervisor or Administrator who reports one has exactly the same closing say over it as a machine operator would. Nobody may verify on their behalf; only HOD's narrow override exists for that gap, and it applies to *other people's* work orders only — see Section 12.
+
+   The corollary matters as much: HOD's override is not the route by which an HOD closes their own work order. They close it the ordinary way, because on that work order they are the requester. Recording the ordinary act as an override would put "requester unresponsive" in the audit trail about somebody who was not.
 6. **A Supervisor or HOD may reassign a work order at any point before it reaches Completed**, including after a Technician has already started repairing — a mid-repair reassignment does not reset the flow back to Assigned's acceptance step; it simply changes who owns the remaining steps forward from wherever the work order currently sits. Reassignment before acceptance (from `Open` or `Assigned`) still routes through `Assigned` so the new technician accepts fresh; reassignment at `Accepted` or any later stage preserves the current status exactly.
-7. **A work order is never deleted.** Closing is a status, not a deletion — the full lifecycle remains queryable indefinitely for audit purposes.
+7. **Closing is a status, not a deletion, and deleting is a capability that has to be granted.** The normal end of a work order's life is `Closed`, and a closed work order remains queryable indefinitely. Permanent deletion exists for genuine mistakes — a duplicate, a test record, a work order raised against the wrong plant — and is off for every role but Administrator until a Superuser switches it on. It is irreversible and it is not part of the workflow. See Section 12.2.
 8. **A decline always returns a work order to Open, unassigned** — it does not stay attached to the declining technician in any way, and does not silently reassign to anyone; a Supervisor must actively re-triage it.
 9. **Marking a work order Completed requires resolution notes.** A Technician cannot close the loop with no record of what was actually done. This is enforced at the data layer, not only in the UI.
 10. **Reopening a completed work order requires a reason.** Same principle as (9) — a Requester cannot silently bounce a work order back without leaving a record of what's still wrong.
@@ -85,7 +161,7 @@ The module has two distinct approval gates. Neither is a generic "manager sign-o
 
 ## 6. SLA Rules
 
-Every work order carries two SLA timestamps, computed once at creation from its priority and never recalculated afterward (a later priority override does not retroactively change an already-computed deadline within the same work order's lifecycle — a priority change of that kind should be treated as an edge case requiring explicit product decision, not silently handled).
+Every work order carries two SLA timestamps, computed once at creation from its priority and never recalculated afterward. A deadline is a promise made when the work order was raised, so editing an Open work order's Production Impact re-derives its priority but leaves both SLA timestamps as they were. Changing an already-running deadline is an edge case requiring an explicit product decision, not something to handle silently.
 
 | Priority | Acknowledge target | Resolution target |
 |---|---|---|
@@ -112,11 +188,34 @@ Every work order carries two SLA timestamps, computed once at creation from its 
 ### 7.2 Resolution Logic
 The system takes the **most severe** (numerically lowest) priority implied by any of the three inputs above. Impact alone never overrides a risk-driven escalation; risk flags only ever pull priority toward more urgent, never less.
 
-### 7.3 Override
-Whoever is raising the work order (Requester, or Supervisor/HOD raising on someone's behalf) may manually select a different priority than the suggestion. The record distinguishes "auto-suggested" from "manually set" — this distinction is visible on the work order, not discarded once set.
+### 7.3 No Override
+The derived priority is the priority. Nobody may select a different one — the
+four priority buttons that stood here until revision 1.3 are gone from the raise
+form, and the rule is enforced where the work order is written rather than only
+in the form, so it holds for anything reaching the data layer by any route.
 
-### 7.4 Immutability After Creation
-Priority is set once, at creation. There is currently no supported flow for changing a work order's priority after it has been raised. If this becomes a requirement, it should be treated as a new feature with its own approval/audit rules, not an open field on an existing record.
+The reason is that an overridable priority is not a system decision, and Section
+4 rule 1 claims it is. In practice an override also defeated the escalations:
+the safety and environmental flags exist to pull priority toward more urgent, and
+a requester in a hurry could pull it straight back.
+
+The record still distinguishes "auto-suggested" from "manually set" and always
+reports auto-suggested. That field is retained rather than removed because an
+export is a record of what happened, and work orders raised before this revision
+may legitimately carry a manual value.
+
+### 7.4 Changing It After Creation
+Priority follows its inputs, so it is not frozen at creation — but it can only be
+changed by changing the answers it is derived from. Editing an Open work order's
+Production Impact or risk flags re-derives it; nothing else can move it, and
+there is no supported flow for setting it directly at any point in a work order's
+life. Once a work order leaves `Open` its core fields can no longer be edited, so
+in practice the priority is settled from that moment.
+
+Its SLA deadlines are **not** recomputed when this happens — see Section 6. If
+changing an already-running deadline becomes a requirement, it should be treated
+as a new feature with its own approval and audit rules, not as a side effect of
+an edit.
 
 ---
 
@@ -126,13 +225,17 @@ Priority is set once, at creation. There is currently no supported flow for chan
 |---|---|---|
 | Work order created | All Supervisors/HOD in the plant | Needs Assignment |
 | Technician assigned | The assigned Technician | Assigned |
-| Technician declines | All Supervisors/HOD in the plant (again) | Declined |
+| Technician accepts | The original Requester, and all Supervisors/HOD in the plant | Accepted |
+| Technician declines | All Supervisors/HOD in the plant (again) — deliberately **not** the Requester | Declined |
+| Technician starts work | The original Requester | Work started |
 | Technician marks Completed | The original Requester | Completed — please verify |
 | Requester reopens | The assigned Technician | Reopened |
 | SLA resolution target passed (newly flagged only) | All Supervisors/HOD in the plant | SLA Breach |
 
 - Notifications are generated server-side only, never written directly by any client, so a notification's existence is always trustworthy evidence that its trigger actually occurred — a client cannot fabricate one.
-- A recipient may mark their own notification read; no other write to a notification is permitted by anyone, including the sender-side trigger logic (a notification, once created, is never edited).
+- A recipient may mark their own notification read, and may **delete** their own already-read notifications. No other write is permitted by anyone, including the sender-side trigger logic — a notification, once created, is never edited.
+- Deleting one destroys no audit trail. The status history is the record of what happened; a notification is only ever a copy of it addressed to somebody, which is why this is allowed where deleting a work order's history is refused outright (Section 14).
+- Telling the Requester their work order was declined is deliberately omitted. A decline is an internal routing problem the ops chain resolves in minutes, and telling the person who reported the fault that nobody has taken it invites a second work order for the same fault. They can still see the decline, and its reason, in full on the status history.
 - Notifications currently have no in-module read/unread digest or batching rules beyond "one notification per trigger event" — a work order that gets declined three times produces three separate Declined notifications, not one updated one.
 
 ---
@@ -141,7 +244,12 @@ Priority is set once, at creation. There is currently no supported flow for chan
 
 ### 9.1 States
 
-`Open → Assigned → Accepted → On The Way → On Site → Repairing → Waiting Spare Part → Testing → Completed → Verified → Closed`
+`Open → Assigned → Accepted → Repairing → Waiting Spare Part → Testing → Completed → Verified → Closed`
+
+`On The Way` and `On Site` were part of this sequence until revision 1.2 and are
+no longer reachable. They are **retired, not deleted**: work orders that passed
+through them keep those entries in their history, still labelled and still shown
+on their timeline. No new work order can enter either.
 
 Two additional backward transitions are permitted:
 - `Assigned → Open` (decline)
@@ -159,10 +267,8 @@ And one internal loop:
 | Open | Assigned | Supervisor / HOD | Technician chosen |
 | Assigned | Accepted | Assigned Technician | |
 | Assigned | Open | Assigned Technician | Decline; reason required; assignment cleared |
-| Assigned / Accepted / On The Way / On Site / Repairing / Waiting Spare Part / Testing | Assigned | Supervisor / HOD | Reassignment, any pre-Completed stage |
-| Accepted | On The Way | Assigned Technician | |
-| On The Way | On Site | Assigned Technician | |
-| On Site | Repairing | Assigned Technician | |
+| Assigned / Accepted / Repairing / Waiting Spare Part / Testing | Assigned | Supervisor / HOD | Reassignment, any pre-Completed stage |
+| Accepted | Repairing | Assigned Technician | "Start Work" |
 | Repairing | Waiting Spare Part | Assigned Technician | Reason expected |
 | Waiting Spare Part | Repairing | Assigned Technician | Resume |
 | Repairing | Testing | Assigned Technician | |
@@ -189,11 +295,10 @@ And one internal loop:
 | Equipment | Required |
 | Complaint | Required, minimum 10 characters |
 | Production impact | Required |
-| Estimated downtime | Required, positive number |
 | Requester name | Required |
 | Phone number | Required, at least 7 digits after stripping non-numeric characters |
 | Safety risk severity | Required only if Safety risk = Yes |
-| Photo / Video | Optional, no minimum |
+| Photo | Optional, no minimum. Photos only — video is not accepted |
 
 Validation fires on submit attempt, not per-field on blur — every error is surfaced together so the Requester fixes everything in one pass.
 
@@ -227,7 +332,9 @@ This module's persistence is Firestore. Fields below are the authoritative set; 
 `note, actorId, actorName, timestamp`
 
 ### 11.4 `workOrders/{woId}/attachments/{attachmentId}`
-`fileUrl, fileType (photo|video), uploadedById, uploadedByRole, uploadedAt`
+`fileUrl, fileType (photo|document), uploadedById, uploadedByName, uploadedByRole, uploadedAt, woStatus`
+
+`uploadedByName` and `woStatus` record who uploaded the file and which step of the work order it documents, both captured at upload time and written by the server rather than supplied by the client. `fileType` retains `video` as a readable value: video upload was withdrawn in revision 1.3, but files stored before that remain viewable.
 
 ### 11.5 `notifications/{notificationId}`
 `recipientId, recipientRole, woId, woNumber, type, title, body, status (Sent|Read), createdAt`
@@ -242,26 +349,73 @@ This module's persistence is Firestore. Fields below are the authoritative set; 
 
 ## 12. Permissions
 
+An account holding several roles gets the union of its columns (Section 2.1).
+Administrator is omitted as a column because the answer is uniform: an
+Administrator holds every capability below, on any work order in the plant.
+
 | Capability | Requester | Technician (assignee) | Technician (not assignee) | Supervisor | HOD |
 |---|---|---|---|---|---|
 | Create a work order | Own identity only | — | — | On behalf of others | On behalf of others |
-| Read a work order | Own only | Assigned only | — | Any in-plant | Any in-plant |
+| Read a work order | Own only | Assigned, plus any they raised | Any they raised | Any in-plant | Any in-plant |
 | Assign / reassign technician (before acceptance → `Assigned`; at/after acceptance → status unchanged) | — | — | — | ✔ | ✔ |
 | Accept / decline | — | ✔ | — | — | — |
-| Advance travel/site/repair/testing steps | — | ✔ | — | — | — |
+| Start work; advance repair/testing steps | — | ✔ | — | — | — |
 | Mark waiting on spare part / resume | — | ✔ | — | — | — |
 | Mark Completed | — | ✔ | — | — | — |
-| Verify & close | ✔ (own only) | — | — | — | — |
-| Reopen | ✔ (own only) | — | — | — | — |
-| Force verify & close override | — | — | — | — | ✔ (Completed status only) |
+| Verify & close | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) |
+| Reopen | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) |
+| Force verify & close override | — | — | — | — | ✔ (Completed status only, and only on a work order somebody else raised) |
 | Add progress log entry | — | ✔ (active statuses only) | — | — | — |
 | Read progress log / status history / attachments | ✔ | ✔ | ✔ (if otherwise permitted to read the WO) | ✔ | ✔ |
 | Add attachment | ✔ (own WO) | ✔ (assigned WO) | — | — | — |
 | Delete attachment | — | — | — | — | ✔ |
-| Delete a work order | — | — | — | — | — (nobody — never deleted) |
+| Delete a work order | Only if granted, own only | Only if granted, assigned only | — | Only if granted | Only if granted |
 | Mark a notification read | Own notifications only | Own notifications only | Own notifications only | Own notifications only | Own notifications only |
 
 This table should match the enforced authorization logic exactly. Any divergence between this table and the enforced logic is a defect, not a matter of interpretation.
+
+### 12.1 Capabilities reserved to the Superuser
+Three things no Administrator may do, because each of them would let one
+Administrator take over another person's account or quietly widen their own
+authority:
+
+- Set another person's password, or change another person's sign-in address.
+  These are restricted **together**: repointing somebody's address at a mailbox
+  you control and then using the public password-reset flow reaches the same
+  place, so restricting either one alone achieves nothing. Correcting your own
+  address, and changing your own password, are not restricted.
+- Switch work order deletion on or off for a role (Section 12.2).
+- Retire or restore a reference value — a priority, an impact level, a work
+  order type, a safety severity, a department or a piece of equipment.
+
+What an Administrator uses instead of setting a password is sending the person a
+recovery link.
+
+### 12.2 Deleting a work order
+Irreversible, and deliberately awkward.
+
+- **It must be granted.** There is one switch per role. Only a Superuser may
+  change them, and they ship with Administrator on and every other role off.
+- **Granting it never widens what somebody can see.** A granted Requester
+  reaches their own work orders; a granted Technician reaches those assigned to
+  them; a granted Supervisor or HOD reaches any work order in the plant. The
+  grant answers "may this role delete", never "which records can this role
+  reach" — those stay exactly as Section 12's Read row defines them.
+- **The Superuser can always delete**, switches or not. The account that holds
+  the switches cannot flip its own way out of fixing a mistake.
+- **What goes with it.** The work order's status history, progress log,
+  attachments and any notifications referring to it are removed with it, and the
+  stored files themselves are deleted from storage. A summary of the deleted
+  work order — its number, equipment, department, status, priority, who raised
+  it, who it was assigned to, and who deleted it and when — is written to a
+  separate deletion record that is not itself deletable from the app.
+- **A refused deletion says so.** It never silently does nothing.
+
+Deleting a *person's account* is a different operation, governed by the account
+administration rules rather than this module: it is reserved to the Superuser and
+is refused outright for anybody who has ever acted on a work order, because that
+would break the audit trail Section 14 requires. Deactivation is the answer for a
+person who has worked.
 
 ---
 
@@ -303,7 +457,7 @@ As of this revision, both gaps previously flagged here are closed:
 Work Order List, Raise New Work Order, Work Order Details (shell), Assignment, Technician Job Screen (the Workflow tab as experienced by a Technician), Progress Update, Complete Work Order, Requester Verification, Work Order History. See the companion UI/UX screen specification for full desktop/mobile layouts, field-by-field detail, and empty/error state copy per screen — this section summarizes the behavioral principles that specification establishes.
 
 ### 15.2 Status Colors
-Open/Assigned = Navy. Accepted/On The Way/On Site/Repairing/Testing/Completed = Orange (all "active, not yet done" states share one color intentionally — Completed is "handed off," not "finished"). Waiting Spare Part = Slate (paused). Verified/Closed = Green. An SLA breach recolors its indicator Red regardless of the underlying status.
+Open/Assigned = Navy. Accepted/Repairing/Testing/Completed = Orange (all "active, not yet done" states share one color intentionally — Completed is "handed off," not "finished"). Waiting Spare Part = Slate (paused). Verified/Closed = Green. An SLA breach recolors its indicator Red regardless of the underlying status.
 
 ### 15.3 Role-Gated Controls
 A control that doesn't apply to the current viewer's role is never shown disabled with no explanation — it is either fully present and functional, or replaced entirely by a plain sentence describing what's being waited on and by whom.
@@ -325,5 +479,9 @@ Every list-type view (Progress Log, Attachments, notification panel, the work or
 |---|---|---|
 | 1.0 | 2026-07-23 | Initial official FSD, consolidating the workflow, Firestore design, and UI/UX specification into a single authoritative document; two implementation gaps flagged (Sections 4.6, 13.3) for resolution before this module is considered production-complete against this spec. |
 | 1.1 | 2026-07-23 | Both flagged gaps resolved in the implementation: all five justification fields (decline, spare part, test-failed, resolution, reopen) now enforced server-side identically; mid-flow reassignment now preserves status at Accepted-or-later instead of resetting to Assigned. Sections 4.6, 10.2, 11.1, 12, 13.3 updated to match. |
+| 1.2 | 2026-08-27 | `On The Way` and `On Site` removed from the Technician flow; `Accepted → Repairing` is now a single step named **Start Work**. The requester's "technician has arrived" notification becomes "work started" at the same step. Both statuses are retired rather than deleted — work orders that passed through them keep those history entries. Sections 1, 3, 8, 9.1, 9.2, 12 and 15.2 updated to match. |
+| 1.3 | 2026-08-27 | Priority override removed — priority is derived from Production Impact and the two risk flags and cannot be set by anyone; the escalation rules are unchanged. Estimated downtime is no longer collected. Video attachments are no longer accepted, though files stored earlier remain viewable. Attachments now record the uploader's name and the step of the work order they document. Accept notifications and a recipient's right to delete their own read notifications are documented. Sections 4, 6, 7.3, 8, 10.1 and 11.4 updated to match. |
+| 1.4 | 2026-08-27 | The role model corrected: an account holds any combination of roles and its authorization is their union, seniority is the highest role held, nobody assigns work to themselves, and a role-switching control is a view control only (new Section 2.1). Administrator and Superuser added to the role table; HOD recorded as being implemented under the name Manager. Section 4 rule 7's "a work order is never deleted" replaced — deletion exists, must be granted per role, and is off for everyone but Administrator by default (new Section 12.2). Superuser-only capabilities documented (new Section 12.1). Section 12's table amended. |
+| 1.5 | 2026-08-27 | "Requester" clarified to mean the person who raised the work order rather than an account holding the Requester role. Consequences: a Supervisor or Technician who reports a fault can now see, verify, reopen and edit it, where previously the work order became invisible to a Technician the moment they submitted it; and an Administrator or HOD who reports one verifies it the ordinary way instead of being offered the unresponsive-requester override on their own work order. Section 4 rule 5 and Section 12 updated to match. |
 
 This document, not any prior individual design artifact, is the specification of record for the Work Order Management module going forward.

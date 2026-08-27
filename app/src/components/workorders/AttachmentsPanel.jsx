@@ -37,6 +37,9 @@ import {
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenAttachments, addAttachment } from "../../lib/workOrders";
+import { groupByPhase, phaseForStatus } from "../../lib/attachmentPhases";
+import { fmtDateTimeMY } from "../../lib/datetime";
+import { ROLE_LABELS } from "../../lib/roles";
 import { describeError } from "../../lib/errors";
 import Button from "../ui/Button";
 import { ErrorBanner, ModalOverlay } from "../ui/Surfaces";
@@ -52,6 +55,22 @@ import { ErrorBanner, ModalOverlay } from "../ui/Surfaces";
 function fileLabel(a) {
   const base = (a.storage_path || a.file_url || "").split("/").pop() || "";
   return base.replace(/^\d{10,}-/, "") || (a.file_type === "video" ? "Video" : "Photo");
+}
+
+/**
+ * The uploader's role, as a word rather than an enum value. Falls back to the
+ * raw code — the same fail-soft direction referenceData.js takes — and to a
+ * dash for the rows written before migration 0039, which have no role recorded
+ * because nothing was recording one.
+ */
+function uploaderRole(a) {
+  if (!a.uploaded_by_role) return "—";
+  return ROLE_LABELS[a.uploaded_by_role] || a.uploaded_by_role;
+}
+
+/** Name and role on one line, for the places that need it as flat text. */
+function uploaderLine(a) {
+  return `${a.uploaded_by_name || "Unknown"} · ${uploaderRole(a)}`;
 }
 
 function fileSize(bytes) {
@@ -105,6 +124,18 @@ function AttachmentViewer({ items, index, onIndex, onClose }) {
               {isVideo ? "Video" : "Photo"} {index + 1} of {items.length}
               {size ? ` · ${size}` : ""}
             </div>
+            {/* Repeated here rather than left on the thumbnail: full screen is
+                where somebody actually studies a photo, and it is the moment
+                "who took this, and was it before or after the repair?" is worth
+                answering without going back. Videos are legacy rows that
+                predate 0039 and carry none of this, so the line is skipped
+                rather than rendered as three dashes. */}
+            {item.uploaded_by_name && (
+              <div className="truncate text-[11.5px] text-ink-soft">
+                {uploaderLine(item)} · {fmtDateTimeMY(item.uploaded_at)}
+                {item.wo_status ? ` · ${phaseForStatus(item.wo_status).label}` : ""}
+              </div>
+            )}
           </div>
           {/* A way out for anything the browser will not decode itself — an
               iPhone video in HEVC, say. Same signed URL, handed to the OS. */}
@@ -212,8 +243,16 @@ export default function AttachmentsPanel({ wo }) {
 
   const photos = (items || []).filter((a) => a.file_type === "photo");
   const videos = (items || []).filter((a) => a.file_type === "video");
-  // The viewer's list, and the index every thumbnail below hands it.
-  const media = [...photos, ...videos];
+
+  /* Grouped by the phase of the job each photo documents (migration 0039).
+     `orderedPhotos` is the grid's reading order once grouped, and it — not
+     `photos` — is what the viewer indexes into, so the arrow keys walk the
+     photos in the order they are actually shown rather than in the order the
+     query returned them. */
+  const photoGroups = groupByPhase(photos);
+  const orderedPhotos = photoGroups.flatMap((g) => g.items);
+  const photoIndex = new Map(orderedPhotos.map((p, i) => [p.id, i]));
+  const media = [...orderedPhotos, ...videos];
 
   return (
     // The banner was a flex child of the two-column row, so an upload error
@@ -229,23 +268,51 @@ export default function AttachmentsPanel({ wo }) {
             <Button size="sm" variant="ghost" icon={ImageIcon} onClick={() => photoInput.current.click()}>Upload</Button>
             <input ref={photoInput} type="file" accept="image/*" multiple hidden onChange={(e) => upload(e.target.files, "photo")} />
           </div>
-          <div className="flex flex-wrap gap-2">
-            {photos.length === 0 && <div className="text-[12.5px] text-ink-soft">No photos uploaded yet.</div>}
-            {photos.map((p, i) => (
-              // w-18/h-18 aren't in Tailwind's scale, so these compiled to
-              // nothing and every photo rendered at its full camera resolution —
-              // one attachment pushed the page thousands of pixels wide.
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => setViewing(i)}
-                aria-label={`View ${fileLabel(p)}`}
-                className="h-20 w-20 flex-shrink-0 overflow-hidden rounded border border-border"
-              >
-                <img src={p.file_url} alt="" loading="lazy" className="h-full w-full object-cover" />
-              </button>
-            ))}
-          </div>
+          {photos.length === 0 && <div className="text-[12.5px] text-ink-soft">No photos uploaded yet.</div>}
+
+          {/* One block per phase, empties omitted — so a work order that has
+              only ever been photographed once still shows a single heading
+              rather than five, four of them saying "none". */}
+          {photoGroups.map(({ phase, items: groupPhotos }) => (
+            <div key={phase.label} className="mb-4 last:mb-0">
+              <div className="mb-1.5">
+                <div className="text-[12.5px] font-bold text-ink">
+                  {phase.label} <span className="font-medium text-ink-soft">({groupPhotos.length})</span>
+                </div>
+                <div className="text-[11px] text-ink-soft">{phase.note}</div>
+              </div>
+              <div className="flex flex-wrap gap-2.5">
+                {groupPhotos.map((p) => (
+                  // w-18/h-18 aren't in Tailwind's scale, so these compiled to
+                  // nothing and every photo rendered at its full camera
+                  // resolution — one attachment pushed the page thousands of
+                  // pixels wide. The card is wider than the image so the
+                  // caption has somewhere to sit without wrapping to five
+                  // lines under an 80px thumbnail.
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setViewing(photoIndex.get(p.id))}
+                    aria-label={`View ${fileLabel(p)}, uploaded by ${uploaderLine(p)}`}
+                    className="w-32 flex-shrink-0 overflow-hidden rounded border border-border text-left"
+                  >
+                    <img src={p.file_url} alt="" loading="lazy" className="h-20 w-full object-cover" />
+                    <div className="px-1.5 py-1">
+                      <div className="truncate text-[11px] font-semibold text-ink">
+                        {p.uploaded_by_name || "Unknown"}
+                      </div>
+                      <div className="truncate text-[10.5px] text-ink-soft">{uploaderRole(p)}</div>
+                      {/* fmtDateTimeMY, not toLocaleString — the plant is in
+                          Malaysia, and a photo whose stamp reads differently on
+                          the supervisor's laptop and the technician's phone is
+                          worse than no stamp. */}
+                      <div className="truncate text-[10.5px] text-ink-soft">{fmtDateTimeMY(p.uploaded_at)}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
         {videos.length > 0 && (
         <div className="min-w-0">
@@ -260,7 +327,7 @@ export default function AttachmentsPanel({ wo }) {
               <button
                 key={v.id}
                 type="button"
-                onClick={() => setViewing(photos.length + i)}
+                onClick={() => setViewing(orderedPhotos.length + i)}
                 className="flex w-full items-center gap-2 rounded bg-canvas px-2.5 py-2 text-left text-[12.5px]"
               >
                 <Play size={14} className="flex-shrink-0 text-ink-soft" />

@@ -94,8 +94,10 @@ const HEADINGS = {
   [ROLES.SUPERVISOR]: { title: "Supervisor Dashboard", sub: "The plant's queue, assignments and SLA health." },
 };
 
-// Statuses where a technician is actively working the job.
-const IN_PROGRESS = ["accepted", "on_the_way", "on_site", "repairing", "testing"];
+// Statuses where a technician is actively working the job. `on_the_way` and
+// `on_site` are gone since migration 0039 — no work order can hold either, so
+// naming them here would be a list guarding against a state that cannot occur.
+const IN_PROGRESS = ["accepted", "repairing", "testing"];
 
 /**
  * @param viewRole  Which role this screen is presenting. An account may hold

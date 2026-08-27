@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
@@ -10,8 +10,6 @@ import {
   Ban,
   ThumbsUp,
   UserCheck,
-  Truck,
-  MapPin,
   Wrench,
   PackageSearch,
   FlaskConical,
@@ -20,8 +18,6 @@ import { useAuth } from "../../context/AuthContext";
 import {
   acceptWorkOrder,
   declineWorkOrder,
-  startTravel,
-  arriveOnSite,
   startRepair,
   markWaitingSparePart,
   resumeRepair,
@@ -32,7 +28,9 @@ import {
   forceVerifyAndClose,
   reopenWorkOrder,
 } from "../../lib/workOrders";
-import { isAssigneeOf, isRequesterOf, isManagerOrAdmin } from "../../lib/constants";
+import { isAssigneeOf, raisedBy, isManagerOrAdmin } from "../../lib/constants";
+import { useReferenceData } from "../../lib/referenceData";
+import { nextStep } from "../../lib/nextStep";
 import { describeError } from "../../lib/errors";
 import { ROLES, hasRole } from "../../lib/roles";
 import { handoffToast } from "../../lib/toastHandoff";
@@ -51,7 +49,53 @@ function InfoBox({ children }) {
  * input too narrow to read back a sentence the technician had just typed.
  */
 
-export default function WorkflowPanel({ wo, onGotoAssign }) {
+/**
+ * What happens next, and whose move it is.
+ *
+ * Sits above every branch below rather than inside any of them, which is the
+ * point: the InfoBox in each branch explains the STATE the work order is in,
+ * and this names the next MOVE and who is being waited on. Those are different
+ * questions, and only the second one is missing on the screens where a reader
+ * is a spectator — a Requester looking at a job in Repairing gets a sentence
+ * about repairs happening and nothing at all about what has to happen for it
+ * to reach them.
+ *
+ * Amber when it is yours, grey when it is somebody else's. That contrast is
+ * most of the value here: "is this waiting on me right now?" is the question,
+ * and it should be answerable without reading.
+ */
+function NextStepLine({ wo }) {
+  const { user } = useAuth();
+  const { transitions, statuses } = useReferenceData();
+  const statusOrder = useMemo(
+    () => new Map(statuses.map((s) => [s.code, s.sort_order])),
+    [statuses]
+  );
+  const step = nextStep(wo, user, transitions, statusOrder);
+  if (!step) return null;
+  return (
+    <div
+      className={`mb-3 rounded px-3 py-2 text-[12.5px] ${
+        step.isYours
+          ? "bg-[#FEF3C7] text-[#92400E] font-semibold"
+          : "bg-canvas text-ink-soft"
+      }`}
+    >
+      {step.text}
+    </div>
+  );
+}
+
+export default function WorkflowPanel(props) {
+  return (
+    <div>
+      <NextStepLine wo={props.wo} />
+      <WorkflowActions {...props} />
+    </div>
+  );
+}
+
+function WorkflowActions({ wo, onGotoAssign }) {
   const { user } = useAuth();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -71,7 +115,7 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
   const [showReopen, setShowReopen] = useState(false);
 
   const assignee = isAssigneeOf(wo, user);
-  const requester = isRequesterOf(wo, user);
+  const requester = raisedBy(wo, user);
   const isSupervisorLike = hasRole(user, ROLES.SUPERVISOR) || isManagerOrAdmin(user);
   const actor = { uid: user.uid, name: user.name, role: user.role };
 
@@ -194,40 +238,20 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
     return <InfoBox>Assigned to {wo.assigned_to_name || "a technician"} — waiting for them to accept.</InfoBox>;
   }
 
+  /* Migration 0039 removed the On The Way and On Site rungs, so Accepted leads
+     straight here. The two branches that sat between them are gone with the
+     matrix rows they wrote against — leaving them would have left buttons the
+     transition guard refuses. */
   if (wo.status === "accepted") {
     if (assignee)
       return (
         <div>
-          <InfoBox>Accepted. Head to the equipment when you're ready.</InfoBox>
+          <InfoBox>Accepted. Start work once you're at the equipment.</InfoBox>
           <ErrorLine />
-          <Button variant="amber" icon={Truck} disabled={busy} onClick={() => run(startTravel)}>On The Way</Button>
+          <Button variant="amber" icon={Wrench} disabled={busy} onClick={() => run(startRepair)}>Start Work</Button>
         </div>
       );
-    return <InfoBox>{wo.assigned_to_name || "Technician"} has accepted and will head over shortly.</InfoBox>;
-  }
-
-  if (wo.status === "on_the_way") {
-    if (assignee)
-      return (
-        <div>
-          <InfoBox>En route. Mark arrival once you're at the equipment.</InfoBox>
-          <ErrorLine />
-          <Button variant="amber" icon={MapPin} disabled={busy} onClick={() => run(arriveOnSite)}>Arrived — On Site</Button>
-        </div>
-      );
-    return <InfoBox>{wo.assigned_to_name || "Technician"} is on the way.</InfoBox>;
-  }
-
-  if (wo.status === "on_site") {
-    if (assignee)
-      return (
-        <div>
-          <InfoBox>On site. Start repair when you've assessed the issue.</InfoBox>
-          <ErrorLine />
-          <Button variant="amber" icon={Wrench} disabled={busy} onClick={() => run(startRepair)}>Start Repair</Button>
-        </div>
-      );
-    return <InfoBox>{wo.assigned_to_name || "Technician"} is on site, assessing the issue.</InfoBox>;
+    return <InfoBox>{wo.assigned_to_name || "Technician"} has accepted and will start shortly.</InfoBox>;
   }
 
   if (wo.status === "repairing") {
@@ -311,14 +335,23 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
         </div>
       );
     }
+    /* Only reached when somebody ELSE raised this work order — the branch above
+       has already taken every case where the reader raised it themselves,
+       whatever roles they hold. That ordering is the fix in migration 0040: an
+       Administrator who reports a fault used to fall through to here and be
+       offered an override on their own job, stamping the history
+       "Force-verified — requester unresponsive" about somebody standing right
+       there. Overriding an unresponsive requester and being the requester are
+       different acts, and the audit trail has to tell them apart. */
     if (isManagerOrAdmin(user))
       return (
         <div>
-          <InfoBox>Awaiting requester verification. As {hasRole(user, ROLES.ADMIN) ? "Admin" : "Manager"} you can override and close directly if the requester is unresponsive.</InfoBox>
+          <InfoBox>Awaiting verification by {wo.requester_name || "the requester"}. As {hasRole(user, ROLES.ADMIN) ? "Admin" : "Manager"} you can override and close directly if they are unresponsive.</InfoBox>
+          <ErrorLine />
           <Button variant="ghost" icon={ThumbsUp} disabled={busy} onClick={() => run(forceVerifyAndClose)}>Force verify & close</Button>
         </div>
       );
-    return <InfoBox>Waiting for the requester to verify the fix.</InfoBox>;
+    return <InfoBox>Waiting for {wo.requester_name || "the requester"} to verify the fix.</InfoBox>;
   }
 
   return <InfoBox>This work order is closed. Verified and archived — cost and history have been finalized.</InfoBox>;
