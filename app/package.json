@@ -23,7 +23,8 @@
     "apk": "npm run build && cap sync android && npm run apk:debug",
     "apk:debug": "cd android && .\\gradlew.bat assembleDebug",
     "apk:release": "cd android && .\\gradlew.bat assembleRelease",
-    "icons": "node scripts/generateIcons.js"
+    "icons": "node scripts/generateIcons.js",
+    "keys:vapid": "node scripts/generateVapidKeys.js"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",
