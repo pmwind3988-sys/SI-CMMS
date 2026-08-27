@@ -1,8 +1,17 @@
 # SI — Service Inside
 ## Functional Specification Document (FSD)
 ## Work Order Management Module
-**Version 1.0 · July 23, 2026 · Status: Official specification for development**
+**Version 1.2 · August 27, 2026 · Status: Official specification for development**
 **No code in this document, per instruction.**
+
+> **Revision 1.2 — the Technician flow loses two steps.** `On The Way` and
+> `On Site` are removed. A Technician who has accepted a job goes straight to
+> repairing it, and the action that starts that is called **Start Work** rather
+> than Start Repair. Sections 1, 3, 8, 9.1, 9.2, 12 and 15.2 are amended. Nothing else
+> about the flow changes: no step may still be skipped, the two backward
+> transitions and the two loops are unaffected, and work orders raised before
+> this revision keep both steps in their recorded history — an audit trail is
+> not rewritten by a change to the specification (Section 14).
 
 ---
 
@@ -12,7 +21,7 @@ The Work Order Management module is the system of record for every maintenance r
 
 - Give any employee (**Requester**) a fast, guided way to report a problem, with the system — not the employee — deciding how urgent it is.
 - Give a **Supervisor** a single queue of unassigned work and a way to put the right **Technician** on it.
-- Give a Technician a step-by-step field-service flow that matches how a repair actually unfolds (travel, arrival, repair, waiting on parts if needed, testing, completion) rather than a generic "in progress" bucket.
+- Give a Technician a step-by-step field-service flow that matches how a repair actually unfolds (acceptance, repair, waiting on parts if needed, testing, completion) rather than a generic "in progress" bucket.
 - Give the Requester a closing say — a work order is not closed because a technician says so, it is closed because the person who reported the problem confirms it's resolved.
 - Give an **HOD** narrow, specific override authority so the process never permanently stalls on an unresponsive requester, without giving that authority the power to skip any other step.
 - Produce an immutable, timestamped record of every one of those steps, sufficient for compliance and postmortem review, without anyone — including HOD — being able to edit history after the fact.
@@ -42,7 +51,7 @@ The module implements one linear path, with exactly two permitted backward loops
 2. **Supervisor is notified** immediately and sees the request in an "needs assignment" queue.
 3. **Supervisor assigns a Technician.** The Technician is notified.
 4. **Technician accepts** (or declines, sending it back to the queue for reassignment).
-5. **Technician travels to, then arrives at, the equipment**, then **begins the repair**.
+5. **Technician starts work** once they are at the equipment. Travel and arrival are not recorded as separate steps — the moment that matters to everyone waiting is when work actually begins on the machine.
 6. If a part is needed, the **Technician marks the job waiting on a spare part**, then resumes repair once it arrives.
 7. Once the Technician believes the issue is fixed, they move the job into **testing**. If the test fails, it goes back to repair. If it passes, the Technician marks it **completed** with notes describing what was done.
 8. **Requester is notified** to verify. The Requester either **confirms the fix** (the work order is verified and closed in one action) or says **it's not fixed**, sending it back to repair with a reason.
@@ -127,6 +136,7 @@ Priority is set once, at creation. There is currently no supported flow for chan
 | Work order created | All Supervisors/HOD in the plant | Needs Assignment |
 | Technician assigned | The assigned Technician | Assigned |
 | Technician declines | All Supervisors/HOD in the plant (again) | Declined |
+| Technician starts work | The original Requester | Work started |
 | Technician marks Completed | The original Requester | Completed — please verify |
 | Requester reopens | The assigned Technician | Reopened |
 | SLA resolution target passed (newly flagged only) | All Supervisors/HOD in the plant | SLA Breach |
@@ -141,7 +151,12 @@ Priority is set once, at creation. There is currently no supported flow for chan
 
 ### 9.1 States
 
-`Open → Assigned → Accepted → On The Way → On Site → Repairing → Waiting Spare Part → Testing → Completed → Verified → Closed`
+`Open → Assigned → Accepted → Repairing → Waiting Spare Part → Testing → Completed → Verified → Closed`
+
+`On The Way` and `On Site` were part of this sequence until revision 1.2 and are
+no longer reachable. They are **retired, not deleted**: work orders that passed
+through them keep those entries in their history, still labelled and still shown
+on their timeline. No new work order can enter either.
 
 Two additional backward transitions are permitted:
 - `Assigned → Open` (decline)
@@ -159,10 +174,8 @@ And one internal loop:
 | Open | Assigned | Supervisor / HOD | Technician chosen |
 | Assigned | Accepted | Assigned Technician | |
 | Assigned | Open | Assigned Technician | Decline; reason required; assignment cleared |
-| Assigned / Accepted / On The Way / On Site / Repairing / Waiting Spare Part / Testing | Assigned | Supervisor / HOD | Reassignment, any pre-Completed stage |
-| Accepted | On The Way | Assigned Technician | |
-| On The Way | On Site | Assigned Technician | |
-| On Site | Repairing | Assigned Technician | |
+| Assigned / Accepted / Repairing / Waiting Spare Part / Testing | Assigned | Supervisor / HOD | Reassignment, any pre-Completed stage |
+| Accepted | Repairing | Assigned Technician | "Start Work" |
 | Repairing | Waiting Spare Part | Assigned Technician | Reason expected |
 | Waiting Spare Part | Repairing | Assigned Technician | Resume |
 | Repairing | Testing | Assigned Technician | |
@@ -248,7 +261,7 @@ This module's persistence is Firestore. Fields below are the authoritative set; 
 | Read a work order | Own only | Assigned only | — | Any in-plant | Any in-plant |
 | Assign / reassign technician (before acceptance → `Assigned`; at/after acceptance → status unchanged) | — | — | — | ✔ | ✔ |
 | Accept / decline | — | ✔ | — | — | — |
-| Advance travel/site/repair/testing steps | — | ✔ | — | — | — |
+| Start work; advance repair/testing steps | — | ✔ | — | — | — |
 | Mark waiting on spare part / resume | — | ✔ | — | — | — |
 | Mark Completed | — | ✔ | — | — | — |
 | Verify & close | ✔ (own only) | — | — | — | — |
@@ -303,7 +316,7 @@ As of this revision, both gaps previously flagged here are closed:
 Work Order List, Raise New Work Order, Work Order Details (shell), Assignment, Technician Job Screen (the Workflow tab as experienced by a Technician), Progress Update, Complete Work Order, Requester Verification, Work Order History. See the companion UI/UX screen specification for full desktop/mobile layouts, field-by-field detail, and empty/error state copy per screen — this section summarizes the behavioral principles that specification establishes.
 
 ### 15.2 Status Colors
-Open/Assigned = Navy. Accepted/On The Way/On Site/Repairing/Testing/Completed = Orange (all "active, not yet done" states share one color intentionally — Completed is "handed off," not "finished"). Waiting Spare Part = Slate (paused). Verified/Closed = Green. An SLA breach recolors its indicator Red regardless of the underlying status.
+Open/Assigned = Navy. Accepted/Repairing/Testing/Completed = Orange (all "active, not yet done" states share one color intentionally — Completed is "handed off," not "finished"). Waiting Spare Part = Slate (paused). Verified/Closed = Green. An SLA breach recolors its indicator Red regardless of the underlying status.
 
 ### 15.3 Role-Gated Controls
 A control that doesn't apply to the current viewer's role is never shown disabled with no explanation — it is either fully present and functional, or replaced entirely by a plain sentence describing what's being waited on and by whom.
@@ -325,5 +338,6 @@ Every list-type view (Progress Log, Attachments, notification panel, the work or
 |---|---|---|
 | 1.0 | 2026-07-23 | Initial official FSD, consolidating the workflow, Firestore design, and UI/UX specification into a single authoritative document; two implementation gaps flagged (Sections 4.6, 13.3) for resolution before this module is considered production-complete against this spec. |
 | 1.1 | 2026-07-23 | Both flagged gaps resolved in the implementation: all five justification fields (decline, spare part, test-failed, resolution, reopen) now enforced server-side identically; mid-flow reassignment now preserves status at Accepted-or-later instead of resetting to Assigned. Sections 4.6, 10.2, 11.1, 12, 13.3 updated to match. |
+| 1.2 | 2026-08-27 | `On The Way` and `On Site` removed from the Technician flow; `Accepted → Repairing` is now a single step named **Start Work**. The requester's "technician has arrived" notification becomes "work started" at the same step. Both statuses are retired rather than deleted — work orders that passed through them keep those history entries. Sections 1, 3, 8, 9.1, 9.2, 12 and 15.2 updated to match. |
 
 This document, not any prior individual design artifact, is the specification of record for the Work Order Management module going forward.
