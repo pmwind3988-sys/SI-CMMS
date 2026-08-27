@@ -1,7 +1,7 @@
 # SI — Service Inside
 ## Functional Specification Document (FSD)
 ## Work Order Management Module
-**Version 1.4 · August 27, 2026 · Status: Official specification for development**
+**Version 1.5 · August 27, 2026 · Status: Official specification for development**
 **No code in this document, per instruction.**
 
 > **Revision 1.2 — the Technician flow loses two steps.** `On The Way` and
@@ -30,6 +30,15 @@
 > never deleted" is not true — deletion exists as a capability that must be
 > granted, and is off for everybody but Administrators by default. Sections 2,
 > 4, 12 and the new 12.1 and 12.2 are amended.
+
+> **Revision 1.5 — "requester" means whoever raised the work order.** A
+> clarification of 1.4's role model with real consequences. The person who
+> raised a work order is its requester and may verify, reopen and edit it,
+> whatever roles their account carries. Previously this was read as "an account
+> holding the Requester role", so a Supervisor or Technician who reported a
+> fault could not close it — and an Administrator or HOD who reported one was
+> offered the unresponsive-requester override on their own work order. Sections
+> 4 rule 5 and 12 are amended.
 
 ---
 
@@ -123,7 +132,9 @@ No step in this sequence may be skipped by any role, including HOD. See Section 
 2. **Safety risk always escalates priority to at least P2, and to P1 if severity is High**, regardless of what Production Impact alone would suggest. A cosmetic issue with a High safety risk is still at least P1.
 3. **Environmental risk always escalates priority to at least P2.**
 4. **Only the technician a work order is currently assigned to may act on it.** A second technician viewing the same work order sees a read-only description of what's happening, never an action button that isn't theirs to press.
-5. **Only the original requester may verify or reopen a completed work order.** A Supervisor cannot verify on a requester's behalf; only HOD's narrow override exists for that gap.
+5. **Only the person who raised a work order may verify or reopen it.** This is a fact about the work order, not about the role the person holds: anyone can report a fault, so anyone can be a requester, and a Supervisor or Administrator who reports one has exactly the same closing say over it as a machine operator would. Nobody may verify on their behalf; only HOD's narrow override exists for that gap, and it applies to *other people's* work orders only — see Section 12.
+
+   The corollary matters as much: HOD's override is not the route by which an HOD closes their own work order. They close it the ordinary way, because on that work order they are the requester. Recording the ordinary act as an override would put "requester unresponsive" in the audit trail about somebody who was not.
 6. **A Supervisor or HOD may reassign a work order at any point before it reaches Completed**, including after a Technician has already started repairing — a mid-repair reassignment does not reset the flow back to Assigned's acceptance step; it simply changes who owns the remaining steps forward from wherever the work order currently sits. Reassignment before acceptance (from `Open` or `Assigned`) still routes through `Assigned` so the new technician accepts fresh; reassignment at `Accepted` or any later stage preserves the current status exactly.
 7. **Closing is a status, not a deletion, and deleting is a capability that has to be granted.** The normal end of a work order's life is `Closed`, and a closed work order remains queryable indefinitely. Permanent deletion exists for genuine mistakes — a duplicate, a test record, a work order raised against the wrong plant — and is off for every role but Administrator until a Superuser switches it on. It is irreversible and it is not part of the workflow. See Section 12.2.
 8. **A decline always returns a work order to Open, unassigned** — it does not stay attached to the declining technician in any way, and does not silently reassign to anyone; a Supervisor must actively re-triage it.
@@ -345,15 +356,15 @@ Administrator holds every capability below, on any work order in the plant.
 | Capability | Requester | Technician (assignee) | Technician (not assignee) | Supervisor | HOD |
 |---|---|---|---|---|---|
 | Create a work order | Own identity only | — | — | On behalf of others | On behalf of others |
-| Read a work order | Own only | Assigned only | — | Any in-plant | Any in-plant |
+| Read a work order | Own only | Assigned, plus any they raised | Any they raised | Any in-plant | Any in-plant |
 | Assign / reassign technician (before acceptance → `Assigned`; at/after acceptance → status unchanged) | — | — | — | ✔ | ✔ |
 | Accept / decline | — | ✔ | — | — | — |
 | Start work; advance repair/testing steps | — | ✔ | — | — | — |
 | Mark waiting on spare part / resume | — | ✔ | — | — | — |
 | Mark Completed | — | ✔ | — | — | — |
-| Verify & close | ✔ (own only) | — | — | — | — |
-| Reopen | ✔ (own only) | — | — | — | — |
-| Force verify & close override | — | — | — | — | ✔ (Completed status only) |
+| Verify & close | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) |
+| Reopen | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) | ✔ (work orders they raised) |
+| Force verify & close override | — | — | — | — | ✔ (Completed status only, and only on a work order somebody else raised) |
 | Add progress log entry | — | ✔ (active statuses only) | — | — | — |
 | Read progress log / status history / attachments | ✔ | ✔ | ✔ (if otherwise permitted to read the WO) | ✔ | ✔ |
 | Add attachment | ✔ (own WO) | ✔ (assigned WO) | — | — | — |
@@ -471,5 +482,6 @@ Every list-type view (Progress Log, Attachments, notification panel, the work or
 | 1.2 | 2026-08-27 | `On The Way` and `On Site` removed from the Technician flow; `Accepted → Repairing` is now a single step named **Start Work**. The requester's "technician has arrived" notification becomes "work started" at the same step. Both statuses are retired rather than deleted — work orders that passed through them keep those history entries. Sections 1, 3, 8, 9.1, 9.2, 12 and 15.2 updated to match. |
 | 1.3 | 2026-08-27 | Priority override removed — priority is derived from Production Impact and the two risk flags and cannot be set by anyone; the escalation rules are unchanged. Estimated downtime is no longer collected. Video attachments are no longer accepted, though files stored earlier remain viewable. Attachments now record the uploader's name and the step of the work order they document. Accept notifications and a recipient's right to delete their own read notifications are documented. Sections 4, 6, 7.3, 8, 10.1 and 11.4 updated to match. |
 | 1.4 | 2026-08-27 | The role model corrected: an account holds any combination of roles and its authorization is their union, seniority is the highest role held, nobody assigns work to themselves, and a role-switching control is a view control only (new Section 2.1). Administrator and Superuser added to the role table; HOD recorded as being implemented under the name Manager. Section 4 rule 7's "a work order is never deleted" replaced — deletion exists, must be granted per role, and is off for everyone but Administrator by default (new Section 12.2). Superuser-only capabilities documented (new Section 12.1). Section 12's table amended. |
+| 1.5 | 2026-08-27 | "Requester" clarified to mean the person who raised the work order rather than an account holding the Requester role. Consequences: a Supervisor or Technician who reports a fault can now see, verify, reopen and edit it, where previously the work order became invisible to a Technician the moment they submitted it; and an Administrator or HOD who reports one verifies it the ordinary way instead of being offered the unresponsive-requester override on their own work order. Section 4 rule 5 and Section 12 updated to match. |
 
 This document, not any prior individual design artifact, is the specification of record for the Work Order Management module going forward.

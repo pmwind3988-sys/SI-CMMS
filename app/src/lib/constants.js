@@ -51,9 +51,27 @@ export function fmtDue(ms) {
 export function isAssigneeOf(wo, currentUser) {
   return hasRole(currentUser, ROLES.TECHNICIAN) && wo.assigned_to_id === currentUser.uid;
 }
-export function isRequesterOf(wo, currentUser) {
-  return hasRole(currentUser, ROLES.REQUESTER) && wo.requester_id === currentUser.uid;
+/**
+ * Did this person raise this work order? Ownership only — no role test.
+ *
+ * Migration 0040: "requester" means the person who raised the row, not an
+ * account carrying the Requester role. Since 0020 an account holds a set of
+ * roles and most non-staff accounts do not carry `requester` at all, so the
+ * role test made an Administrator, Manager, Supervisor or Technician who
+ * reported a fault not the requester of it — the thing `requester_id` records
+ * that they plainly are.
+ *
+ * This mirrors work_orders_select / _update / _delete, all three of which now
+ * test `requester_id = auth.uid()` with no role condition.
+ */
+export function raisedBy(wo, currentUser) {
+  return !!wo?.requester_id && wo.requester_id === currentUser?.uid;
 }
+/* `isRequesterOf` — "holds the Requester role AND raised this" — is deleted
+   rather than deprecated. Every one of its callers wanted `raisedBy`, and
+   leaving a second, subtly narrower predicate beside it is how the next person
+   reintroduces the bug 0040 fixes. If the Requester ROLE is ever genuinely the
+   question, `hasRole(user, ROLES.REQUESTER)` says so without ambiguity. */
 /**
  * A Supervisor reaches every work order, not just their own department's
  * (migration 0019). Equipment is pickable from anywhere, so the department a
@@ -73,7 +91,7 @@ export function canAssign(currentUser) {
 }
 export function canEditWhileOpen(wo, currentUser) {
   return (
-    (hasRole(currentUser, ROLES.REQUESTER) && wo.requester_id === currentUser.uid) ||
+    raisedBy(wo, currentUser) ||
     isSupervisor(wo, currentUser) ||
     isManagerOrAdmin(currentUser)
   );
@@ -110,7 +128,7 @@ export function canDeleteWorkOrder(wo, currentUser, roleCan) {
     isManagerOrAdmin(currentUser) ||
     isSupervisor(wo, currentUser) ||
     isAssigneeOf(wo, currentUser) ||
-    isRequesterOf(wo, currentUser)
+    raisedBy(wo, currentUser)
   );
 }
 

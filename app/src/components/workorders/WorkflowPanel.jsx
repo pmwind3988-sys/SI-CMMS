@@ -28,7 +28,7 @@ import {
   forceVerifyAndClose,
   reopenWorkOrder,
 } from "../../lib/workOrders";
-import { isAssigneeOf, isRequesterOf, isManagerOrAdmin } from "../../lib/constants";
+import { isAssigneeOf, raisedBy, isManagerOrAdmin } from "../../lib/constants";
 import { useReferenceData } from "../../lib/referenceData";
 import { nextStep } from "../../lib/nextStep";
 import { describeError } from "../../lib/errors";
@@ -115,7 +115,7 @@ function WorkflowActions({ wo, onGotoAssign }) {
   const [showReopen, setShowReopen] = useState(false);
 
   const assignee = isAssigneeOf(wo, user);
-  const requester = isRequesterOf(wo, user);
+  const requester = raisedBy(wo, user);
   const isSupervisorLike = hasRole(user, ROLES.SUPERVISOR) || isManagerOrAdmin(user);
   const actor = { uid: user.uid, name: user.name, role: user.role };
 
@@ -335,14 +335,23 @@ function WorkflowActions({ wo, onGotoAssign }) {
         </div>
       );
     }
+    /* Only reached when somebody ELSE raised this work order — the branch above
+       has already taken every case where the reader raised it themselves,
+       whatever roles they hold. That ordering is the fix in migration 0040: an
+       Administrator who reports a fault used to fall through to here and be
+       offered an override on their own job, stamping the history
+       "Force-verified — requester unresponsive" about somebody standing right
+       there. Overriding an unresponsive requester and being the requester are
+       different acts, and the audit trail has to tell them apart. */
     if (isManagerOrAdmin(user))
       return (
         <div>
-          <InfoBox>Awaiting requester verification. As {hasRole(user, ROLES.ADMIN) ? "Admin" : "Manager"} you can override and close directly if the requester is unresponsive.</InfoBox>
+          <InfoBox>Awaiting verification by {wo.requester_name || "the requester"}. As {hasRole(user, ROLES.ADMIN) ? "Admin" : "Manager"} you can override and close directly if they are unresponsive.</InfoBox>
+          <ErrorLine />
           <Button variant="ghost" icon={ThumbsUp} disabled={busy} onClick={() => run(forceVerifyAndClose)}>Force verify & close</Button>
         </div>
       );
-    return <InfoBox>Waiting for the requester to verify the fix.</InfoBox>;
+    return <InfoBox>Waiting for {wo.requester_name || "the requester"} to verify the fix.</InfoBox>;
   }
 
   return <InfoBox>This work order is closed. Verified and archived — cost and history have been finalized.</InfoBox>;
