@@ -18,10 +18,12 @@
  * notification surface. Offline support, if it is ever wanted, is a separate
  * decision with its own invalidation story — not something to bolt on here.
  *
- * There is no `push` handler either, for the reason in lib/osNotifications.js:
- * a push arrives from a server, and `output: "export"` means this app has none.
- * Every notification shown here originates in the app's own Realtime
- * subscription, so the page is running whenever one is displayed.
+ * THERE IS NOW A `push` HANDLER, and it is why this file matters more than it
+ * used to. Everything above still holds for the in-app path — a notification
+ * shown while the tab is open comes from the app's own Realtime subscription.
+ * The push handler below is the other case: the browser is closed, no page is
+ * running, and this worker is the only code the device will execute. It is fed
+ * by supabase/functions/push-notify (migration 0042).
  *
  * Scope is "/" because the file is served from the root of `out/`. Moving it
  * anywhere else silently narrows the scope to that directory.
@@ -34,6 +36,48 @@
 self.addEventListener("install", () => self.skipWaiting());
 
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
+/**
+ * A push arrived. The browser may be closed; this handler is all that runs.
+ *
+ * `event.waitUntil` is load-bearing: without it the worker can be terminated
+ * before showNotification resolves and the alert silently never appears. There
+ * is no error and nothing to see — it simply does not happen.
+ *
+ * A push must ALWAYS result in a visible notification. Chrome revokes the push
+ * permission of an origin that receives pushes and shows nothing, so the catch
+ * below shows a generic notification rather than returning quietly.
+ */
+self.addEventListener("push", (event) => {
+  event.waitUntil(
+    (async () => {
+      let data = {};
+      try {
+        data = event.data ? event.data.json() : {};
+      } catch {
+        /* not our payload, or not JSON — fall through to the generic below */
+      }
+
+      const title = data.title || "SI — Service Inside";
+      await self.registration.showNotification(title, {
+        body: data.body || "You have a new notification.",
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+        // The notification's own id, so a second alert about a DIFFERENT event
+        // does not silently replace the first. renotify makes a repeat of the
+        // SAME id alert again rather than updating in place.
+        tag: data.id || "si-notification",
+        renotify: true,
+        // Android only; desktop ignores it and iOS has no vibration API at all.
+        vibrate: [200, 100, 200, 100, 400],
+        // Desktop only: stays on screen until dismissed instead of auto-hiding
+        // after a few seconds. Mobile ignores it.
+        requireInteraction: true,
+        data: { path: data.path || "/notifications/" },
+      });
+    })()
+  );
+});
 
 /**
  * Tapping a notification opens the work order it is about.
