@@ -52,6 +52,7 @@
  */
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { supabase, rememberMe as persistRememberMe } from "../lib/supabase";
+import { dropPushSubscription } from "../lib/pushSubscription";
 import { highestRole, ROLES } from "../lib/roles";
 import {
   onAuthFailure,
@@ -702,6 +703,12 @@ export function AuthProvider({ children }) {
 
     const uid = userRef.current?.uid;
     try {
+      /* Before the session goes, not after: si_unregister_push_subscription is
+         an RPC and needs a token. Reversed, it fails silently and this browser
+         keeps receiving alerts for somebody who has signed out — which on a
+         shared plant terminal means the next person's phone-shaped problem. */
+      await dropPushSubscription();
+
       const { error: signOutError } = await supabase.auth.signOut();
       if (signOutError) throw signOutError;
     } finally {
