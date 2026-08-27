@@ -1,7 +1,7 @@
 # SI — Service Inside
 ## Functional Specification Document (FSD)
 ## Work Order Management Module
-**Version 1.2 · August 27, 2026 · Status: Official specification for development**
+**Version 1.3 · August 27, 2026 · Status: Official specification for development**
 **No code in this document, per instruction.**
 
 > **Revision 1.2 — the Technician flow loses two steps.** `On The Way` and
@@ -12,6 +12,16 @@
 > transitions and the two loops are unaffected, and work orders raised before
 > this revision keep both steps in their recorded history — an audit trail is
 > not rewritten by a change to the specification (Section 14).
+
+> **Revision 1.3 — priority can no longer be overridden, and two collected
+> fields are withdrawn.** Priority is now derived from Production Impact and the
+> two risk flags and nothing else: the manual override described in 1.0's
+> Section 7.3 is gone, along with the four priority buttons on the raise form.
+> **Estimated downtime** is no longer collected, and **video attachments** are
+> no longer accepted. Sections 4, 6, 7.3, 8, 10.1 and 11.4 are amended. The
+> escalation rules themselves are unchanged — a safety flag still forces at
+> least P2 and P1 at High severity, and an environmental flag still forces at
+> least P2.
 
 ---
 
@@ -63,7 +73,7 @@ No step in this sequence may be skipped by any role, including HOD. See Section 
 
 ## 4. Business Rules
 
-1. **Priority is a system decision, not a free-text field.** It is derived from Production Impact plus any Safety/Environmental Risk flags at creation time, and may be manually overridden by whoever is raising the work order — but the override is visible as an override, not silently blended into the record.
+1. **Priority is a system decision, and only a system decision.** It is derived from Production Impact plus any Safety/Environmental Risk flags, and nobody — Requester, Supervisor or HOD — may set it directly. Whoever raises the work order answers the questions; the system answers the priority. Derivation is enforced where the record is written, not only in the form, so a priority arriving from anywhere else is replaced rather than accepted.
 2. **Safety risk always escalates priority to at least P2, and to P1 if severity is High**, regardless of what Production Impact alone would suggest. A cosmetic issue with a High safety risk is still at least P1.
 3. **Environmental risk always escalates priority to at least P2.**
 4. **Only the technician a work order is currently assigned to may act on it.** A second technician viewing the same work order sees a read-only description of what's happening, never an action button that isn't theirs to press.
@@ -94,7 +104,7 @@ The module has two distinct approval gates. Neither is a generic "manager sign-o
 
 ## 6. SLA Rules
 
-Every work order carries two SLA timestamps, computed once at creation from its priority and never recalculated afterward (a later priority override does not retroactively change an already-computed deadline within the same work order's lifecycle — a priority change of that kind should be treated as an edge case requiring explicit product decision, not silently handled).
+Every work order carries two SLA timestamps, computed once at creation from its priority and never recalculated afterward. A deadline is a promise made when the work order was raised, so editing an Open work order's Production Impact re-derives its priority but leaves both SLA timestamps as they were. Changing an already-running deadline is an edge case requiring an explicit product decision, not something to handle silently.
 
 | Priority | Acknowledge target | Resolution target |
 |---|---|---|
@@ -121,11 +131,34 @@ Every work order carries two SLA timestamps, computed once at creation from its 
 ### 7.2 Resolution Logic
 The system takes the **most severe** (numerically lowest) priority implied by any of the three inputs above. Impact alone never overrides a risk-driven escalation; risk flags only ever pull priority toward more urgent, never less.
 
-### 7.3 Override
-Whoever is raising the work order (Requester, or Supervisor/HOD raising on someone's behalf) may manually select a different priority than the suggestion. The record distinguishes "auto-suggested" from "manually set" — this distinction is visible on the work order, not discarded once set.
+### 7.3 No Override
+The derived priority is the priority. Nobody may select a different one — the
+four priority buttons that stood here until revision 1.3 are gone from the raise
+form, and the rule is enforced where the work order is written rather than only
+in the form, so it holds for anything reaching the data layer by any route.
 
-### 7.4 Immutability After Creation
-Priority is set once, at creation. There is currently no supported flow for changing a work order's priority after it has been raised. If this becomes a requirement, it should be treated as a new feature with its own approval/audit rules, not an open field on an existing record.
+The reason is that an overridable priority is not a system decision, and Section
+4 rule 1 claims it is. In practice an override also defeated the escalations:
+the safety and environmental flags exist to pull priority toward more urgent, and
+a requester in a hurry could pull it straight back.
+
+The record still distinguishes "auto-suggested" from "manually set" and always
+reports auto-suggested. That field is retained rather than removed because an
+export is a record of what happened, and work orders raised before this revision
+may legitimately carry a manual value.
+
+### 7.4 Changing It After Creation
+Priority follows its inputs, so it is not frozen at creation — but it can only be
+changed by changing the answers it is derived from. Editing an Open work order's
+Production Impact or risk flags re-derives it; nothing else can move it, and
+there is no supported flow for setting it directly at any point in a work order's
+life. Once a work order leaves `Open` its core fields can no longer be edited, so
+in practice the priority is settled from that moment.
+
+Its SLA deadlines are **not** recomputed when this happens — see Section 6. If
+changing an already-running deadline becomes a requirement, it should be treated
+as a new feature with its own approval and audit rules, not as a side effect of
+an edit.
 
 ---
 
@@ -135,14 +168,17 @@ Priority is set once, at creation. There is currently no supported flow for chan
 |---|---|---|
 | Work order created | All Supervisors/HOD in the plant | Needs Assignment |
 | Technician assigned | The assigned Technician | Assigned |
-| Technician declines | All Supervisors/HOD in the plant (again) | Declined |
+| Technician accepts | The original Requester, and all Supervisors/HOD in the plant | Accepted |
+| Technician declines | All Supervisors/HOD in the plant (again) — deliberately **not** the Requester | Declined |
 | Technician starts work | The original Requester | Work started |
 | Technician marks Completed | The original Requester | Completed — please verify |
 | Requester reopens | The assigned Technician | Reopened |
 | SLA resolution target passed (newly flagged only) | All Supervisors/HOD in the plant | SLA Breach |
 
 - Notifications are generated server-side only, never written directly by any client, so a notification's existence is always trustworthy evidence that its trigger actually occurred — a client cannot fabricate one.
-- A recipient may mark their own notification read; no other write to a notification is permitted by anyone, including the sender-side trigger logic (a notification, once created, is never edited).
+- A recipient may mark their own notification read, and may **delete** their own already-read notifications. No other write is permitted by anyone, including the sender-side trigger logic — a notification, once created, is never edited.
+- Deleting one destroys no audit trail. The status history is the record of what happened; a notification is only ever a copy of it addressed to somebody, which is why this is allowed where deleting a work order's history is refused outright (Section 14).
+- Telling the Requester their work order was declined is deliberately omitted. A decline is an internal routing problem the ops chain resolves in minutes, and telling the person who reported the fault that nobody has taken it invites a second work order for the same fault. They can still see the decline, and its reason, in full on the status history.
 - Notifications currently have no in-module read/unread digest or batching rules beyond "one notification per trigger event" — a work order that gets declined three times produces three separate Declined notifications, not one updated one.
 
 ---
@@ -202,11 +238,10 @@ And one internal loop:
 | Equipment | Required |
 | Complaint | Required, minimum 10 characters |
 | Production impact | Required |
-| Estimated downtime | Required, positive number |
 | Requester name | Required |
 | Phone number | Required, at least 7 digits after stripping non-numeric characters |
 | Safety risk severity | Required only if Safety risk = Yes |
-| Photo / Video | Optional, no minimum |
+| Photo | Optional, no minimum. Photos only — video is not accepted |
 
 Validation fires on submit attempt, not per-field on blur — every error is surfaced together so the Requester fixes everything in one pass.
 
@@ -240,7 +275,9 @@ This module's persistence is Firestore. Fields below are the authoritative set; 
 `note, actorId, actorName, timestamp`
 
 ### 11.4 `workOrders/{woId}/attachments/{attachmentId}`
-`fileUrl, fileType (photo|video), uploadedById, uploadedByRole, uploadedAt`
+`fileUrl, fileType (photo|document), uploadedById, uploadedByName, uploadedByRole, uploadedAt, woStatus`
+
+`uploadedByName` and `woStatus` record who uploaded the file and which step of the work order it documents, both captured at upload time and written by the server rather than supplied by the client. `fileType` retains `video` as a readable value: video upload was withdrawn in revision 1.3, but files stored before that remain viewable.
 
 ### 11.5 `notifications/{notificationId}`
 `recipientId, recipientRole, woId, woNumber, type, title, body, status (Sent|Read), createdAt`
@@ -339,5 +376,6 @@ Every list-type view (Progress Log, Attachments, notification panel, the work or
 | 1.0 | 2026-07-23 | Initial official FSD, consolidating the workflow, Firestore design, and UI/UX specification into a single authoritative document; two implementation gaps flagged (Sections 4.6, 13.3) for resolution before this module is considered production-complete against this spec. |
 | 1.1 | 2026-07-23 | Both flagged gaps resolved in the implementation: all five justification fields (decline, spare part, test-failed, resolution, reopen) now enforced server-side identically; mid-flow reassignment now preserves status at Accepted-or-later instead of resetting to Assigned. Sections 4.6, 10.2, 11.1, 12, 13.3 updated to match. |
 | 1.2 | 2026-08-27 | `On The Way` and `On Site` removed from the Technician flow; `Accepted → Repairing` is now a single step named **Start Work**. The requester's "technician has arrived" notification becomes "work started" at the same step. Both statuses are retired rather than deleted — work orders that passed through them keep those history entries. Sections 1, 3, 8, 9.1, 9.2, 12 and 15.2 updated to match. |
+| 1.3 | 2026-08-27 | Priority override removed — priority is derived from Production Impact and the two risk flags and cannot be set by anyone; the escalation rules are unchanged. Estimated downtime is no longer collected. Video attachments are no longer accepted, though files stored earlier remain viewable. Attachments now record the uploader's name and the step of the work order they document. Accept notifications and a recipient's right to delete their own read notifications are documented. Sections 4, 6, 7.3, 8, 10.1 and 11.4 updated to match. |
 
 This document, not any prior individual design artifact, is the specification of record for the Work Order Management module going forward.
