@@ -1,7 +1,7 @@
 # SI — Service Inside
 ## Functional Specification Document (FSD)
 ## Work Order Management Module
-**Version 1.3 · August 27, 2026 · Status: Official specification for development**
+**Version 1.4 · August 27, 2026 · Status: Official specification for development**
 **No code in this document, per instruction.**
 
 > **Revision 1.2 — the Technician flow loses two steps.** `On The Way` and
@@ -22,6 +22,14 @@
 > escalation rules themselves are unchanged — a safety flag still forces at
 > least P2 and P1 at High severity, and an environmental flag still forces at
 > least P2.
+
+> **Revision 1.4 — an account holds a set of roles, and a work order can be
+> deleted.** Two things this document has described incorrectly since 1.0, both
+> load-bearing. An account is no longer one role: it holds any combination, and
+> its authorization is their union. And Section 4 rule 7's "a work order is
+> never deleted" is not true — deletion exists as a capability that must be
+> granted, and is off for everybody but Administrators by default. Sections 2,
+> 4, 12 and the new 12.1 and 12.2 are amended.
 
 ---
 
@@ -48,8 +56,46 @@ This document is the authoritative specification. Where the shipped implementati
 | **Technician** | Executes the repair. Owns every step of the field-service flow from acceptance through marking the fix complete. | Mobile, shop-floor use |
 | **Supervisor** | Triages incoming requests and assigns technicians. Can reassign at any point before completion. | Desktop-first |
 | **HOD** (Head of Department) | Oversight and a single narrow escalation power: force-closing a work order stuck awaiting a requester's verification. Cannot skip any earlier step. | Desktop-first |
+| **Administrator** | Administers accounts, reference data and system settings. Holds every work order capability the four roles above hold, so that a stuck record can always be corrected. Not a maintenance role — an Administrator is not expected to appear in the technician roster or on any queue. | Desktop-first |
+| **Superuser** | An Administrator marked protected. Exists so the account that administers Administrators is not itself administrable from inside the app. Grants the two capabilities nobody else has: setting another person's credentials, and switching on deletion. | Desktop-first |
 
-A person may hold exactly one role for the purposes of this module's authorization logic. A Supervisor or HOD may raise a work order on behalf of someone else (e.g., a phoned-in report), but the module does not model "acting as another role" beyond that one exception.
+**HOD is implemented under the name Manager.** The two are the same role; this
+document uses HOD because that is the plant's word for it.
+
+### 2.1 An account holds a set of roles
+
+A person holds **any combination** of the roles above, not exactly one. One
+account can be a Supervisor and a Technician, which is the ordinary case in a
+small maintenance team.
+
+Four rules follow, and they are the whole model:
+
+1. **Authorization is the union.** An account may do anything any of its roles
+   may do. There is no "acting as" and no role switch that grants or withholds
+   anything — a Supervisor+Technician can assign work *and* be assigned work, at
+   the same time, with no mode to change first.
+2. **Seniority is the highest role held.** Wherever this document says one role
+   outranks another, the comparison uses the most senior role an account holds.
+   A Supervisor+Technician ranks as a Supervisor. The order is
+   Requester → Technician → Supervisor → HOD → Administrator → Superuser.
+3. **Nobody assigns work to themselves.** A Supervisor+Technician may not assign
+   a work order to their own account, and neither may an Administrator or a
+   Superuser. The accepted consequence: where one person is the only active
+   Supervisor *and* the only active Technician, somebody else has to do the
+   assigning.
+4. **Any screen that offers a choice of role is showing a view, never granting
+   one.** A person holding several roles sees a control for choosing which
+   queue they are looking at. It changes what is displayed and nothing else. No
+   capability may ever depend on it, or an authorization boundary ends up living
+   in a display preference.
+
+A Supervisor, HOD or Administrator may raise a work order on behalf of someone
+else (e.g., a phoned-in report). That is a property of those roles, not an
+exception to the rules above.
+
+A role change takes effect when the account's session credentials are next
+issued, not instantly — in practice within the hour, or immediately on signing
+out and back in. The same latency applies to deactivating an account.
 
 ---
 
@@ -79,7 +125,7 @@ No step in this sequence may be skipped by any role, including HOD. See Section 
 4. **Only the technician a work order is currently assigned to may act on it.** A second technician viewing the same work order sees a read-only description of what's happening, never an action button that isn't theirs to press.
 5. **Only the original requester may verify or reopen a completed work order.** A Supervisor cannot verify on a requester's behalf; only HOD's narrow override exists for that gap.
 6. **A Supervisor or HOD may reassign a work order at any point before it reaches Completed**, including after a Technician has already started repairing — a mid-repair reassignment does not reset the flow back to Assigned's acceptance step; it simply changes who owns the remaining steps forward from wherever the work order currently sits. Reassignment before acceptance (from `Open` or `Assigned`) still routes through `Assigned` so the new technician accepts fresh; reassignment at `Accepted` or any later stage preserves the current status exactly.
-7. **A work order is never deleted.** Closing is a status, not a deletion — the full lifecycle remains queryable indefinitely for audit purposes.
+7. **Closing is a status, not a deletion, and deleting is a capability that has to be granted.** The normal end of a work order's life is `Closed`, and a closed work order remains queryable indefinitely. Permanent deletion exists for genuine mistakes — a duplicate, a test record, a work order raised against the wrong plant — and is off for every role but Administrator until a Superuser switches it on. It is irreversible and it is not part of the workflow. See Section 12.2.
 8. **A decline always returns a work order to Open, unassigned** — it does not stay attached to the declining technician in any way, and does not silently reassign to anyone; a Supervisor must actively re-triage it.
 9. **Marking a work order Completed requires resolution notes.** A Technician cannot close the loop with no record of what was actually done. This is enforced at the data layer, not only in the UI.
 10. **Reopening a completed work order requires a reason.** Same principle as (9) — a Requester cannot silently bounce a work order back without leaving a record of what's still wrong.
@@ -292,6 +338,10 @@ This module's persistence is Firestore. Fields below are the authoritative set; 
 
 ## 12. Permissions
 
+An account holding several roles gets the union of its columns (Section 2.1).
+Administrator is omitted as a column because the answer is uniform: an
+Administrator holds every capability below, on any work order in the plant.
+
 | Capability | Requester | Technician (assignee) | Technician (not assignee) | Supervisor | HOD |
 |---|---|---|---|---|---|
 | Create a work order | Own identity only | — | — | On behalf of others | On behalf of others |
@@ -308,10 +358,53 @@ This module's persistence is Firestore. Fields below are the authoritative set; 
 | Read progress log / status history / attachments | ✔ | ✔ | ✔ (if otherwise permitted to read the WO) | ✔ | ✔ |
 | Add attachment | ✔ (own WO) | ✔ (assigned WO) | — | — | — |
 | Delete attachment | — | — | — | — | ✔ |
-| Delete a work order | — | — | — | — | — (nobody — never deleted) |
+| Delete a work order | Only if granted, own only | Only if granted, assigned only | — | Only if granted | Only if granted |
 | Mark a notification read | Own notifications only | Own notifications only | Own notifications only | Own notifications only | Own notifications only |
 
 This table should match the enforced authorization logic exactly. Any divergence between this table and the enforced logic is a defect, not a matter of interpretation.
+
+### 12.1 Capabilities reserved to the Superuser
+Three things no Administrator may do, because each of them would let one
+Administrator take over another person's account or quietly widen their own
+authority:
+
+- Set another person's password, or change another person's sign-in address.
+  These are restricted **together**: repointing somebody's address at a mailbox
+  you control and then using the public password-reset flow reaches the same
+  place, so restricting either one alone achieves nothing. Correcting your own
+  address, and changing your own password, are not restricted.
+- Switch work order deletion on or off for a role (Section 12.2).
+- Retire or restore a reference value — a priority, an impact level, a work
+  order type, a safety severity, a department or a piece of equipment.
+
+What an Administrator uses instead of setting a password is sending the person a
+recovery link.
+
+### 12.2 Deleting a work order
+Irreversible, and deliberately awkward.
+
+- **It must be granted.** There is one switch per role. Only a Superuser may
+  change them, and they ship with Administrator on and every other role off.
+- **Granting it never widens what somebody can see.** A granted Requester
+  reaches their own work orders; a granted Technician reaches those assigned to
+  them; a granted Supervisor or HOD reaches any work order in the plant. The
+  grant answers "may this role delete", never "which records can this role
+  reach" — those stay exactly as Section 12's Read row defines them.
+- **The Superuser can always delete**, switches or not. The account that holds
+  the switches cannot flip its own way out of fixing a mistake.
+- **What goes with it.** The work order's status history, progress log,
+  attachments and any notifications referring to it are removed with it, and the
+  stored files themselves are deleted from storage. A summary of the deleted
+  work order — its number, equipment, department, status, priority, who raised
+  it, who it was assigned to, and who deleted it and when — is written to a
+  separate deletion record that is not itself deletable from the app.
+- **A refused deletion says so.** It never silently does nothing.
+
+Deleting a *person's account* is a different operation, governed by the account
+administration rules rather than this module: it is reserved to the Superuser and
+is refused outright for anybody who has ever acted on a work order, because that
+would break the audit trail Section 14 requires. Deactivation is the answer for a
+person who has worked.
 
 ---
 
@@ -377,5 +470,6 @@ Every list-type view (Progress Log, Attachments, notification panel, the work or
 | 1.1 | 2026-07-23 | Both flagged gaps resolved in the implementation: all five justification fields (decline, spare part, test-failed, resolution, reopen) now enforced server-side identically; mid-flow reassignment now preserves status at Accepted-or-later instead of resetting to Assigned. Sections 4.6, 10.2, 11.1, 12, 13.3 updated to match. |
 | 1.2 | 2026-08-27 | `On The Way` and `On Site` removed from the Technician flow; `Accepted → Repairing` is now a single step named **Start Work**. The requester's "technician has arrived" notification becomes "work started" at the same step. Both statuses are retired rather than deleted — work orders that passed through them keep those history entries. Sections 1, 3, 8, 9.1, 9.2, 12 and 15.2 updated to match. |
 | 1.3 | 2026-08-27 | Priority override removed — priority is derived from Production Impact and the two risk flags and cannot be set by anyone; the escalation rules are unchanged. Estimated downtime is no longer collected. Video attachments are no longer accepted, though files stored earlier remain viewable. Attachments now record the uploader's name and the step of the work order they document. Accept notifications and a recipient's right to delete their own read notifications are documented. Sections 4, 6, 7.3, 8, 10.1 and 11.4 updated to match. |
+| 1.4 | 2026-08-27 | The role model corrected: an account holds any combination of roles and its authorization is their union, seniority is the highest role held, nobody assigns work to themselves, and a role-switching control is a view control only (new Section 2.1). Administrator and Superuser added to the role table; HOD recorded as being implemented under the name Manager. Section 4 rule 7's "a work order is never deleted" replaced — deletion exists, must be granted per role, and is off for everyone but Administrator by default (new Section 12.2). Superuser-only capabilities documented (new Section 12.1). Section 12's table amended. |
 
 This document, not any prior individual design artifact, is the specification of record for the Work Order Management module going forward.
