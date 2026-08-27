@@ -16,7 +16,8 @@
 -- where auth.uid() is null and si_is_admin() is therefore FALSE, so that guard
 -- applies to it. Left alone it refuses the pushed_at stamp, nothing is ever
 -- marked delivered, and the retry sweep below re-sends every notification
--- forever. The amendment is at the bottom of this file.
+-- forever. The amendment appears early in this file, before the pushed_at
+-- backfill that would otherwise trip the un-amended guard.
 -- ===========================================================================
 
 create extension if not exists pg_net;
@@ -59,6 +60,44 @@ create policy push_subscriptions_select on push_subscriptions
 drop policy if exists push_subscriptions_delete on push_subscriptions;
 create policy push_subscriptions_delete on push_subscriptions
   for delete using (user_id = auth.uid());
+
+-- ---------------------------------------------------------------------------
+-- The guard amendment — read the header of this file
+-- ---------------------------------------------------------------------------
+-- Without this, si_guard_notification_update() refuses the sender's pushed_at
+-- stamp, nothing is ever marked delivered, and si_push_retry_sweep() re-sends
+-- every notification once a minute forever. The failure does not look like a
+-- permission error to anyone; it looks like the same alert arriving over and
+-- over, and its cause is a trigger written thirty-seven migrations ago.
+--
+-- The early return is the same service-role door si_protected_override() opens
+-- and si_guard_test_account() returns through, and carries the same accepted
+-- risk: it is safe only because a null uid means a service-role connection,
+-- authenticated as trusted somewhere else.
+--
+-- This has to run BEFORE the pushed_at backfill below, not after: the backfill
+-- is itself an UPDATE on notifications and fires the OLD guard if the guard
+-- isn't replaced first. Measured: pushing this migration with the amendment
+-- left at the end of the file fails the backfill statement with "A
+-- notification may only be marked read." (SQLSTATE 42501) — the old guard
+-- still in force refusing its own replacement's prerequisite.
+create or replace function si_guard_notification_update()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return new; end if;   -- service role: the sender
+  if si_is_admin() then return new; end if;
+
+  if new.status <> 'read' then
+    raise exception 'A notification may only be marked read.'
+      using errcode = 'insufficient_privilege';
+  end if;
+  if (to_jsonb(new) - 'status') <> (to_jsonb(old) - 'status') then
+    raise exception 'Only the status of a notification may be changed.'
+      using errcode = 'insufficient_privilege';
+  end if;
+  return new;
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- Was this notification actually delivered?
@@ -222,34 +261,3 @@ select cron.unschedule('si-push-retry') where exists (
   select 1 from cron.job where jobname = 'si-push-retry'
 );
 select cron.schedule('si-push-retry', '* * * * *', $$select si_push_retry_sweep()$$);
-
--- ---------------------------------------------------------------------------
--- The guard amendment — read the header of this file
--- ---------------------------------------------------------------------------
--- Without this, si_guard_notification_update() refuses the sender's pushed_at
--- stamp, nothing is ever marked delivered, and si_push_retry_sweep() re-sends
--- every notification once a minute forever. The failure does not look like a
--- permission error to anyone; it looks like the same alert arriving over and
--- over, and its cause is a trigger written thirty-seven migrations ago.
---
--- The early return is the same service-role door si_protected_override() opens
--- and si_guard_test_account() returns through, and carries the same accepted
--- risk: it is safe only because a null uid means a service-role connection,
--- authenticated as trusted somewhere else.
-create or replace function si_guard_notification_update()
-returns trigger language plpgsql security definer set search_path = public as $$
-begin
-  if auth.uid() is null then return new; end if;   -- service role: the sender
-  if si_is_admin() then return new; end if;
-
-  if new.status <> 'read' then
-    raise exception 'A notification may only be marked read.'
-      using errcode = 'insufficient_privilege';
-  end if;
-  if (to_jsonb(new) - 'status') <> (to_jsonb(old) - 'status') then
-    raise exception 'Only the status of a notification may be changed.'
-      using errcode = 'insufficient_privilege';
-  end if;
-  return new;
-end;
-$$;
