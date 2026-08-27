@@ -416,6 +416,7 @@ export type Database = {
           entity_label: string | null
           entity_type: Database["public"]["Enums"]["si_entity_type"]
           id: string
+          push_claimed_at: string | null
           push_gave_up_at: string | null
           pushed_at: string | null
           recipient_id: string
@@ -431,6 +432,7 @@ export type Database = {
           entity_label?: string | null
           entity_type?: Database["public"]["Enums"]["si_entity_type"]
           id?: string
+          push_claimed_at?: string | null
           push_gave_up_at?: string | null
           pushed_at?: string | null
           recipient_id: string
@@ -446,6 +448,7 @@ export type Database = {
           entity_label?: string | null
           entity_type?: Database["public"]["Enums"]["si_entity_type"]
           id?: string
+          push_claimed_at?: string | null
           push_gave_up_at?: string | null
           pushed_at?: string | null
           recipient_id?: string

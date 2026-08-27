@@ -126,6 +126,29 @@ create index if not exists notifications_unpushed_idx
 -- not a contradiction, it just stops mattering to the retry set.
 alter table notifications add column if not exists push_gave_up_at timestamptz;
 
+-- The claim lease. Set by the sender to fence a concurrent invocation of the
+-- SAME notification (the trigger and the sweep can both reach one row, and a
+-- slow invocation can still be mid-loop when the sweep re-fires a minute
+-- later): the sender claims a row by setting this to now() before it starts
+-- sending, and releases it (sets it back to null) once it knows the outcome.
+--
+-- It EXPIRES rather than being a plain lock, and that is the whole point of
+-- it existing as a separate column from pushed_at. A killed invocation --
+-- Deno isolate recycled mid-loop, a deploy landing mid-request, an uncaught
+-- throw between the claim and the release -- cannot be relied on to run its
+-- own cleanup. No amount of try/finally in the function fixes that: a
+-- platform-level kill does not unwind a finally block. So the lease has to
+-- recover on its own by going stale, which si_push_retry_sweep's predicate
+-- below now checks: a claim older than 5 minutes is treated as abandoned and
+-- the row re-enters the retry set exactly as if it had never been claimed.
+-- Before this column existed, that same kill left pushed_at null and the
+-- sweep still delivered the alert a minute later -- worse in latency, never
+-- in correctness. A lease with no expiry would have been worse than that: a
+-- single kill would permanently mark the row delivered, invisible to the
+-- sweep and invisible to the unstamped-count alarm, with the notification
+-- simply never arriving and nothing reporting it.
+alter table notifications add column if not exists push_claimed_at timestamptz;
+
 -- ---------------------------------------------------------------------------
 -- Registering a device
 -- ---------------------------------------------------------------------------
@@ -291,6 +314,10 @@ begin
      where n.pushed_at is null
        and n.push_gave_up_at is null
        and n.created_at < now() - interval '2 minutes'
+       -- A stale claim (older than 5 minutes) is treated as abandoned --
+       -- see push_claimed_at's own comment above for why an expiring lease
+       -- is the only shape that survives a killed invocation.
+       and (n.push_claimed_at is null or n.push_claimed_at < now() - interval '5 minutes')
        and exists (
          select 1 from push_subscriptions ps where ps.user_id = n.recipient_id
        )
