@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.15"
+    PostgrestVersion: "14.17"
   }
   graphql_public: {
     Tables: {
@@ -197,7 +197,9 @@ export type Database = {
           storage_path: string | null
           uploaded_at: string
           uploaded_by_id: string
+          uploaded_by_name: string | null
           uploaded_by_role: Database["public"]["Enums"]["si_role"] | null
+          wo_status: Database["public"]["Enums"]["si_wo_status"] | null
         }
         Insert: {
           entity_id: string
@@ -209,7 +211,9 @@ export type Database = {
           storage_path?: string | null
           uploaded_at?: string
           uploaded_by_id: string
+          uploaded_by_name?: string | null
           uploaded_by_role?: Database["public"]["Enums"]["si_role"] | null
+          wo_status?: Database["public"]["Enums"]["si_wo_status"] | null
         }
         Update: {
           entity_id?: string
@@ -221,7 +225,9 @@ export type Database = {
           storage_path?: string | null
           uploaded_at?: string
           uploaded_by_id?: string
+          uploaded_by_name?: string | null
           uploaded_by_role?: Database["public"]["Enums"]["si_role"] | null
+          wo_status?: Database["public"]["Enums"]["si_wo_status"] | null
         }
         Relationships: [
           {
@@ -868,6 +874,7 @@ export type Database = {
           color_hex: string
           created_at: string
           description: string | null
+          is_active: boolean
           is_terminal: boolean
           label: string
           sort_order: number
@@ -878,6 +885,7 @@ export type Database = {
           color_hex?: string
           created_at?: string
           description?: string | null
+          is_active?: boolean
           is_terminal?: boolean
           label: string
           sort_order: number
@@ -888,6 +896,7 @@ export type Database = {
           color_hex?: string
           created_at?: string
           description?: string | null
+          is_active?: boolean
           is_terminal?: boolean
           label?: string
           sort_order?: number

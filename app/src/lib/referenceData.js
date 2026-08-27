@@ -18,7 +18,8 @@
  *
  * Rendering before the data arrives is normal, not an error — `ready` is false and
  * the lookup helpers fall back to something sensible (usually the raw code), so a
- * badge shows "on_the_way" for a moment rather than crashing or flashing empty.
+ * badge shows "waiting_spare_part" for a moment rather than crashing or
+ * flashing empty.
  */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { supabase, liveQuery } from "./supabase";
@@ -60,10 +61,17 @@ const SOURCES = {
       "id, priority_id, plant_id, ack_target_minutes, ack_target_label, response_target_minutes, response_target_label, resolution_target_minutes, resolution_target_label",
     order: "priority_id",
   },
-  // No `retire` spec, deliberately (0031): nobody picks a status, the workflow
-  // moves a work order through them. Taking one out of use means removing rows
-  // from wo_status_transitions, which is a different change.
-  wo_statuses: { select: "code, label, color_hex, sort_order, is_terminal, description", order: "sort_order" },
+  // 0031 gave this table no `retire` spec, on the reasoning that nobody picks a
+  // status — the workflow moves a work order through them, so taking one out of
+  // use means removing rows from wo_status_transitions. Migration 0039 did
+  // exactly that for `on_the_way` and `on_site`, and added `is_active` here to
+  // go with it. The flag is display only: it decides which rungs the timeline
+  // ladder draws. The boundary is still the transition matrix.
+  wo_statuses: {
+    select: "code, label, color_hex, sort_order, is_terminal, description, is_active",
+    order: "sort_order",
+    retire: { key: "code", flag: "is_active" },
+  },
   impact_levels: {
     select: "code, label, suggests_priority, sort_order, description, is_active",
     order: "sort_order",
@@ -146,6 +154,7 @@ export function ReferenceDataProvider({ children }) {
     const activeSeverities = active("safety_severities", severities);
     const activeDepartments = active("departments", departments);
     const activeAssets = active("assets", assets);
+    const activeStatuses = active("wo_statuses", statuses);
 
     const byKey = (rows, key) => new Map(rows.map((r) => [r[key], r]));
     const departmentMap = byKey(departments, "id");
@@ -212,6 +221,7 @@ export function ReferenceDataProvider({ children }) {
       activeImpacts,
       activeTypes,
       activeSeverities,
+      activeStatuses,
 
       /**
        * Does this role hold this capability? Absent rows read false, which is
@@ -251,8 +261,18 @@ export function ReferenceDataProvider({ children }) {
       impactLabel: (code) => impactMap.get(code)?.label ?? code ?? "—",
       typeLabel: (code) => typeMap.get(code)?.label ?? code ?? "—",
 
-      /** Ordered status codes — replaces the STATUS_FLOW array. */
-      statusFlow: statuses.map((s) => s.code),
+      /**
+       * Ordered status codes a work order can still be moved through — replaces
+       * the STATUS_FLOW array, and since migration 0039 excludes the retired
+       * rungs.
+       *
+       * `statuses` above is deliberately still EVERY row, retired included.
+       * That is what lets statusLabel/statusColor resolve a work order closed
+       * last month whose history says "On The Way", and it is why
+       * StatusTimeline draws this ladder PLUS whatever a given work order
+       * actually has history for, rather than this ladder alone.
+       */
+      statusFlow: activeStatuses.map((s) => s.code),
 
       /**
        * The priority a work order gets, from impact plus the two risk flags.

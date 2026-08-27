@@ -2,6 +2,25 @@
 
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
 import { useIsNarrow } from "../../lib/useMediaQuery";
+import ChartLegend from "./ChartLegend";
+
+/* Single series, so this is not a colour key either. The two things worth
+   saying are that the average repair time is in the tooltip and not on the
+   chart — easy to miss, and it is the more interesting of the two numbers —
+   and that the exclusion here is narrower than the other three charts'.
+   Migration 0034: this chart and `active_technicians` are the only outputs
+   whose SUBJECT is the technician, so they alone drop work a fixture
+   PERFORMED, where the rest key on who raised the fault. Reusing the shared
+   EXCLUDES_TEST_DATA line here would have claimed the wrong rule. */
+const LEGEND = [
+  { color: "#22C55E", label: "Completed", note: "work orders this technician finished" },
+  { label: "Horizontal axis", note: "how many they completed" },
+  { label: "Average repair time", note: "tap or hover a bar to see it" },
+  {
+    label: "Demo accounts are left out",
+    note: "work done by a test account is not credited to anyone here",
+  },
+];
 
 function CustomTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
@@ -23,7 +42,8 @@ export default function TechnicianPerformanceChart({ data }) {
   return (
     <div className="bg-white border border-border rounded-xl shadow-card p-3 sm:p-4">
       <div className="text-[13.5px] font-bold text-ink mb-1">Technician Performance</div>
-      <div className="text-[11.5px] text-ink-soft mb-3">Completed work orders, top 10 technicians</div>
+      <div className="text-[11.5px] text-ink-soft mb-2">Completed work orders, top 10 technicians</div>
+      <ChartLegend items={LEGEND} />
       <div style={{ height: 280 }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} layout="vertical" margin={{ left: narrow ? 0 : 8, right: narrow ? 8 : 16 }}>

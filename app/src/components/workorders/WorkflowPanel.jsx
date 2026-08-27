@@ -10,8 +10,6 @@ import {
   Ban,
   ThumbsUp,
   UserCheck,
-  Truck,
-  MapPin,
   Wrench,
   PackageSearch,
   FlaskConical,
@@ -20,8 +18,6 @@ import { useAuth } from "../../context/AuthContext";
 import {
   acceptWorkOrder,
   declineWorkOrder,
-  startTravel,
-  arriveOnSite,
   startRepair,
   markWaitingSparePart,
   resumeRepair,
@@ -194,40 +190,20 @@ export default function WorkflowPanel({ wo, onGotoAssign }) {
     return <InfoBox>Assigned to {wo.assigned_to_name || "a technician"} — waiting for them to accept.</InfoBox>;
   }
 
+  /* Migration 0039 removed the On The Way and On Site rungs, so Accepted leads
+     straight here. The two branches that sat between them are gone with the
+     matrix rows they wrote against — leaving them would have left buttons the
+     transition guard refuses. */
   if (wo.status === "accepted") {
     if (assignee)
       return (
         <div>
-          <InfoBox>Accepted. Head to the equipment when you're ready.</InfoBox>
+          <InfoBox>Accepted. Start work once you're at the equipment.</InfoBox>
           <ErrorLine />
-          <Button variant="amber" icon={Truck} disabled={busy} onClick={() => run(startTravel)}>On The Way</Button>
+          <Button variant="amber" icon={Wrench} disabled={busy} onClick={() => run(startRepair)}>Start Work</Button>
         </div>
       );
-    return <InfoBox>{wo.assigned_to_name || "Technician"} has accepted and will head over shortly.</InfoBox>;
-  }
-
-  if (wo.status === "on_the_way") {
-    if (assignee)
-      return (
-        <div>
-          <InfoBox>En route. Mark arrival once you're at the equipment.</InfoBox>
-          <ErrorLine />
-          <Button variant="amber" icon={MapPin} disabled={busy} onClick={() => run(arriveOnSite)}>Arrived — On Site</Button>
-        </div>
-      );
-    return <InfoBox>{wo.assigned_to_name || "Technician"} is on the way.</InfoBox>;
-  }
-
-  if (wo.status === "on_site") {
-    if (assignee)
-      return (
-        <div>
-          <InfoBox>On site. Start repair when you've assessed the issue.</InfoBox>
-          <ErrorLine />
-          <Button variant="amber" icon={Wrench} disabled={busy} onClick={() => run(startRepair)}>Start Repair</Button>
-        </div>
-      );
-    return <InfoBox>{wo.assigned_to_name || "Technician"} is on site, assessing the issue.</InfoBox>;
+    return <InfoBox>{wo.assigned_to_name || "Technician"} has accepted and will start shortly.</InfoBox>;
   }
 
   if (wo.status === "repairing") {

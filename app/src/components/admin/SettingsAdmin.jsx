@@ -166,11 +166,22 @@ export default function SettingsAdmin() {
 
       {ref.ready && tab === "statuses" && (
         <EditableTable
-          note="The eleven statuses are fixed by the workflow. Rename or recolour them; the order controls the status timeline."
+          note="The statuses are fixed by the workflow. Rename or recolour them; the order controls the status timeline. Two are marked retired — migration 0039 removed On The Way and On Site from the flow, so no new work order can reach them. They stay here because work orders closed before that change still show those steps on their timeline."
           rows={ref.statuses}
           rowKey="code"
           columns={[
-            { key: "code", label: "Code", type: "readonly", width: "flex-[1.4]" },
+            /* No `retireTable` prop, deliberately — see the header of
+               EditableTable below. Retiring a status is not a toggle: it means
+               deleting rows from wo_status_transitions, which is a migration.
+               The marker is here so nobody relabels a rung the workflow can no
+               longer reach believing it is live. */
+            {
+              key: "code",
+              label: "Code",
+              type: "readonly",
+              width: "flex-[1.4]",
+              render: (row) => (isRetired("wo_statuses", row) ? `${row.code} (retired)` : row.code),
+            },
             { key: "label", label: "Label", type: "text", width: "flex-[1.6]" },
             { key: "color_hex", label: "Colour", type: "color", width: "w-40" },
             { key: "sort_order", label: "Order", type: "number", width: "w-20" },
@@ -874,6 +885,13 @@ function EditableTable({
 
 function CellValue({ column, row }) {
   const v = row[column.key];
+  /* An escape hatch for a column whose displayed text is not simply its own
+     value — used by the statuses tab to mark the two rungs migration 0039 took
+     out of the workflow. Read-only by construction: `save()` above skips every
+     readonly column, so nothing here can be edited back. */
+  if (column.render) {
+    return <span className="text-[13px] text-ink truncate block">{column.render(row)}</span>;
+  }
   if (column.type === "color") {
     return (
       <span className="flex items-center gap-2 text-[12.5px] font-mono text-ink">

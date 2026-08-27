@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, PauseCircle, RotateCcw } from "lucide-react";
 import { listenWorkOrderHistory } from "../../lib/workOrders";
 import { useReferenceData } from "../../lib/referenceData";
@@ -14,7 +14,7 @@ function fmtTime(ts) {
 }
 
 export default function StatusTimeline({ wo }) {
-  const { statusFlow, statusLabel } = useReferenceData();
+  const { statusFlow, statusLabel, statuses } = useReferenceData();
   const [history, setHistory] = useState(null);
   const [error, setError] = useState(null);
 
@@ -23,9 +23,27 @@ export default function StatusTimeline({ wo }) {
     return unsub;
   }, [wo.id]);
 
-  // Order comes from wo_statuses.sort_order, so an admin reordering the ladder in
-  // Settings reorders this timeline too.
-  const STATUS_FLOW = statusFlow;
+  /* Order comes from wo_statuses.sort_order, so an admin reordering the ladder
+     in Settings reorders this timeline too.
+
+     `statusFlow` is the rungs a work order can still be moved through, which
+     since migration 0039 excludes On The Way and On Site. Drawing that alone
+     would be wrong for anything raised before the change: those work orders
+     have real history rows on both, and rendering a ladder that omits them puts
+     genuine events on no screen — the exact bug 0038 fixed for declines.
+
+     So any retired rung this particular work order actually reached is spliced
+     back in at its own sort_order. A work order raised after 0039 has no such
+     rows and draws the short ladder; one raised before draws its full, truthful
+     history. `statuses` is every row, retired included, which is why the labels
+     and colours still resolve. */
+  const STATUS_FLOW = useMemo(() => {
+    const active = new Set(statusFlow);
+    const reached = new Set((history || []).map((h) => h.to_status));
+    return statuses
+      .filter((s) => active.has(s.code) || reached.has(s.code))
+      .map((s) => s.code);
+  }, [statusFlow, statuses, history]);
   const flowIndex = STATUS_FLOW.indexOf(wo.status);
   const lastEvent = history && history.length ? history[history.length - 1] : null;
 
