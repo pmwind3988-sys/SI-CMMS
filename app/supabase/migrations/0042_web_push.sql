@@ -117,6 +117,15 @@ update notifications set pushed_at = now() where pushed_at is null;
 create index if not exists notifications_unpushed_idx
   on notifications (created_at) where pushed_at is null;
 
+-- Distinct from pushed_at on purpose (review finding 4): pushed_at means "the
+-- database handed this to the sender and it was actually delivered" and must
+-- keep meaning that. The 24-hour give-up below writes here instead, so a
+-- total outage still shows as a growing pushed_at-is-null count for as long
+-- as it lasts, rather than the count quietly returning to zero once the
+-- oldest rows time out. A row can carry both: gave-up-and-later-delivered is
+-- not a contradiction, it just stops mattering to the retry set.
+alter table notifications add column if not exists push_gave_up_at timestamptz;
+
 -- ---------------------------------------------------------------------------
 -- Registering a device
 -- ---------------------------------------------------------------------------
@@ -193,14 +202,32 @@ begin
   -- able to raise work orders.
   if v_secret is null or v_url is null then return; end if;
 
-  perform net.http_post(
-    url     := v_url,
-    body    := jsonb_build_object('notification_id', p_notification_id),
-    headers := jsonb_build_object(
-                 'Content-Type', 'application/json',
-                 'x-push-secret', v_secret),
-    timeout_milliseconds := 8000
-  );
+  -- review finding 1: this call runs inside the AFTER INSERT trigger on
+  -- notifications, which runs inside whatever transaction just moved a work
+  -- order — accept, decline, raise, assign. Before this handler existed, any
+  -- failure here (the net schema not resolving, pg_net mid-upgrade, a bad
+  -- value saved into push_function_url) would propagate out of the trigger,
+  -- abort the notification INSERT, and take the work-order transition down
+  -- with it. That contradicts this function's own comment above: a push
+  -- outage must never stop somebody reporting a fault. Only the
+  -- "not configured" branch above actually honoured that promise; this
+  -- handler is what makes every other failure mode honour it too. A warning
+  -- is visible in the Postgres logs without being visible to the user whose
+  -- transaction must still succeed.
+  begin
+    perform net.http_post(
+      url     := v_url,
+      body    := jsonb_build_object('notification_id', p_notification_id),
+      headers := jsonb_build_object(
+                   'Content-Type', 'application/json',
+                   'x-push-secret', v_secret),
+      timeout_milliseconds := 8000
+    );
+  exception when others then
+    raise warning 'si_enqueue_push: net.http_post failed for notification %: %',
+      p_notification_id, sqlerrm;
+    return;
+  end;
 end;
 $$;
 
@@ -231,18 +258,43 @@ declare
 begin
   -- Given up on after 24 hours. A push about a work order that moved on
   -- yesterday is noise, and an unbounded retry set is a queue that only grows.
+  --
+  -- review finding 4: this sets push_gave_up_at, not pushed_at. pushed_at
+  -- means "actually delivered"; if the give-up wrote it instead, a full day
+  -- of total outage would end with every unstamped row silently marked
+  -- pushed_at and the "growing count of unstamped rows" alarm this file's own
+  -- header calls "the only alarm that push has broken" would read clean right
+  -- when it matters most. The retry-set predicate below excludes gave-up rows
+  -- so the sweep stops retrying them, but pushed_at stays null on them
+  -- forever, so the alarm keeps ringing.
   update notifications
-     set pushed_at = now()
+     set push_gave_up_at = now()
    where pushed_at is null
+     and push_gave_up_at is null
      and created_at < now() - interval '24 hours';
 
+  -- review finding 3: a recipient with no registered device can never be
+  -- stamped by the sender (there is nothing to push to), so without this
+  -- exclusion every such notification sits in the retry set for the full
+  -- 24 hours and gets re-enqueued once a minute — up to 1,440 Edge Function
+  -- invocations per notification, most of them for recipients who have never
+  -- opted in to push at all. Skipping recipients with zero push_subscriptions
+  -- rows leaves the row's pushed_at null (it genuinely was not delivered, so
+  -- the alarm is still honest) without spending a function call on it every
+  -- minute. If they later register a device, the next sweep picks the row up
+  -- normally — nothing here marks it as sent.
+  --
   -- The two-minute floor keeps this from racing the trigger's own in-flight
   -- request and sending everything twice.
   for r in
-    select id from notifications
-     where pushed_at is null
-       and created_at < now() - interval '2 minutes'
-     order by created_at
+    select n.id from notifications n
+     where n.pushed_at is null
+       and n.push_gave_up_at is null
+       and n.created_at < now() - interval '2 minutes'
+       and exists (
+         select 1 from push_subscriptions ps where ps.user_id = n.recipient_id
+       )
+     order by n.created_at
      limit 200
   loop
     perform si_enqueue_push(r.id);

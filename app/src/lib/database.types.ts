@@ -416,6 +416,7 @@ export type Database = {
           entity_label: string | null
           entity_type: Database["public"]["Enums"]["si_entity_type"]
           id: string
+          push_gave_up_at: string | null
           pushed_at: string | null
           recipient_id: string
           recipient_role: Database["public"]["Enums"]["si_role"] | null
@@ -430,6 +431,7 @@ export type Database = {
           entity_label?: string | null
           entity_type?: Database["public"]["Enums"]["si_entity_type"]
           id?: string
+          push_gave_up_at?: string | null
           pushed_at?: string | null
           recipient_id: string
           recipient_role?: Database["public"]["Enums"]["si_role"] | null
@@ -444,6 +446,7 @@ export type Database = {
           entity_label?: string | null
           entity_type?: Database["public"]["Enums"]["si_entity_type"]
           id?: string
+          push_gave_up_at?: string | null
           pushed_at?: string | null
           recipient_id?: string
           recipient_role?: Database["public"]["Enums"]["si_role"] | null
