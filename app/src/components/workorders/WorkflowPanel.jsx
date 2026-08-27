@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
@@ -29,6 +29,8 @@ import {
   reopenWorkOrder,
 } from "../../lib/workOrders";
 import { isAssigneeOf, isRequesterOf, isManagerOrAdmin } from "../../lib/constants";
+import { useReferenceData } from "../../lib/referenceData";
+import { nextStep } from "../../lib/nextStep";
 import { describeError } from "../../lib/errors";
 import { ROLES, hasRole } from "../../lib/roles";
 import { handoffToast } from "../../lib/toastHandoff";
@@ -47,7 +49,53 @@ function InfoBox({ children }) {
  * input too narrow to read back a sentence the technician had just typed.
  */
 
-export default function WorkflowPanel({ wo, onGotoAssign }) {
+/**
+ * What happens next, and whose move it is.
+ *
+ * Sits above every branch below rather than inside any of them, which is the
+ * point: the InfoBox in each branch explains the STATE the work order is in,
+ * and this names the next MOVE and who is being waited on. Those are different
+ * questions, and only the second one is missing on the screens where a reader
+ * is a spectator — a Requester looking at a job in Repairing gets a sentence
+ * about repairs happening and nothing at all about what has to happen for it
+ * to reach them.
+ *
+ * Amber when it is yours, grey when it is somebody else's. That contrast is
+ * most of the value here: "is this waiting on me right now?" is the question,
+ * and it should be answerable without reading.
+ */
+function NextStepLine({ wo }) {
+  const { user } = useAuth();
+  const { transitions, statuses } = useReferenceData();
+  const statusOrder = useMemo(
+    () => new Map(statuses.map((s) => [s.code, s.sort_order])),
+    [statuses]
+  );
+  const step = nextStep(wo, user, transitions, statusOrder);
+  if (!step) return null;
+  return (
+    <div
+      className={`mb-3 rounded px-3 py-2 text-[12.5px] ${
+        step.isYours
+          ? "bg-[#FEF3C7] text-[#92400E] font-semibold"
+          : "bg-canvas text-ink-soft"
+      }`}
+    >
+      {step.text}
+    </div>
+  );
+}
+
+export default function WorkflowPanel(props) {
+  return (
+    <div>
+      <NextStepLine wo={props.wo} />
+      <WorkflowActions {...props} />
+    </div>
+  );
+}
+
+function WorkflowActions({ wo, onGotoAssign }) {
   const { user } = useAuth();
   const router = useRouter();
   const [busy, setBusy] = useState(false);

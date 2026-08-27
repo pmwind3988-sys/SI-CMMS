@@ -96,6 +96,16 @@ const SOURCES = {
   // What is read here decides what to *show*. si_can_delete_work_orders() and
   // the work_orders_delete policy decide what is allowed.
   role_permissions: { select: "role, can_delete_work_orders, updated_at", order: "role" },
+  // Also not labels: this is the workflow itself — which moves are legal, who
+  // may make each, and what each is called (migration 0003). It rides here for
+  // the same reason as role_permissions, and because reading it is what lets
+  // WorkflowPanel say what happens next WITHOUT keeping a second copy of the
+  // flow in the client. `wo_transitions_select` is `si_signed_in()`, so any
+  // signed-in account can read it; nothing here can write it.
+  wo_status_transitions: {
+    select: "from_status, to_status, roles, requires, requires_assignee_change, label",
+    order: "from_status",
+  },
 };
 
 export function ReferenceDataProvider({ children }) {
@@ -144,6 +154,7 @@ export function ReferenceDataProvider({ children }) {
     const types = data.wo_types ?? [];
     const severities = data.safety_severities ?? [];
     const rolePermissions = data.role_permissions ?? [];
+    const transitions = data.wo_status_transitions ?? [];
 
     // Retired rows stay in the lists above so every label still resolves; these
     // are what anything offering a *choice* renders from (migration 0031).
@@ -212,6 +223,7 @@ export function ReferenceDataProvider({ children }) {
       types,
       severities,
       rolePermissions,
+      transitions,
 
       // Still offerable. Anything that asks somebody to choose a value for new
       // work reads these instead (migration 0031).
