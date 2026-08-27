@@ -323,11 +323,20 @@ Generated locally and set by the user. None reach git.
 
 | Where | Name | What |
 |---|---|---|
-| Edge Function secret | `VAPID_PUBLIC_KEY` | public half |
-| Edge Function secret | `VAPID_PRIVATE_KEY` | private half — the credential |
+| Edge Function secret | `VAPID_PUBLIC_KEY` | public half, base64url, 87 chars |
+| Edge Function secret | `VAPID_PRIVATE_JWK` | private half — **the credential** |
+| Edge Function secret | `VAPID_SUBJECT` | `mailto:` address, required by RFC 8292 |
 | Edge Function secret | `PUSH_TRIGGER_SECRET` | shared with the trigger |
 | Supabase Vault | `push_trigger_secret` | same value, read by `si_enqueue_push()` |
+| Supabase Vault | `push_function_url` | so the URL is not hardcoded in a migration both projects share |
 | `app/.env.*.local` | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | public half again — the browser needs it to subscribe |
+
+**The private key is a full JWK JSON string, not the 32-byte base64url scalar
+the `web-push` npm ecosystem passes around.** `crypto.subtle.importKey` cannot
+derive the public coordinates `x` and `y` from the private scalar `d`, so a bare
+scalar is unusable in Deno and fails as an opaque `DataError` at signing time —
+long after everything else looks correct. The generator emits the JWK directly
+for this reason.
 
 `NEXT_PUBLIC_VAPID_PUBLIC_KEY` is genuinely public: it is the key a browser
 presents when subscribing, and it discloses nothing. The private half must never
