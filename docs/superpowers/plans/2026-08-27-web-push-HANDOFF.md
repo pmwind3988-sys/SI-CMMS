@@ -188,3 +188,53 @@ A separate session, after a human has watched the device test pass. In order:
 5. `npm run env:prod && npm run db:push`
 6. `npx supabase functions deploy push-notify --no-verify-jwt`
 7. A Vercel redeploy, so the new `NEXT_PUBLIC_*` value is inlined.
+
+---
+
+## 9. FIRST REAL DEVICE TEST — 2026-08-28. It works, with one hard limit.
+
+Tested on `https://si-cmms-push-test.vercel.app` (separate Vercel project, test
+database) with `tech.arun@example.com` on a real Android phone and
+`supervisor@example.com` on Windows Chrome.
+
+**Result: the push arrives when Chrome is backgrounded. It does NOT arrive when
+Chrome is swiped out of the app switcher.**
+
+Every boundary was instrumented before concluding anything, and the fault is in
+none of them:
+
+| Boundary | Evidence |
+|---|---|
+| Device registered | real Android Chrome FCM endpoint in `push_subscriptions` |
+| Notification written | `assigned` row |
+| Trigger to function | `net._http_response` HTTP 200 |
+| Function to FCM | `{"sent":1,"failed":0,"gone":0}`, `pushed_at` stamped |
+| Encryption | RFC 8291 round-trip decrypted locally — 120 bytes, correct structure |
+| VAPID keypair | SHA-256 of the browser's `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and of the JWK match Supabase's secret digests exactly |
+| Service worker | deployed, `push` handler present, every path calls `showNotification` |
+
+So **the encryption path is now proven** — the thing this whole feature could not
+establish until a device existed. Google accepted a correctly encrypted,
+correctly signed push, and Android chose not to surface it.
+
+**Root cause: Android OEM battery management force-stops Chrome when it is
+swiped from recents, which severs Google Play Services' delivery to it.** This is
+the known hard limit of web push on Android and is not fixable in this codebase.
+
+Three responses, in increasing order of what they cost:
+
+1. **Per phone:** Settings -> Apps -> Chrome -> Battery -> Unrestricted, and any
+   OEM "Autostart" permission. Fixes that handset; has to be done on each one.
+2. **Install to the Home Screen.** The manifest and all three icons are served
+   correctly, so Android builds a real WebAPK with its own task. Swiping *Chrome*
+   away then does not kill it. Swiping the installed app away can still kill it
+   on the same OEMs.
+3. **A native Android build.** The only option that survives aggressive OEM
+   killing AND delivers the loud custom alarm tone that was the original request.
+   The APK path was dropped from this project; this is the argument for
+   reconsidering it, and it is a product decision rather than a bug.
+
+**What web push here can and cannot do, now measured rather than predicted:**
+delivers to a backgrounded browser (phone in a pocket, screen locked) — the
+common case. Does not survive a swipe-away on this handset. Plays the device's
+default tone at the device's volume, and cannot be made louder.
