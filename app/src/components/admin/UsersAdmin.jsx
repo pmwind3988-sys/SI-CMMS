@@ -24,6 +24,8 @@ import {
   FlaskConical,
   BadgeCheck,
   Mail,
+  MailCheck,
+  AlertTriangle,
   FlaskRound,
   Trash2,
 } from "lucide-react";
@@ -64,6 +66,41 @@ import { Card, ErrorBanner, EmptyState, Toast, ModalOverlay } from "../ui/Surfac
 
 const MIN_PASSWORD_LENGTH = 8;
 
+/* A minute after a link goes out, and five after the project's allowance is
+   refused. Neither is a security boundary - the server owns the cap and will
+   refuse a request that gets past these anyway. They exist so the commonest way
+   to exhaust the allowance, pressing a button that appears to have done nothing,
+   is not available. */
+const SEND_COOLDOWN_MS = 60_000;
+const RATE_LIMIT_COOLDOWN_MS = 5 * 60_000;
+
+function isRateLimit(e) {
+  return /rate limit/i.test(e?.message || "") || e?.status === 429;
+}
+
+/**
+ * "Email rate limit exceeded" is Supabase's own wording, and it is the one
+ * refusal from this function worth rewriting rather than passing through.
+ *
+ * It names a mechanism instead of saying what to do, and it reads as though the
+ * ADDRESS was rejected - so the administrator's next move is to go and check the
+ * person's email, which is fine and irrelevant. What actually happened is that
+ * the project's hourly allowance for outgoing mail is spent, by everybody
+ * together, and the same request in a few minutes will work unchanged.
+ */
+function describeRecoveryError(e) {
+  if (isRateLimit(e)) {
+    return (
+      "Nothing was sent, and there is nothing wrong with that address. This system can " +
+      "only send a few emails an hour in total - shared by everyone, for reset links and " +
+      "new accounts alike - and that allowance is used up. Wait a few minutes and try " +
+      "again. If it keeps happening, the project needs its own email sender configured " +
+      "(Supabase - Authentication - SMTP Settings); the built-in one is meant for testing."
+    );
+  }
+  return describeError(e, "Couldn't send that reset link.");
+}
+
 export default function UsersAdmin() {
   const { user: me } = useAuth();
   /* Both lists (migration 0031). Creating a user offers only departments still
@@ -84,6 +121,33 @@ export default function UsersAdmin() {
   const [fRole, setFRole] = useState("All");
   const [demoOnly, setDemoOnly] = useState(false);
   const [panel, setPanel] = useState(null); // { kind: 'password'|'role'|'profile'|'create', user? }
+  /* Sending a reset link is the one action on this screen that is rationed, so
+     it is the one action that has to resist being pressed twice. `sendingTo`
+     latches the request while it is in flight; `cooldown` keeps the button
+     unavailable for a minute afterwards.
+
+     The cooldown is deliberately GLOBAL rather than per-user. The cap Supabase
+     enforces belongs to the project, not to the recipient - a handful of
+     messages an hour, shared by everybody - so a brake that only stopped you
+     re-sending to the SAME person would leave the real failure wide open: five
+     people helped in a row, the fifth silently not helped at all. */
+  const [sendingTo, setSendingTo] = useState(null);
+  const [cooldown, setCooldown] = useState(null); // { until: epochMs, reason: 'sent'|'rate' }
+  const [, setTick] = useState(0);
+
+  /* A tick only while a countdown is actually running. A bare setInterval here
+     would re-render a table of every user in the plant once a second, all day,
+     for a counter that is not counting. */
+  useEffect(() => {
+    if (!cooldown) return undefined;
+    const id = setInterval(() => {
+      if (Date.now() >= cooldown.until) setCooldown(null);
+      else setTick((n) => n + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [cooldown]);
+
+  const cooldownLeft = cooldown ? Math.max(0, Math.ceil((cooldown.until - Date.now()) / 1000)) : 0;
 
   useEffect(() => {
     const unsub = listenUsers(setUsers, (e) =>
@@ -118,16 +182,39 @@ export default function UsersAdmin() {
 
   const demoCount = (users ?? []).filter(isDemoAccount).length;
 
+  /**
+   * Emailing somebody a link to set their own password.
+   *
+   * The confirmation is a dialog the administrator has to dismiss, not the
+   * 3.5-second toast every other action here uses, and that difference is the
+   * whole point. This is the only operation on the screen whose success is a
+   * promise rather than a fact: `ok: true` means Supabase ACCEPTED the message,
+   * never that it arrived. Everything needed to read the silence that follows -
+   * that it is not instant, that the link dies within the hour, that pressing
+   * the button again is the thing most likely to break it - has to outlive a
+   * toast, because the question ("did that work?") turns up minutes later.
+   *
+   * The three brakes on re-sending are all here rather than in the Edge
+   * Function on purpose: the cap is spent at the moment of the request, so the
+   * only place a second request can be prevented is before it leaves.
+   */
   async function handleSendRecoveryLink(u) {
+    if (sendingTo || cooldown) return;
     setError(null);
+    setSendingTo(u.id);
     try {
       const res = await sendRecoveryLink(u.id);
-      flash(res?.message || `Reset link sent to ${u.email}.`);
+      setCooldown({ until: Date.now() + SEND_COOLDOWN_MS, reason: "sent" });
+      setPanel({ kind: "recoverySent", user: u, message: res?.message });
     } catch (e) {
       // describeError surfaces the function's own message, which is the point:
       // "that address is a placeholder" and "you cannot reach that account" are
-      // different problems with different fixes.
-      setError(describeError(e, "Couldn't send that reset link."));
+      // different problems with different fixes. The rate limit is the one
+      // exception - see describeRecoveryError.
+      if (isRateLimit(e)) setCooldown({ until: Date.now() + RATE_LIMIT_COOLDOWN_MS, reason: "rate" });
+      setError(describeRecoveryError(e));
+    } finally {
+      setSendingTo(null);
     }
   }
 
@@ -278,6 +365,8 @@ export default function UsersAdmin() {
                 onToggleStatus={handleToggleStatus}
                 onClearDemoMark={handleClearDemoMark}
                 onSendRecoveryLink={handleSendRecoveryLink}
+                sendingLink={sendingTo === u.id}
+                cooldownLeft={cooldownLeft}
                 onToggleTestAccount={handleToggleTestAccount}
               />
             </div>
@@ -321,6 +410,8 @@ export default function UsersAdmin() {
                 onToggleStatus={handleToggleStatus}
                 onClearDemoMark={handleClearDemoMark}
                 onSendRecoveryLink={handleSendRecoveryLink}
+                sendingLink={sendingTo === u.id}
+                cooldownLeft={cooldownLeft}
                 onToggleTestAccount={handleToggleTestAccount}
               />
             </div>
@@ -374,6 +465,13 @@ export default function UsersAdmin() {
             setPanel(null);
             flash(msg);
           }}
+        />
+      )}
+      {panel?.kind === "recoverySent" && (
+        <RecoveryLinkSentDialog
+          user={panel.user}
+          message={panel.message}
+          onClose={() => setPanel(null)}
         />
       )}
       {panel?.kind === "create" && (
@@ -490,6 +588,8 @@ function UserActions({
   onToggleStatus,
   onClearDemoMark,
   onSendRecoveryLink,
+  sendingLink,
+  cooldownLeft,
   onToggleTestAccount,
 }) {
   const editable = canEditUser(user, me);
@@ -564,11 +664,25 @@ function UserActions({
         <Button
           size="sm"
           variant="ghost"
-          icon={Mail}
-          title={`Email ${user.email} a link to set their own password`}
+          icon={sendingLink ? Loader2 : Mail}
+          /* Disabled and labelled with the reason, rather than clickable and
+             refused. A button that looks available and quietly spends a shared
+             allowance is how the allowance gets spent. */
+          disabled={sendingLink || cooldownLeft > 0}
+          title={
+            sendingLink
+              ? "Sending..."
+              : cooldownLeft > 0
+                ? `Just sent one. This system can only send a few emails an hour, shared by everyone - wait ${cooldownLeft}s.`
+                : `Email ${user.email} a link to set their own password`
+          }
           onClick={() => onSendRecoveryLink(user)}
         >
-          Send reset link
+          {sendingLink
+            ? "Sending..."
+            : cooldownLeft > 0
+              ? `Wait ${cooldownLeft}s`
+              : "Send reset link"}
         </Button>
       )}
       {/* Neither route is available, and the reason is worth saying rather than
@@ -639,6 +753,75 @@ function Modal({ title, subtitle, children, onClose }) {
         {children}
       </Card>
     </ModalOverlay>
+  );
+}
+
+/**
+ * What an administrator sees the moment a reset link goes out.
+ *
+ * A dialog rather than the toast the other actions use, and it says four things
+ * a toast has no room for. Each one is here because of a way this feature is
+ * misread:
+ *
+ * - "Sent" is not "arrived". The server can only report that Supabase accepted
+ *   the message; delivery happens afterwards and out of sight.
+ * - The account is untouched until the link is used, so nobody is locked out by
+ *   pressing this - the commonest worry, and the reason it gets pressed once and
+ *   then anxiously again.
+ * - The link expires. A person who opens it tomorrow gets a dead page and
+ *   reports the system as broken.
+ * - Pressing the button again is what actually breaks it. The hourly allowance
+ *   is small and shared, so the second and third attempt are how a fourth person
+ *   ends up unable to receive anything at all. That is the "email rate limit
+ *   exceeded" the screen used to show without explaining.
+ */
+function RecoveryLinkSentDialog({ user, message, onClose }) {
+  return (
+    <Modal title="Reset link sent" subtitle={`${user.name} - ${user.email}`} onClose={onClose}>
+      <div className="mb-3 flex items-start gap-2 rounded border border-[#B7E4CD] bg-[#E7F5EE] px-3.5 py-2.5 text-[13px] text-ink">
+        <MailCheck size={15} className="mt-0.5 flex-shrink-0 text-good" />
+        <span className="min-w-0">
+          {/* The function's own sentence when it has one - it names the address it
+              actually sent to, which is worth more than a sentence written here
+              about the address this screen happens to be displaying. */}
+          {message || `An email is on its way to ${user.email}.`}
+        </span>
+      </div>
+
+      <p className="text-[13px] text-ink mb-3">
+        Nothing has changed on the account yet. <strong>Their current password still works</strong>{" "}
+        until they open the link and choose a new one, so this has not locked anybody out.
+      </p>
+
+      <div className="mb-4 flex items-start gap-2 rounded border border-[#F59E0B66] bg-[#FFFBEB] px-3.5 py-3 text-[12.5px] text-[#92400E]">
+        <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
+        <div className="min-w-0 space-y-1.5">
+          <p>
+            <strong>Do not send another one while they wait.</strong> This system can only send a
+            few emails an hour in total - shared by everyone, for reset links and new accounts
+            alike. Sending again uses up that allowance, and once it is gone nobody can receive
+            anything until the hour is up. That is what &quot;email rate limit exceeded&quot;
+            means when you see it.
+          </p>
+          <p>
+            Delivery is usually under a minute but can take several. Ask them to check the spam or
+            junk folder before you try anything else.
+          </p>
+          <p>
+            <strong>The link expires within the hour and works once.</strong> If they open it
+            tomorrow it will be dead and you will need to send a fresh one.
+          </p>
+          <p>
+            If it never turns up at all, that is this project&apos;s email sender, not their
+            address. Tell the Superuser - the alternative is a temporary password.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={onClose}>Got it</Button>
+      </div>
+    </Modal>
   );
 }
 
