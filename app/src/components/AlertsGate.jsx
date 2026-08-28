@@ -98,9 +98,22 @@ export default function AlertsGate({ uid, onPassed }) {
       // documents. Without the flag this fires on every remount — every
       // navigation, since RequireAuth mounts this gate per page.jsx — turning
       // one intended registration into a database write per page view.
+      //
+      // The flag is written only on SUCCESS, not before the call. Bounding a
+      // successful registration to one attempt per tab session is the whole
+      // point; latching on a FAILURE is a different bug — ensurePushSubscription()
+      // returns false (never throws) on a missing VAPID key, a worker that
+      // never reached `ready` inside its own 4s race, an RPC error, or being
+      // offline, and every one of those is worth retrying on the next
+      // navigation. Retrying an already-succeeded registration is the only
+      // waste this guards against, and it is a no-op once a row exists.
       if (p === "granted" && !readFlag(PUSH_ATTEMPTED_PREFIX, uid)) {
-        writeFlag(PUSH_ATTEMPTED_PREFIX, uid);
-        ensurePushSubscription();
+        // Not returned from the .then() callback — the effect's cleanup must
+        // stay a synchronous function, not a Promise, so this runs detached
+        // rather than being awaited here.
+        (async () => {
+          if (await ensurePushSubscription()) writeFlag(PUSH_ATTEMPTED_PREFIX, uid);
+        })();
       }
     });
     return () => { alive = false; };
@@ -114,8 +127,10 @@ export default function AlertsGate({ uid, onPassed }) {
     const next = await requestOsNotificationPermission();
     setPermission(next);
     if (next === "granted") {
-      writeFlag(PUSH_ATTEMPTED_PREFIX, uid);
-      await ensurePushSubscription();
+      // Flag written only on success — see the matching comment in the mount
+      // effect above. A failed registration here must not latch: it should
+      // still be retried on the next navigation, not remembered as "done".
+      if (await ensurePushSubscription()) writeFlag(PUSH_ATTEMPTED_PREFIX, uid);
     }
     setAsking(false);
   }, [uid]);
