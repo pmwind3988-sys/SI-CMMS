@@ -318,8 +318,21 @@ begin
        -- see push_claimed_at's own comment above for why an expiring lease
        -- is the only shape that survives a killed invocation.
        and (n.push_claimed_at is null or n.push_claimed_at < now() - interval '5 minutes')
+       -- `u.status = 'active'` is the second of two enforcement points for
+       -- this (see the Edge Function's own recipient check) — nothing in the
+       -- send path used to read users.status at all, so a deactivated
+       -- technician still named on an open work order kept receiving
+       -- status_change pushes on their personal phone indefinitely: the row
+       -- is keyed on device and endpoint, not on a live session, and
+       -- deactivation only withholds JWT role claims (0026), which this
+       -- service-role sweep never carries or checks. This is NOT the same
+       -- ~hour of latency every other role/status change already has —
+       -- nothing here ever expires on its own, so without this join the gap
+       -- is indefinite, not an hour.
        and exists (
-         select 1 from push_subscriptions ps where ps.user_id = n.recipient_id
+         select 1 from push_subscriptions ps
+         join users u on u.id = ps.user_id
+         where ps.user_id = n.recipient_id and u.status = 'active'
        )
      order by n.created_at
      limit 200

@@ -366,9 +366,28 @@ twice).
 A row is retried by `si_push_retry_sweep()` (pg_cron, once a minute) if it is still unstamped
 after two minutes, and given up on — `push_gave_up_at`, distinct from `pushed_at` — after 24
 hours so the retry set does not grow forever. `pushed_at` is the only column that means
-"delivered"; a growing count of `pushed_at is null` rows on notifications older than a few
-minutes is the alarm that push has broken, and it stays honest specifically because give-up
-writes its own column rather than borrowing that one.
+"delivered", and give-up writing its own column rather than borrowing that one is specifically
+what keeps a long outage visible instead of quietly self-clearing once everything times out.
+
+**The bare count of `pushed_at is null` rows is NOT the alarm, even though it looks like one.**
+The sweep correctly excludes recipients with zero `push_subscriptions` rows — someone who has
+never opted in to alerts — and that exclusion is right; without it, every notification for
+every person who declined push would sit in the retry set and get re-enqueued once a minute
+for 24 hours, for nothing. But it means the bare unstamped count also includes every one of
+those rows, forever, growing in ordinary healthy operation, and it cannot tell "push is broken"
+apart from "eleven people have not turned alerts on." The alarm has to carry the same predicate
+the sweep uses — unstamped, not given up on, old enough that the trigger and the two-minute
+retry floor have both had their chance, AND the recipient actually has a device registered:
+
+```sql
+select count(*) from notifications n
+ where n.pushed_at is null and n.push_gave_up_at is null
+   and n.created_at < now() - interval '10 minutes'
+   and exists (select 1 from push_subscriptions ps where ps.user_id = n.recipient_id);
+```
+
+A non-zero result here, and only here, means push is actually failing for someone who should be
+receiving it.
 
 **Two traps that cost the implementation real time and are invisible from reading the feature
 code in isolation** — read `CLAUDE.md`'s "Notification delivery outside the app" section for

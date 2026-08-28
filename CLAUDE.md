@@ -1018,6 +1018,14 @@ up. A third column, `push_gave_up_at`, is written after 24 hours of failure so t
 does not grow forever — kept separate from `pushed_at` so a long outage still shows as a
 growing "unstamped and old" count rather than quietly self-clearing once everything times out.
 
+**The bare "unstamped and old" count is not, by itself, a usable alarm.** The retry sweep
+correctly excludes recipients with no registered device — otherwise every notification for
+someone who never opted into push would sit in the retry set for 24 hours, retried once a
+minute, for nothing — but that means the bare count also grows monotonically in ordinary
+healthy operation and cannot distinguish "push is broken" from "eleven people declined." The
+query an operator should actually run, which restates the sweep's own predicate, is in
+`app/DATA_AND_STORAGE.md` §5.
+
 The Edge Function is deployed with `supabase functions deploy push-notify --no-verify-jwt` — a
 CLI flag, deliberately **not** a `config.toml` entry — precisely so nobody ever has a reason to
 run `supabase config push`, which this file already forbids because it overwrites the
@@ -1486,10 +1494,17 @@ has happened on this project, and is what 0013 exists to fix.
 - **Permission cannot be granted on anyone's behalf.** `AlertsGate` makes the ask unavoidable;
   it cannot make the answer yes. Taking the `denied`/`unsupported` escape opts a person out of
   push with no admin visibility anywhere into who has.
-- **A deactivated account keeps receiving pushes until its token latency expires or somebody
-  removes the `push_subscriptions` row.** Deactivation withholds role claims in the JWT
-  (migration 0026), but `push_subscriptions` and the send path never check `users.status` —
-  the row is keyed on device and endpoint, not on a live session, so the sender happily
-  delivers to a phone whose account was deactivated minutes ago. The same ~hour of latency
-  every other role/status change already has, but here it means a push arriving rather than a
-  screen failing to load.
+- **A deactivated account no longer receives pushes, and this is NOT the same ~hour of
+  latency every other role/status change already has.** `si_push_retry_sweep`'s predicate and
+  the Edge Function's own recipient read both now check `users.status = 'active'` before
+  sending — two enforcement points, per this schema's standing "the loosest path wins" rule,
+  because the sweep's `exists` join and the function's own read are independent paths onto the
+  same row. Before this, neither checked it at all: deactivation only withholds role claims
+  from the *next minted JWT* (migration 0026), and the sender runs on the service role, which
+  never carries a JWT — so without an explicit check here the gap was indefinite, not an hour,
+  and a deactivated technician still named on an open work order kept receiving
+  `status_change` pushes containing work-order numbers and fault text on their personal phone
+  forever. `push_subscriptions` itself still has no lifecycle tied to the account — the row is
+  removed only on 404/410 from the push service or by the user's own device unregistering —
+  so a deactivated-then-reactivated account resumes receiving pushes on the same device with
+  no re-registration needed, which is intended.

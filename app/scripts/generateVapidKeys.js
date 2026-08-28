@@ -43,6 +43,19 @@ function b64url(buf) {
   console.log("VAPID_SUBJECT      = mailto:admin@pmw-group.com");
   console.log("\n=== Supabase -> SQL Editor, once ===\n");
   console.log(`select vault.create_secret('${triggerSecret}', 'push_trigger_secret');`);
+  // si_enqueue_push (0042) reads BOTH push_trigger_secret and
+  // push_function_url before it will call the Edge Function at all — and
+  // returns silently, on purpose, if either is missing (a project with no
+  // secrets set must still be able to raise a work order). That silence is
+  // exactly the trap: an operator who runs only the line above gets a
+  // feature that looks deployed and never sends a single push, with nothing
+  // in any log to say why. <project-ref> is the subdomain of the project's
+  // own Supabase URL (Project Settings -> API), the same string db:push and
+  // db:types already resolve against.
+  console.log(
+    "select vault.create_secret('https://<project-ref>.functions.supabase.co/push-notify', " +
+    "'push_function_url');  -- replace <project-ref> with this project's ref"
+  );
   console.log("\n=== app/.env.test.local (or .env.prod.local) ===\n");
   console.log("NEXT_PUBLIC_VAPID_PUBLIC_KEY=" + publicKey);
   console.log("\nPublic key length:", publicKey.length, "(expect 87)\n");

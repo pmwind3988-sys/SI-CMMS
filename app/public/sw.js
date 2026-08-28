@@ -65,26 +65,47 @@ self.addEventListener("push", (event) => {
       // never produce. Coerce anything that isn't a non-null object back to {}.
       if (typeof data !== "object" || data === null) data = {};
 
+      // A focused, same-origin tab already showed this via the in-app
+      // Realtime path (lib/osNotifications.js chimes rather than banners
+      // while foregrounded, per CLAUDE.md's "app in the foreground -> chime
+      // only, because the badge on the bell is already the notification").
+      // Without checking this, the push handler below duplicates it: two
+      // alerts and two vibrations for one event on a phone that is simply
+      // unlocked with the app open. `userVisibleOnly` means a push that shows
+      // NOTHING gets the origin's push permission revoked by Chrome, so the
+      // answer here is a quieter notification, never a suppressed one.
+      const windows = await self.clients.matchAll({ type: "window" });
+      const focused = windows.some((c) => c.focused && new URL(c.url).origin === self.location.origin);
+
       const title = data.title || "SI — Service Inside";
       await self.registration.showNotification(title, {
         body: data.body || "You have a new notification.",
         icon: "/icons/icon-192.png",
         badge: "/icons/icon-192.png",
-        // The notification's own id, so a second alert about a DIFFERENT event
-        // does not silently replace the first. renotify makes a repeat of the
-        // SAME id alert again rather than updating in place. When there is no
-        // id — a malformed payload, or a parse failure above — falling back to
-        // a constant string would reintroduce exactly that collision: two such
-        // pushes in a row would collapse onto one tag and the second would
-        // replace the first instead of coexisting. A fresh random value per
-        // push keeps them apart.
-        tag: data.id || crypto.randomUUID(),
+        // Tagged by the notification's own row id — data.id is
+        // notifications.id, the same value lib/osNotifications.js tags its
+        // `si-${id}` in-app notification with (see that file for why: a
+        // second alert about a DIFFERENT event must not replace the first).
+        // The `si-` prefix is repeated here on purpose: this and the in-app
+        // path are two deliveries of the SAME event and must collapse onto
+        // the same OS notification, not stack as two. A bare `data.id` here
+        // used to leave them on different tags, which is exactly the
+        // duplicate this comment is about. Falling back to a random value
+        // when there is no id (malformed payload, parse failure above) keeps
+        // unrelated pushes from colliding with each other on a shared tag.
+        tag: data.id ? `si-${data.id}` : crypto.randomUUID(),
         renotify: true,
-        // Android only; desktop ignores it and iOS has no vibration API at all.
-        vibrate: [200, 100, 200, 100, 400],
+        // Android only; desktop ignores it and iOS has no vibration API at
+        // all. Skipped when a focused tab already alerted — the chime from
+        // that path is the alert; this is a quiet confirmation, not a second
+        // interruption.
+        vibrate: focused ? undefined : [200, 100, 200, 100, 400],
         // Desktop only: stays on screen until dismissed instead of auto-hiding
-        // after a few seconds. Mobile ignores it.
-        requireInteraction: true,
+        // after a few seconds. Mobile ignores it. Off while focused for the
+        // same reason as vibrate above — a banner that insists on being
+        // dismissed competes with the bell for attention instead of backing
+        // it up.
+        requireInteraction: !focused,
         data: { path: data.path || "/notifications/" },
       });
     })()

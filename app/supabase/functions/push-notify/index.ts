@@ -12,10 +12,15 @@
  * running that against production.
  *
  * `pushed_at` means DELIVERED, not merely "handled" — that is 0042's own
- * definition of the column, and the count of unstamped rows is the alarm that
- * push has broken. Everything below is written to hold that line even when a
- * database read blips, even under a concurrent invocation of the same row, and
- * even when only some of a recipient's devices succeed.
+ * definition of the column. The RIGHT alarm for "push has broken" is not the
+ * bare count of unstamped rows — the sweep deliberately excludes recipients
+ * with no registered device, so that bare count also grows in ordinary
+ * healthy operation and cannot tell a broken send path apart from people who
+ * declined push. See the query in app/DATA_AND_STORAGE.md §5, which restates
+ * the sweep's own predicate instead. Everything below is written to hold the
+ * pushed_at/push_gave_up_at distinction even when a database read blips, even
+ * under a concurrent invocation of the same row, and even when only some of a
+ * recipient's devices succeed.
  *
  * Concurrency is fenced by `push_claimed_at`, a SEPARATE, EXPIRING lease — not
  * by `pushed_at` itself. Round 1 of this function claimed by stamping
@@ -24,8 +29,8 @@
  * (isolate recycled mid-loop, a deploy landing mid-request, an uncaught throw
  * escaping the per-subscription catch block) skips the release entirely and
  * leaves the row permanently marked delivered — invisible to the sweep,
- * invisible to the unstamped-count alarm, notification simply never arriving
- * and nothing reporting it. A lease has to expire on its own, because no care
+ * invisible to the alarm above, notification simply never arriving and
+ * nothing reporting it. A lease has to expire on its own, because no care
  * inside this function can guarantee its own cleanup runs; see push_claimed_at
  * and si_push_retry_sweep's predicate in 0042 for the other half of this.
  */
@@ -36,6 +41,7 @@ import { encryptPayload, vapidHeader } from "./webpush.ts";
 const SECRET = Deno.env.get("PUSH_TRIGGER_SECRET") ?? "";
 const JWK = Deno.env.get("VAPID_PRIVATE_JWK") ?? "";
 const SUBJECT = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@pmw-group.com";
+const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY") ?? "";
 
 // Validated once at cold start rather than left to fail per subscription, and
 // the RESULT is remembered (JWK_OK) rather than swallowed. A malformed key
@@ -60,6 +66,49 @@ try {
   console.error("VAPID_PRIVATE_JWK does not parse as JSON at cold start:", e);
 }
 
+// VAPID_PUBLIC_KEY is otherwise unused — webpush.ts's vapidHeader() rebuilds
+// the `k=` parameter from the JWK's own x and y, so this function never reads
+// this secret for anything else, and the pre-flight scan for this feature
+// noted exactly that ("Cost if wrong: one unused secret... makes the keypair
+// harder to rotate correctly later"). This is the job that scan anticipated:
+// the browser subscribed against a SEPARATE string,
+// NEXT_PUBLIC_VAPID_PUBLIC_KEY, baked into the client bundle at build time.
+// Nothing before this compared the two, so a half-completed key rotation —
+// one updated, one not — would make every push fail with 401 and no
+// indication why, silently converted into a permanent give-up by the 401/403
+// handling above rather than a loud, diagnosable failure. Checked once at
+// cold start rather than per request, the same reasoning JWK_OK uses.
+function b64urlDecode(s: string): Uint8Array {
+  const pad = s.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(pad + "=".repeat((4 - (pad.length % 4)) % 4));
+  return Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+}
+
+let KEYS_MATCH = true;
+if (JWK_OK) {
+  try {
+    const jwk = JSON.parse(JWK);
+    const x = b64urlDecode(jwk.x);
+    const y = b64urlDecode(jwk.y);
+    const rebuilt = new Uint8Array(1 + x.length + y.length);
+    rebuilt[0] = 4;
+    rebuilt.set(x, 1);
+    rebuilt.set(y, 1 + x.length);
+    const declared = b64urlDecode(VAPID_PUBLIC_KEY);
+    KEYS_MATCH =
+      declared.length === rebuilt.length && declared.every((b, i) => b === rebuilt[i]);
+    if (!KEYS_MATCH) {
+      console.error(
+        "VAPID_PUBLIC_KEY does not match the public point rebuilt from VAPID_PRIVATE_JWK " +
+        "at cold start — check for a half-completed key rotation."
+      );
+    }
+  } catch (e) {
+    KEYS_MATCH = false;
+    console.error("Could not compare VAPID_PUBLIC_KEY against VAPID_PRIVATE_JWK at cold start:", e);
+  }
+}
+
 // The lease window. Generous relative to the per-device 10s fetch timeout
 // below (up to a few dozen devices before this could plausibly still be
 // running), short relative to the 24-hour give-up: an abandoned claim should
@@ -68,8 +117,23 @@ const CLAIM_LEASE_MINUTES = 5;
 
 // The deep link the service worker follows on tap. Work orders are the only
 // entity that has ever been notified about; anything else lands on the list.
+//
+// MUST stay in step with pathForNotification() in lib/notifications.js — that
+// is the in-app equivalent of this same rule (entity_type/entity_id -> where
+// it opens) and the two are two implementations of one decision, the exact
+// hazard CLAUDE.md documents for suggestPriority() vs si_derive_priority().
+// They diverged once already: this used to emit `/work-orders/?id=...`, the
+// LIST page, which reads no query string at all — every notification tap
+// opened the list with the id silently discarded, no error, nothing to see.
+// The trailing slash before `?` is not decorative: next.config.js sets
+// trailingSlash: true, so `/work-orders/view?id=...` (no slash) 308-redirects
+// and drops the query string on a raw browser navigation. sw.js's
+// notificationclick handler uses `data.path` exactly as received — unlike
+// lib/osNotifications.js's in-app path, there is no exportedPath() call
+// between here and the URL the worker navigates to — so this function is the
+// only place that slash can be added for a push notification.
 function pathFor(entityType: string, entityId: string) {
-  return entityType === "work_order" ? `/work-orders/?id=${entityId}` : "/notifications/";
+  return entityType === "work_order" ? `/work-orders/view/?id=${entityId}` : "/notifications/";
 }
 
 // Releases this invocation's own claim, and only this invocation's: the
@@ -98,6 +162,13 @@ Deno.serve(async (req) => {
 
   if (!JWK_OK) {
     return new Response(JSON.stringify({ error: "VAPID_PRIVATE_JWK is misconfigured" }), { status: 500 });
+  }
+
+  if (!KEYS_MATCH) {
+    return new Response(
+      JSON.stringify({ error: "VAPID_PUBLIC_KEY does not match VAPID_PRIVATE_JWK" }),
+      { status: 500 },
+    );
   }
 
   const { notification_id } = await req.json().catch(() => ({}));
@@ -149,6 +220,40 @@ Deno.serve(async (req) => {
 
   const n = claimed;
 
+  // Second of two enforcement points for "a deactivated account stops
+  // receiving pushes" — the other is si_push_retry_sweep's own predicate in
+  // 0042. Neither push_subscriptions nor the trigger path that enqueues this
+  // call has ever read users.status: deactivation only withholds role claims
+  // from the NEXT MINTED JWT (0026), and this function runs on the service
+  // role, which never carries a JWT at all. Without this check a deactivated
+  // technician still named on an open work order keeps receiving
+  // status_change pushes on their own phone indefinitely — not the ~hour of
+  // latency every other role/status change has, because nothing here ever
+  // expires on its own to close the gap. Same "loosest path wins" reasoning
+  // CLAUDE.md applies to every other users-row rule with more than one
+  // enforcement point.
+  const { data: recipient, error: recipErr } = await db
+    .from("users")
+    .select("status")
+    .eq("id", n.recipient_id)
+    .maybeSingle();
+
+  if (recipErr) {
+    console.error("recipient status read failed", recipErr);
+    await releaseClaim(db, n.id, claimedAt);
+    return new Response(JSON.stringify({ error: "database error", detail: recipErr.message }), { status: 500 });
+  }
+
+  if (!recipient || recipient.status !== "active") {
+    // Deactivated (or the account no longer exists) since this notification
+    // was queued. Same shape as the empty-subscriptions branch below:
+    // nothing here should stamp pushed_at for a delivery that must not
+    // happen, and release rather than retry — the sweep's own predicate now
+    // excludes this recipient too, so it will not come back through there.
+    await releaseClaim(db, n.id, claimedAt);
+    return new Response(JSON.stringify({ sent: 0, failed: 0, gone: 0 }), { status: 200 });
+  }
+
   const { data: subs, error: subsErr } = await db
     .from("push_subscriptions")
     .select("id, endpoint, p256dh, auth")
@@ -185,7 +290,7 @@ Deno.serve(async (req) => {
     path: pathFor(n.entity_type, n.entity_id),
   });
 
-  let sent = 0, failed = 0, gone = 0;
+  let sent = 0, failed = 0, gone = 0, authFailed = 0;
 
   for (const s of subs) {
     try {
@@ -221,6 +326,23 @@ Deno.serve(async (req) => {
         const { error } = await db.from("push_subscriptions").delete().eq("id", s.id);
         if (error) console.error(`push_subscriptions delete failed for ${s.id}:`, error.message);
         gone++;
+      } else if (res.status === 401 || res.status === 403) {
+        // A wrong or half-rotated VAPID keypair presents as exactly this —
+        // the push service is rejecting OUR signature, not disowning the
+        // subscription, so this must not fall into the branch below that
+        // deletes/retries: the same broken key signs identically on every
+        // future attempt, so retrying it as transient (as this used to)
+        // meant up to 1,440 retries a day per notification, silently
+        // rewriting last_error every time until the 24-hour give-up finally
+        // masked it. Logged loudly and given up on for THIS notification
+        // immediately instead — see the authFailed handling below, which
+        // stamps push_gave_up_at rather than releasing the claim for retry.
+        console.error(
+          `push auth rejected for subscription ${s.id} on notification ${n.id} ` +
+          `(check VAPID_PUBLIC_KEY / VAPID_PRIVATE_JWK for a keypair mismatch): ` +
+          `${res.status} ${await res.text()}`
+        );
+        authFailed++;
       } else {
         const { error } = await db.from("push_subscriptions")
           .update({ failed_at: new Date().toISOString(), last_error: `${res.status} ${await res.text()}`.slice(0, 500) })
@@ -269,6 +391,22 @@ Deno.serve(async (req) => {
       // succeeded, not a lost one. Logged so a spike in this is visible.
       console.error(`pushed_at stamp failed for ${n.id}:`, error.message);
     }
+  } else if (authFailed > 0) {
+    // Nothing was delivered (sent === 0), and at least one device was
+    // refused for a reason retrying cannot fix — the VAPID key itself is
+    // wrong, and every subscription in this loop signs under the same key.
+    // Not stamped pushed_at (nothing was delivered) and not released for the
+    // sweep to retry either: releasing here reproduces the exact 1,440-a-day
+    // retry storm the branch above exists to stop, since the same key
+    // rejects the same way every time. push_gave_up_at is 0042's existing
+    // "stop retrying without claiming delivered" column — reused rather than
+    // inventing a second one, and it is what the alarm query in
+    // DATA_AND_STORAGE.md §5 already treats as "stopped, not delivered."
+    const { error } = await db
+      .from("notifications")
+      .update({ push_gave_up_at: new Date().toISOString(), push_claimed_at: null })
+      .eq("id", n.id);
+    if (error) console.error(`push_gave_up_at stamp failed for ${n.id}:`, error.message);
   } else if (failed === 0 && gone > 0) {
     // Every device that existed turned out to be gone (404/410, deleted
     // above) and none merely failed. All were genuinely undeliverable, which

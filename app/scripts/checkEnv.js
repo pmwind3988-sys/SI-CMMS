@@ -17,7 +17,12 @@
  */
 const { admin, projectLabel } = require("./_supabaseAdmin");
 
-const REQUIRED = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
+const REQUIRED = [
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "NEXT_PUBLIC_VAPID_PUBLIC_KEY",
+];
 
 /** The kind of a key, by prefix and — for legacy JWTs — by its role claim. */
 function kindOf(value) {
@@ -41,6 +46,23 @@ async function main() {
 
   let bad = 0;
   for (const name of REQUIRED) {
+    // NEXT_PUBLIC_VAPID_PUBLIC_KEY is a base64url-encoded uncompressed EC
+    // point, not a URL and not a JWT — kindOf() has no shape for it and would
+    // call it "unrecognised shape" even when it is exactly right. Presence
+    // and length are what generateVapidKeys.js's own printout already checks
+    // ("Public key length: ... (expect 87)"), so that is what this validates
+    // instead of trying to classify it.
+    if (name === "NEXT_PUBLIC_VAPID_PUBLIC_KEY") {
+      const value = process.env[name] || "";
+      const ok = value.length === 87;
+      if (!ok) bad++;
+      console.log(
+        `  ${(ok ? "ok" : "WRONG").padEnd(5)}  ${name.padEnd(31)} ` +
+        (value ? `${value.length} chars (expect 87)` : "missing or empty")
+      );
+      continue;
+    }
+
     const kind = kindOf(process.env[name]);
     const ok =
       (name === "SUPABASE_SERVICE_ROLE_KEY" && /service.role/.test(kind)) ||
