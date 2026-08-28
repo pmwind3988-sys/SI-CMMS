@@ -130,7 +130,7 @@ export default function RequireAuth({ children }) {
 
   return (
     <>
-      {gateApplies && <AlertsGate />}
+      {gateApplies && <AlertsGate uid={user.uid} />}
       {recovering && <SessionRecoveryBanner reason={recoveryReason} />}
       <AppShell>{children}</AppShell>
       {recoveredToast && <Toast message="Signed back in." />}
