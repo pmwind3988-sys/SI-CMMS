@@ -53,7 +53,21 @@ export async function ensurePushSubscription() {
 
   try {
     const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-    await navigator.serviceWorker.ready;
+
+    // `ready` resolves on the *active* worker and never rejects, so a worker
+    // that fails to activate leaves this pending forever — the race is the
+    // timeout registration itself does not provide. Same shape as
+    // notificationWorker() in lib/osNotifications.js; duplicated rather than
+    // imported because that helper is module-private and this is its only
+    // caller here. The next task wires this behind a full-screen "Enable
+    // alerts" gate the user cannot dismiss, so a stuck promise here is not a
+    // slow path, it is a dead end — treat the timeout as failure and bail
+    // before subscribe() touches a registration that may not be active.
+    const ready = await Promise.race([
+      navigator.serviceWorker.ready.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 4000)),
+    ]);
+    if (!ready) return false;
 
     let sub = await registration.pushManager.getSubscription();
     if (!sub) {
