@@ -14,6 +14,7 @@ import { useAuth, SESSION_RECOVERING, SESSION_LOST } from "../context/AuthContex
 import { onRecovered } from "../lib/sessionRecovery";
 import { SessionRecoveryBanner, Toast } from "./ui/Surfaces";
 import AppShell from "./AppShell";
+import AlertsGate from "./AlertsGate";
 
 export default function RequireAuth({ children }) {
   const { user, loading, sessionState, recoveryReason } = useAuth();
@@ -107,8 +108,29 @@ export default function RequireAuth({ children }) {
   }
   if (!user) return null;
 
+  /**
+   * THE ALERTS GATE.
+   *
+   * Above the role gate and beside the must_change_password redirect, for the
+   * same structural reason: an inner gate would race this rather than defer to
+   * it. Three exclusions, each load-bearing:
+   *
+   *   recovering  — recovery already holds the page. Stacking a second
+   *                 full-screen hold on top shows this to somebody whose token
+   *                 is merely being refreshed, and the tree behind it is the
+   *                 unsaved work order this app exists to protect.
+   *   onChangePassword — a flagged account holds no roles and must reach the one
+   *                 page it is allowed to use. Asking it for notification
+   *                 permission first is the same shape of bug as putting
+   *                 /change-password behind RequireRole.
+   *   mustChangePassword — the redirect above is mid-flight; do not gate a page
+   *                 the user is being moved off.
+   */
+  const gateApplies = !recovering && !onChangePassword && !user.mustChangePassword;
+
   return (
     <>
+      {gateApplies && <AlertsGate />}
       {recovering && <SessionRecoveryBanner reason={recoveryReason} />}
       <AppShell>{children}</AppShell>
       {recoveredToast && <Toast message="Signed back in." />}
