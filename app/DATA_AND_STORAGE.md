@@ -330,7 +330,7 @@ merge. For "someone deleted a work order this morning", the archive in
 
 ---
 
-## 5. The notification gap this pairs with
+## 5. Web Push closes the notification gap — for the browser path only
 
 `src/lib/osNotifications.js` delivers status-bar and desktop notifications with sound while
 the app's Realtime websocket is alive — foreground or backgrounded. It cannot deliver
@@ -338,16 +338,65 @@ anything once the app is swiped away or the browser is closed, because a notific
 no process running has to be pushed *to* the device, and pushing requires a sender holding
 credentials. `output: "export"` means this app has no server of its own anywhere.
 
-Closing that gap is roughly:
+Migration 0042 and `supabase/functions/push-notify` close that gap for Android Chrome and for
+an iPhone with SI added to the Home Screen — the two platforms the Web Push standard reaches.
+**What was actually built is narrower than the three-step plan this section used to describe**:
+there is no Firebase project, no `google-services.json`, no `@capacitor/push-notifications`,
+and no FCM anywhere in the tree. The native Android build still delivers only through
+`@capacitor/local-notifications`, exactly as before — it has no need of Web Push, since a
+backgrounded native app already gets a status-bar alert, and a swiped-away native app was
+never in scope for this change. If the native app is ever swiped away and still needs to be
+woken, that is a second, unbuilt FCM project of its own; this one is Web Push only.
 
-1. A Firebase project, `google-services.json` in `android/app/`, and
-   `@capacitor/push-notifications` replacing the local-notification path on native.
-2. A `device_tokens` table (user, token, platform, last_seen) with RLS letting a user write
-   only their own rows, plus registration on sign-in and cleanup on sign-out.
-3. An Edge Function alongside `admin-users` holding the FCM service account, called by a
-   database webhook on `insert into notifications`, which looks up the recipient's tokens and
-   posts to FCM v1. Web Push needs the same function plus a VAPID key pair and a service
-   worker in the export.
+**The chain, end to end:** a work order transition (assign, accept, decline, …) writes a
+`notifications` row. An `after insert` trigger calls `si_enqueue_push()`, which reads two
+Vault secrets (`push_trigger_secret`, `push_function_url`) and fires `net.http_post` at the
+Edge Function — fire-and-forget, inside the same transaction, so a push outage can never block
+the work order write it is reporting. The function verifies a shared secret header (the
+function is deployed `--no-verify-jwt`, since its only caller is Postgres and Postgres holds
+no user JWT), claims the row, reads every `push_subscriptions` row for the recipient, encrypts
+one payload per device under RFC 8291, signs a VAPID (RFC 8292) header per device, and POSTs to
+each browser's push service. `public/sw.js`'s `push` handler is what actually shows the alert
+when no tab is open; the app registers that worker and subscribes to a push endpoint through
+`src/lib/pushSubscription.js`, gated by the mandatory full-screen `AlertsGate` component wired
+into `RequireAuth` — the app will not open past it until notification permission has been
+asked for (not granted; a refusal has its own escape, since neither platform lets a site ask
+twice).
 
-Two of those three steps need console access and secrets that only you can create, which is
-why they are written down here rather than half-built in the repo.
+A row is retried by `si_push_retry_sweep()` (pg_cron, once a minute) if it is still unstamped
+after two minutes, and given up on — `push_gave_up_at`, distinct from `pushed_at` — after 24
+hours so the retry set does not grow forever. `pushed_at` is the only column that means
+"delivered"; a growing count of `pushed_at is null` rows on notifications older than a few
+minutes is the alarm that push has broken, and it stays honest specifically because give-up
+writes its own column rather than borrowing that one.
+
+**Two traps that cost the implementation real time and are invisible from reading the feature
+code in isolation** — read `CLAUDE.md`'s "Notification delivery outside the app" section for
+both; the short version is that `si_guard_notification_update` (0002) had to be amended before
+the sender's service-role write could stamp `pushed_at` at all, and the VAPID private key has
+to be stored as a full JWK rather than the bare 32-byte scalar the npm ecosystem normally
+passes around, because `crypto.subtle.importKey` cannot derive the public point from the
+scalar alone.
+
+**What still does not work, stated plainly:**
+
+- **The sound is whatever the device's default notification sound is, at the device's current
+  volume.** There is no web API to specify a custom sound, no way to make it louder than the
+  phone's own notification volume, and no way through silent mode or Do Not Disturb. If the
+  original ask was a loud, unmissable alert, this is not that — only a native Android build
+  with its own high-importance channel and a bundled sound file could do more, and this
+  feature does not touch the native path at all.
+- **Permission cannot be granted on anyone's behalf.** `AlertsGate` makes the ask
+  unavoidable — the app will not open without it — but it cannot make the answer yes. Anyone
+  who takes the `denied` or `unsupported` escape (`Continue without alerts`) is opted out of
+  push entirely, silently, with no admin screen anywhere that shows who has and who has not.
+- **`notifications` still has no server-side retention.** 0038 gave a recipient the ability to
+  delete their own read rows; nothing sweeps unread ones, and this feature adds volume rather
+  than reducing it — every Manager and Administrator now receives a push per accept and per
+  decline, plant-wide, on top of the notification row that already existed.
+- **The encryption path has never executed against a real push service.** Every verification
+  so far — Task 2's own review, the crypto checked line-by-line against RFC 8291/8292 — stopped
+  at the zero-subscription branch, because no device has been registered on the test project.
+  The real-device test (Task 6, Steps 1–6) is the first time `encryptPayload` and `vapidHeader`
+  actually run, and it has not happened yet. Nothing here should be read as "proven working"
+  until that test has.
