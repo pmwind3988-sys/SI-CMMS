@@ -186,6 +186,69 @@ export type Database = {
           },
         ]
       }
+      attachment_replacements: {
+        Row: {
+          attachment_id: string
+          id: string
+          new_file_size_bytes: number | null
+          new_storage_path: string
+          old_file_size_bytes: number | null
+          old_storage_path: string
+          old_uploaded_at: string | null
+          old_wo_status: Database["public"]["Enums"]["si_wo_status"] | null
+          replaced_at: string
+          replaced_by_id: string
+          replaced_by_name: string | null
+          replaced_by_role: Database["public"]["Enums"]["si_role"] | null
+          work_order_id: string
+        }
+        Insert: {
+          attachment_id: string
+          id?: string
+          new_file_size_bytes?: number | null
+          new_storage_path: string
+          old_file_size_bytes?: number | null
+          old_storage_path: string
+          old_uploaded_at?: string | null
+          old_wo_status?: Database["public"]["Enums"]["si_wo_status"] | null
+          replaced_at?: string
+          replaced_by_id: string
+          replaced_by_name?: string | null
+          replaced_by_role?: Database["public"]["Enums"]["si_role"] | null
+          work_order_id: string
+        }
+        Update: {
+          attachment_id?: string
+          id?: string
+          new_file_size_bytes?: number | null
+          new_storage_path?: string
+          old_file_size_bytes?: number | null
+          old_storage_path?: string
+          old_uploaded_at?: string | null
+          old_wo_status?: Database["public"]["Enums"]["si_wo_status"] | null
+          replaced_at?: string
+          replaced_by_id?: string
+          replaced_by_name?: string | null
+          replaced_by_role?: Database["public"]["Enums"]["si_role"] | null
+          work_order_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attachment_replacements_replaced_by_id_fkey"
+            columns: ["replaced_by_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attachment_replacements_work_order_id_fkey"
+            columns: ["work_order_id"]
+            isOneToOne: false
+            referencedRelation: "work_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attachments: {
         Row: {
           entity_id: string
@@ -194,6 +257,8 @@ export type Database = {
           file_type: Database["public"]["Enums"]["si_file_type"]
           file_url: string
           id: string
+          replace_count: number
+          replaced_at: string | null
           storage_path: string | null
           uploaded_at: string
           uploaded_by_id: string
@@ -208,6 +273,8 @@ export type Database = {
           file_type?: Database["public"]["Enums"]["si_file_type"]
           file_url: string
           id?: string
+          replace_count?: number
+          replaced_at?: string | null
           storage_path?: string | null
           uploaded_at?: string
           uploaded_by_id: string
@@ -222,6 +289,8 @@ export type Database = {
           file_type?: Database["public"]["Enums"]["si_file_type"]
           file_url?: string
           id?: string
+          replace_count?: number
+          replaced_at?: string | null
           storage_path?: string | null
           uploaded_at?: string
           uploaded_by_id?: string
@@ -994,6 +1063,7 @@ export type Database = {
           actor_name: string | null
           actor_role: Database["public"]["Enums"]["si_role"] | null
           created_at: string
+          event_type: string
           from_status: Database["public"]["Enums"]["si_wo_status"] | null
           id: string
           remarks: string | null
@@ -1005,6 +1075,7 @@ export type Database = {
           actor_name?: string | null
           actor_role?: Database["public"]["Enums"]["si_role"] | null
           created_at?: string
+          event_type?: string
           from_status?: Database["public"]["Enums"]["si_wo_status"] | null
           id?: string
           remarks?: string | null
@@ -1016,6 +1087,7 @@ export type Database = {
           actor_name?: string | null
           actor_role?: Database["public"]["Enums"]["si_role"] | null
           created_at?: string
+          event_type?: string
           from_status?: Database["public"]["Enums"]["si_wo_status"] | null
           id?: string
           remarks?: string | null
@@ -1326,6 +1398,14 @@ export type Database = {
         Returns: boolean
       }
       si_refresh_dashboard_stats: { Args: never; Returns: Json }
+      si_replace_attachment: {
+        Args: {
+          p_attachment_id: string
+          p_new_path: string
+          p_new_size: number
+        }
+        Returns: undefined
+      }
       si_role: { Args: never; Returns: string }
       si_role_rank: { Args: { p_role: string }; Returns: number }
       si_roles: {

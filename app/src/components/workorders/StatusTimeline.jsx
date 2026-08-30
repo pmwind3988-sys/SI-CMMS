@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, PauseCircle, RotateCcw } from "lucide-react";
+// `Image as ImageIcon`, the same aliasing AttachmentsPanel uses — the bare name
+// collides with the DOM's own Image constructor.
+import { CheckCircle2, Image as ImageIcon, PauseCircle, RotateCcw } from "lucide-react";
 import { listenWorkOrderHistory } from "../../lib/workOrders";
+import { isTransition, historyEventLabel } from "../../lib/historyEvents";
 import { useReferenceData } from "../../lib/referenceData";
 import { ErrorBanner } from "../ui/Surfaces";
 
@@ -39,13 +42,23 @@ export default function StatusTimeline({ wo }) {
      and colours still resolve. */
   const STATUS_FLOW = useMemo(() => {
     const active = new Set(statusFlow);
-    const reached = new Set((history || []).map((h) => h.to_status));
+    // Transitions only. A non-transition row (migration 0043) stamps the status
+    // the work order is already sitting at, so it can never add a rung the flow
+    // does not have — but "which rungs did this work order actually reach" is a
+    // question about the flow, and answering it from rows that are not steps
+    // through the flow is how that stops being true later.
+    const reached = new Set((history || []).filter(isTransition).map((h) => h.to_status));
     return statuses
       .filter((s) => active.has(s.code) || reached.has(s.code))
       .map((s) => s.code);
   }, [statusFlow, statuses, history]);
   const flowIndex = STATUS_FLOW.indexOf(wo.status);
-  const lastEvent = history && history.length ? history[history.length - 1] : null;
+  /* The last row that MOVED the work order. It feeds the "waiting on a spare
+     part" banner below, whose whole content is that transition's remarks — so a
+     photo replaced during the wait would have retitled the banner with the
+     photo's filename and hidden the reason the job is stopped. */
+  const transitions = (history || []).filter(isTransition);
+  const lastEvent = transitions.length ? transitions[transitions.length - 1] : null;
 
   return (
     <div>
@@ -61,7 +74,20 @@ export default function StatusTimeline({ wo }) {
            in work_order_history and rendered nowhere. One rule fixes all three.
            Ordering is the listener's (created_at ascending), so [0] is genuinely
            the first arrival and the rest are in the order they happened. */
-        const events = (history || []).filter((h) => h.to_status === s);
+        const rows = (history || []).filter((h) => h.to_status === s);
+        /* Split before indexing, because since migration 0043 not every row on
+           a rung is a step onto it. A photo replaced while the job sat at
+           Repairing writes a row stamped `repairing` at both ends, and taken as
+           a transition it would join the revisit list reading `Repairing →
+           Repairing` — indistinguishable from a reassignment, which really is
+           `assigned → assigned`. It would also outrank nothing but could still
+           become events[0] on a rung whose own arrival was never recorded:
+           raising a work order writes no history row at all, so `open` has none
+           until it is left, and a photo replaced before then would have become
+           the work order's "Open" entry, attributing it to whoever swapped the
+           photo. Neither would have raised anything. */
+        const events = rows.filter(isTransition);
+        const notes = rows.filter((h) => !isTransition(h));
         const event = events[0];
         const revisits = events.slice(1);
         const done = i <= flowIndex;
@@ -114,6 +140,26 @@ export default function StatusTimeline({ wo }) {
                     {r.actor_name} · {fmtTime(r.created_at)}
                   </div>
                   {r.remarks && <div className="text-[12px] text-ink mt-0.5">{r.remarks}</div>}
+                </div>
+              ))}
+
+              {/* Things that happened while the work order sat on this rung
+                  without moving off it — a photo replaced, so far. Slate rather
+                  than the amber above, because amber means "the work order came
+                  back here" and this is not a movement at all. Rendered rather
+                  than left to the Attachments tab: replacing a photo destroys
+                  the original, and a destroyed record belongs on the trail the
+                  work order is read from. */}
+              {notes.map((n) => (
+                <div key={n.id} className="mt-2 border-l-2 border-[#CBD5E1] pl-2.5">
+                  <div className="text-[11.5px] font-semibold text-ink-soft">
+                    <ImageIcon size={11} className="inline mb-0.5 mr-1" />
+                    {historyEventLabel(n)}
+                  </div>
+                  <div className="text-[12px] text-ink-soft">
+                    {n.actor_name} · {fmtTime(n.created_at)}
+                  </div>
+                  {n.remarks && <div className="text-[12px] text-ink mt-0.5">{n.remarks}</div>}
                 </div>
               ))}
             </div>

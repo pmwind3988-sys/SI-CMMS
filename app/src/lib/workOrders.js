@@ -490,6 +490,23 @@ export async function editComment(commentId, newText) {
    from the bucket, so it is refused rather than merely unoffered). Rows already
    carrying file_type 'video' are untouched and still play in the viewer.
 -------------------------------------------------------------------*/
+/**
+ * Put one file in the bucket under this work order's own prefix and return the
+ * object key. Shared by upload and replace, and the prefix is not decoration:
+ * si_replace_attachment (migration 0043) refuses a key that is not under
+ * `work_orders/{id}/`, so building it in two places would be building the
+ * function's precondition in two places.
+ */
+async function putAttachmentObject(woId, upload) {
+  const safeName = upload.name.replace(/[^\w.\-]/g, "_");
+  const path = `work_orders/${woId}/${Date.now()}-${safeName}`;
+  const { error } = await supabase.storage
+    .from("attachments")
+    .upload(path, upload, { contentType: upload.type, upsert: false });
+  if (error) throw error;
+  return path;
+}
+
 export async function addAttachment(woId, actor, file, fileType) {
   /* Compressed HERE rather than at the two call sites, because this function is
      the chokepoint both of them already go through — the raise form and the
@@ -503,14 +520,7 @@ export async function addAttachment(woId, actor, file, fileType) {
      file: `contentType` from its type, and file_size_bytes from its size, which
      is why the recorded size is the stored size and not the camera's. */
   const upload = fileType === "photo" ? await compressImage(file) : file;
-
-  const safeName = upload.name.replace(/[^\w.\-]/g, "_");
-  const path = `work_orders/${woId}/${Date.now()}-${safeName}`;
-
-  const { error: uploadError } = await supabase.storage
-    .from("attachments")
-    .upload(path, upload, { contentType: upload.type, upsert: false });
-  if (uploadError) throw uploadError;
+  const path = await putAttachmentObject(woId, upload);
 
   /* uploaded_by_id / _name / _role and wo_status are stamped by
      `a_stamp_attachment` (migration 0039), not sent from here. `uploaded_by_id`
@@ -536,6 +546,71 @@ export async function addAttachment(woId, actor, file, fileType) {
   if (error) throw error;
 
   return path;
+}
+
+/**
+ * Swap the picture behind one photo for another, destroying the original.
+ *
+ * Only the person who uploaded it may do this, and only while the work order is
+ * still live — both decided by `si_replace_attachment` (migration 0043), not
+ * here. `attachments` has no UPDATE policy and is meant not to, so this is an
+ * RPC rather than an update, the same shape declineWorkOrder() takes.
+ *
+ * The new file goes through compressImage() exactly as an upload does. It has
+ * to be called here rather than left to addAttachment's chokepoint, because
+ * this path never reaches that function — and a replacement that skipped
+ * compression would quietly undo the thing 0036 exists for, on the file most
+ * likely to be a fresh full-resolution camera shot.
+ *
+ * ORDER MATTERS, in both directions:
+ *
+ *   - The new object is uploaded BEFORE the swap, because the function verifies
+ *     it exists and belongs to the caller. If the swap is then refused, the
+ *     upload is an orphan nothing points at, so it is removed here — otherwise
+ *     every rejected attempt would leave a paid-for file in the bucket.
+ *   - The old object is removed AFTER, and only after. The storage policy lets
+ *     you delete your own object only once no attachment row names it, so this
+ *     call would be refused before the swap and succeeds after it. Best-effort
+ *     like deleteWorkOrder(): the database has already committed, and an
+ *     orphaned file is a tidiness problem rather than a correctness one.
+ *
+ * `attachment.file_url` is a signed URL by the time a component holds one
+ * (listenAttachments mints it on read), so the key comes from `storage_path`.
+ * The rows written before 0005 added that column carry the key in file_url
+ * instead and cannot be told apart from a signed one here — those skip the
+ * client-side delete rather than guess, and the audit row still records the key
+ * so nothing is lost track of.
+ */
+export async function replaceAttachment(attachment, file) {
+  const oldPath = attachment.storage_path || null;
+  const upload = await compressImage(file);
+  const newPath = await putAttachmentObject(attachment.entity_id, upload);
+
+  const { error } = await supabase.rpc("si_replace_attachment", {
+    p_attachment_id: attachment.id,
+    p_new_path: newPath,
+    p_new_size: upload.size,
+  });
+
+  if (error) {
+    try {
+      await supabase.storage.from("attachments").remove([newPath]);
+    } catch {
+      // Nothing references it; a leftover object is not worth masking the
+      // real error with a second one.
+    }
+    throw error;
+  }
+
+  if (oldPath) {
+    try {
+      await supabase.storage.from("attachments").remove([oldPath]);
+    } catch {
+      // Already swapped and logged. See above.
+    }
+  }
+
+  return newPath;
 }
 
 /* ------------------------------------------------------------------

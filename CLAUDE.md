@@ -1056,6 +1056,73 @@ be removed anyway), the read policy is untouched, and `AttachmentsPanel` keeps i
 one. Deleting the playback branch would have made those files unreachable from the app
 that stored them.
 
+### Replacing a photo (migration 0043)
+
+**The person who uploaded a photo may swap it for another, destroying the original.** Not
+"a technician" — whoever put the file there, which includes a Requester fixing a blurry
+photo on a fault they raised. There is no admin bypass: Managers and Administrators keep
+the delete they have always had and do not gain the power to replace someone else's photo
+with one of their own choosing. Only while the work order is live; at `verified` or
+`closed` the photos are part of a finished record and freeze. Photos only — not documents,
+not the legacy `video` rows.
+
+**`attachments` still has no UPDATE policy, and must not get one.** `si_replace_attachment`
+(SECURITY DEFINER) is the only door, the shape 0037 used for decline, so the table stays
+immutable to anything talking to PostgREST directly — measured: a direct `PATCH` changes
+zero rows. RLS does not apply inside, so `work_orders_select` is restated in the body as a
+copy rather than a summary, and the new object key is checked to be under
+`work_orders/{id}/` *and* owned by the caller — without that pair the argument is a way to
+point your own attachment row at somebody else's file and mint signed URLs for it.
+
+**The storage delete widened by data, not by trust**: you may delete your own object only
+once no `attachments` row names it. So the sequence is repoint-then-remove — the function
+moves the row onto the new key, which orphans the old one, and only then can the browser
+delete it. A technician can neither delete a file that is still part of a live record nor
+orphan a row by deleting the file under it. Both measured, both directions. The `not
+exists` is safe from 0029's fail-open trap only because `attachments_select` is
+`si_signed_in()`; narrow that policy and this needs a SECURITY DEFINER helper.
+
+**Logged three times, because a replacement destroys evidence.** `attachment_replacements`
+holds the full before/after in the same transaction; `attachments.replaced_at` /
+`replace_count` let the panel mark a swapped photo without a second query; and one
+`work_order_history` row puts it on the timeline the rest of the work order is read from.
+The audit row deliberately has **no foreign key on `attachment_id`** — a Manager deleting
+the photo must not delete the record that it was once replaced.
+
+**`work_order_history.event_type` exists because the obvious encoding is wrong here.**
+"Not a transition" looks like `from_status = to_status`, and on this schema that is a real
+transition: `('assigned','assigned', …, 'Reassign (pre-acceptance)')` is row 3 of 0003's
+matrix. A reader using it would have silently reclassified every reassignment as a photo
+swap. The column defaults to `'transition'`, which is what every row ever written is and
+what any row omitting it will be — `si_transition_work_order` is untouched. `lib/historyEvents.js`
+owns the test; three readers use it and each was wrong without it:
+
+- `StatusTimeline` matches a rung on `to_status` alone. Raising a work order writes **no**
+  history row, so `open` has none until it is left — a photo replaced before then would
+  have become the work order's "Open" entry, attributed to whoever swapped the photo.
+- `indexHistory()` in the export counts `to_status = 'assigned'` as a reassignment, so a
+  photo swapped while assigned added an imaginary one to `Times Reassigned`. The Status
+  History sheet gains an **Event** column; the rows stay in it, they are only kept out of
+  the arithmetic.
+- The `waiting_spare_part` banner is the *last* history row's remarks, which a photo
+  replaced during the wait would have retitled with a filename, hiding why the job stopped.
+
+Three client details worth not undoing. The replacement goes through `compressImage` in
+`replaceAttachment()` rather than relying on `addAttachment`'s chokepoint, which this path
+never reaches — measured end-to-end in the browser: a 3.9MB camera-sized JPEG stored at
+992KB, 74.9% smaller. **The control lives in the full-size viewer, not on the thumbnail** —
+the thumbnail is already a single `<button>` and nesting one inside it is the invalid-HTML
+problem 0038 hit on the notification row. And **the warning is read before the camera
+opens**: on a phone the file picker is a full-screen takeover, so a confirmation on the
+other side of it arrives when the reader has already committed, about a photo they can no
+longer see. Choosing the file is the agreement, which is why there is no second Confirm.
+
+`uploaded_at` and `wo_status` are **re-stamped**, so a photo replaced during testing moves
+into the Testing group — the picture on screen is the new one, and `wo_status` means "the
+phase this photo documents" (0039). What the old one said is in the audit row. The
+consequence is that a replaced photo's timestamp no longer says when the fault was first
+photographed, which is why both the grid and the viewer mark it.
+
 ### Deleting user accounts (migration 0030)
 
 The second irreversible operation in the module, and **Superuser-only** — not a

@@ -45,6 +45,7 @@ import {
   EXCEL_DATETIME_FORMAT,
   MY_TIMEZONE,
 } from "./datetime";
+import { isTransition, historyEventLabel } from "./historyEvents";
 
 const DASH = "—";
 
@@ -126,6 +127,14 @@ const LIFECYCLE = [
  * reassignment and one `accepted -> assigned` step going backwards. "When did
  * this work order first reach this stage" is the question a lifecycle column
  * answers; "who holds it now" is what assigned_to_name is for.
+ *
+ * Only transitions count towards any of that. Since migration 0043 the table
+ * also carries rows for things that happened to a work order without moving it
+ * — a photo replaced — and those stamp both statuses with the CURRENT one,
+ * because nothing changed. Left in, a photo swapped while the job was assigned
+ * would have added an imaginary reassignment to `Times Reassigned`. They stay
+ * in `rows`, so the Status History sheet still lists them; they are only kept
+ * out of the arithmetic that reads the status flow.
  */
 export function indexHistory(historyRows) {
   const byWo = new Map();
@@ -140,12 +149,14 @@ export function indexHistory(historyRows) {
       entry = { firstAt: {}, actorFor: {}, assignedCount: 0, rows: [] };
       byWo.set(row.work_order_id, entry);
     }
+    entry.rows.push(row);
+    if (!isTransition(row)) continue;
+
     if (!(row.to_status in entry.firstAt)) {
       entry.firstAt[row.to_status] = row.created_at;
       entry.actorFor[row.to_status] = row.actor_name;
     }
     if (row.to_status === "assigned") entry.assignedCount += 1;
-    entry.rows.push(row);
   }
   return byWo;
 }
@@ -303,6 +314,17 @@ function historyColumns(labels, woNumberOf) {
   return [
     { header: "WO Number", width: 18, cell: (h) => textCell(woNumberOf(h.work_order_id)) },
     { header: "When", width: 21, cell: (h) => dateCell(h.created_at) },
+    // What kind of row this is, ahead of the two statuses it qualifies. On a
+    // non-transition row (0043) both of those hold the CURRENT status, because
+    // nothing moved — without this column such a row is indistinguishable from
+    // a reassignment, which is genuinely assigned -> assigned. A transition
+    // reads "Status change" rather than being left blank: an empty cell in a
+    // column that sometimes has a value reads as missing data.
+    {
+      header: "Event",
+      width: 16,
+      cell: (h) => textCell(historyEventLabel(h) || "Status change"),
+    },
     { header: "From Status", width: 18, cell: (h) => textCell(statusText(h.from_status)) },
     { header: "To Status", width: 18, cell: (h) => textCell(statusText(h.to_status)) },
     { header: "By", width: 18, cell: (h) => textCell(h.actor_name) },

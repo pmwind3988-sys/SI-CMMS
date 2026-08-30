@@ -25,18 +25,31 @@
  *
  * Photos are compressed in the browser before upload (lib/compressImage.js),
  * inside `addAttachment` rather than here — see the note there.
+ *
+ * **A photo can be replaced by the person who uploaded it** (migration 0043),
+ * from the camera or the gallery, while the work order is still live. The old
+ * file is destroyed, so three things follow in this file: the control lives in
+ * the full-size viewer rather than on the thumbnail — the thumbnail is already
+ * a single `<button>` and nesting one inside it is invalid HTML, the problem
+ * 0038 hit on the notification row; the warning is read BEFORE the camera
+ * opens; and a replaced photo is marked in both places, because after a swap
+ * its timestamp is the replacement's and no longer says when the fault was
+ * first photographed.
  */
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
+  Camera,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
   Image as ImageIcon,
   Play,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import { listenAttachments, addAttachment } from "../../lib/workOrders";
+import { listenAttachments, addAttachment, replaceAttachment } from "../../lib/workOrders";
 import { groupByPhase, phaseForStatus } from "../../lib/attachmentPhases";
 import { fmtDateTimeMY } from "../../lib/datetime";
 import { ROLE_LABELS } from "../../lib/roles";
@@ -73,6 +86,22 @@ function uploaderLine(a) {
   return `${a.uploaded_by_name || "Unknown"} · ${uploaderRole(a)}`;
 }
 
+/**
+ * The statuses at which a work order's photos stop being replaceable. A copy of
+ * the check in si_replace_attachment (migration 0043), which is the one that
+ * decides — this only hides a control the database would refuse, the direction
+ * this codebase allows a client predicate to run in.
+ */
+const FROZEN_STATUSES = ["verified", "closed"];
+
+function canReplace(attachment, user, wo) {
+  return (
+    attachment.file_type === "photo" &&
+    attachment.uploaded_by_id === user?.uid &&
+    !FROZEN_STATUSES.includes(wo.status)
+  );
+}
+
 function fileSize(bytes) {
   if (!bytes) return null;
   if (bytes < 1024) return `${bytes} B`;
@@ -89,23 +118,38 @@ function fileSize(bytes) {
  * component exists at all. The `!` overrides darken its backdrop and centre the
  * panel on a phone too, where it otherwise aligns to the bottom edge.
  */
-function AttachmentViewer({ items, index, onIndex, onClose }) {
+function AttachmentViewer({ items, index, onIndex, onClose, replaceable, onReplace, busy }) {
   const item = items[index];
   const [failed, setFailed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const cameraInput = useRef(null);
+  const galleryInput = useRef(null);
 
   // Cleared per attachment: one expired URL would otherwise leave the message
   // standing over every attachment opened after it.
   useEffect(() => setFailed(false), [item?.id]);
+  // And the same for the confirmation: arrowing to the next photo with the
+  // warning still open would aim it at a file the reader never agreed to lose.
+  useEffect(() => setConfirming(false), [item?.id]);
 
   useEffect(() => {
     function onKey(e) {
-      if (e.key === "Escape") onClose();
+      // While the warning is up, Escape backs out of THAT rather than out of
+      // the viewer — the outer dismissal would look identical and leave the
+      // reader unsure which one they cancelled. Nothing moves mid-upload
+      // either: the arrows would swap the photo under a request already in
+      // flight against the previous one.
+      if (busy) return;
+      if (e.key === "Escape") {
+        if (confirming) setConfirming(false);
+        else onClose();
+      } else if (confirming) return;
       else if (e.key === "ArrowRight" && index < items.length - 1) onIndex(index + 1);
       else if (e.key === "ArrowLeft" && index > 0) onIndex(index - 1);
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [index, items.length, onClose, onIndex]);
+  }, [index, items.length, onClose, onIndex, confirming, busy]);
 
   if (!item) return null;
 
@@ -136,7 +180,28 @@ function AttachmentViewer({ items, index, onIndex, onClose }) {
                 {item.wo_status ? ` · ${phaseForStatus(item.wo_status).label}` : ""}
               </div>
             )}
+            {/* The stamp above is the CURRENT picture's — a replacement
+                re-stamps both (migration 0043) — so without this line a photo
+                that has been swapped is indistinguishable from one that never
+                was, and the timestamp quietly stops meaning "when the fault was
+                photographed". */}
+            {item.replaced_at && (
+              <div className="truncate text-[11.5px] text-amber-700">
+                Replaced {fmtDateTimeMY(item.replaced_at)}
+                {item.replace_count > 1 ? ` · ${item.replace_count} times in total` : ""}
+              </div>
+            )}
           </div>
+          {replaceable && !confirming && (
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              disabled={busy}
+              className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-[#D8DEE4] px-2.5 py-1.5 text-[12.5px] font-semibold text-ink disabled:opacity-50"
+            >
+              <RefreshCw size={14} /> {busy ? "Replacing…" : "Replace"}
+            </button>
+          )}
           {/* A way out for anything the browser will not decode itself — an
               iPhone video in HEVC, say. Same signed URL, handed to the OS. */}
           <a
@@ -156,6 +221,73 @@ function AttachmentViewer({ items, index, onIndex, onClose }) {
             <X size={18} />
           </button>
         </div>
+
+        {/* The warning comes BEFORE the camera opens, not after a picture is
+            taken. On a phone the file picker is a full-screen takeover, so a
+            confirmation on the other side of it arrives when the reader has
+            already committed — and the thing being confirmed is the deletion of
+            a photo they can no longer see. Same reasoning as the decline
+            confirmation in WorkflowPanel: the irreversible half is read back
+            first. Choosing the file is then the agreement itself, which is why
+            there is no second Confirm button. */}
+        {confirming && (
+          <div className="border-b border-border bg-[#FFFBEB] px-3 py-2.5">
+            <div className="flex gap-2">
+              <AlertTriangle size={15} className="mt-0.5 flex-shrink-0 text-amber-700" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[12.5px] font-bold text-ink">
+                  Replace this photo with a new one?
+                </div>
+                <div className="mt-0.5 text-[12px] leading-relaxed text-ink-soft">
+                  {fileLabel(item)} will be deleted for good — it is not kept anywhere and
+                  cannot be brought back. The swap is recorded against this work order with
+                  your name on it.
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {/* Two inputs, not one with a toggle: `capture` is a hint the
+                      browser either honours by opening the camera or ignores,
+                      and there is no way to ask for the gallery once it is
+                      present. On a laptop the first simply opens the file
+                      picker, which is the only thing there is. */}
+                  <Button size="sm" icon={Camera} disabled={busy} onClick={() => cameraInput.current.click()}>
+                    Take photo
+                  </Button>
+                  <Button size="sm" variant="ghost" icon={ImageIcon} disabled={busy} onClick={() => galleryInput.current.click()}>
+                    Choose from gallery
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <input
+              ref={cameraInput}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                // Cleared so picking the same file twice still fires onChange —
+                // a retry after a failed upload is exactly that case.
+                e.target.value = "";
+                if (f) onReplace(item, f);
+              }}
+            />
+            <input
+              ref={galleryInput}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) onReplace(item, f);
+              }}
+            />
+          </div>
+        )}
 
         <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
           {failed ? (
@@ -193,7 +325,7 @@ function AttachmentViewer({ items, index, onIndex, onClose }) {
               <button
                 type="button"
                 aria-label="Previous attachment"
-                disabled={index === 0}
+                disabled={index === 0 || busy}
                 onClick={() => onIndex(index - 1)}
                 className={`${navClass} left-2`}
               >
@@ -202,7 +334,7 @@ function AttachmentViewer({ items, index, onIndex, onClose }) {
               <button
                 type="button"
                 aria-label="Next attachment"
-                disabled={index === items.length - 1}
+                disabled={index === items.length - 1 || busy}
                 onClick={() => onIndex(index + 1)}
                 className={`${navClass} right-2`}
               >
@@ -221,6 +353,8 @@ export default function AttachmentsPanel({ wo }) {
   const [items, setItems] = useState(null);
   const [error, setError] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [replacingId, setReplacingId] = useState(null);
+  const [notice, setNotice] = useState(null);
   const photoInput = useRef(null);
 
   useEffect(() => {
@@ -238,6 +372,36 @@ export default function AttachmentsPanel({ wo }) {
       // reason (the bucket caps at 50MB — see migration 0005). Show it, or the
       // user retries the same too-large file forever.
       setError(describeError(e, "Couldn't upload — try again."));
+    }
+  }
+
+  /**
+   * Swap one photo for another and close the viewer.
+   *
+   * Closing is not tidiness. The viewer holds an INDEX into a list this
+   * replacement reorders: a swap re-stamps `wo_status`, so the photo can move
+   * to a different phase group, and `orderedPhotos` is grouped — leaving the
+   * viewer open would leave that index pointing at whatever slid into the slot,
+   * which is a different photo with a live Replace button on it. The confirming
+   * message therefore lands on the panel behind, where the grid has already
+   * redrawn with the new picture in it.
+   */
+  async function replace(attachment, file) {
+    setError(null);
+    setNotice(null);
+    setReplacingId(attachment.id);
+    try {
+      await replaceAttachment(attachment, file);
+      setViewing(null);
+      setNotice(`${fileLabel(attachment)} was replaced. The original has been deleted.`);
+    } catch (e) {
+      // Every refusal in si_replace_attachment is a sentence written to be
+      // read — "This work order is closed…", "Only the person who uploaded a
+      // photo can replace it." describeError surfaces those verbatim, which is
+      // why they are worded that way rather than as codes.
+      setError(describeError(e, "Couldn't replace that photo — try again."));
+    } finally {
+      setReplacingId(null);
     }
   }
 
@@ -259,6 +423,19 @@ export default function AttachmentsPanel({ wo }) {
     // showed up as a third squeezed column instead of a full-width banner.
     <div>
       {error && <ErrorBanner message={error} />}
+      {notice && (
+        <div className="mb-3 flex items-start gap-2 rounded bg-[#ECFDF3] px-3 py-2 text-[12.5px] text-[#065F46]">
+          <span className="min-w-0 flex-1">{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            aria-label="Dismiss"
+            className="flex-shrink-0 rounded p-0.5 hover:bg-black/5"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
       {/* One column until there is actually a legacy video to show, so Photos
           gets the full width in the ordinary case rather than half of it. */}
       <div className={`grid grid-cols-1 gap-6 ${videos.length > 0 ? "sm:grid-cols-2" : ""}`}>
@@ -307,6 +484,16 @@ export default function AttachmentsPanel({ wo }) {
                           the supervisor's laptop and the technician's phone is
                           worse than no stamp. */}
                       <div className="truncate text-[10.5px] text-ink-soft">{fmtDateTimeMY(p.uploaded_at)}</div>
+                      {/* The date above is the CURRENT picture's, so on a
+                          replaced photo it is not when the fault was first
+                          photographed. Marked here as well as in the viewer,
+                          because the grid is where somebody scanning a work
+                          order forms their impression of it. */}
+                      {p.replaced_at && (
+                        <div className="truncate text-[10.5px] font-semibold text-amber-700">
+                          Replaced
+                        </div>
+                      )}
                     </div>
                   </button>
                 ))}
@@ -350,6 +537,9 @@ export default function AttachmentsPanel({ wo }) {
           index={viewing}
           onIndex={setViewing}
           onClose={() => setViewing(null)}
+          replaceable={canReplace(media[viewing], user, wo)}
+          onReplace={replace}
+          busy={replacingId === media[viewing].id}
         />
       )}
     </div>
