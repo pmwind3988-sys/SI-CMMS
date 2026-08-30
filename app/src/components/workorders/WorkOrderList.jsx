@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Search, Download, AlertTriangle, Loader2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
@@ -235,18 +236,41 @@ export default function WorkOrderList() {
       <div className="mb-3.5 grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap sm:gap-3">
         <div className="col-span-2 flex items-center gap-2 rounded border border-border bg-white px-3 py-1.5 sm:w-64">
           <Search size={14} className="flex-shrink-0 text-ink-soft" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={"Search WO#, equipment or area…"} className="w-full min-w-0 outline-none text-[13px]" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            type="search"
+            aria-label="Search work orders by number, equipment or area"
+            placeholder={"Search WO#, equipment or area…"}
+            className="w-full min-w-0 outline-none text-[13px]"
+          />
         </div>
-        <select value={fPriority} onChange={(e) => setFPriority(e.target.value)} className={`${inputClass} min-w-0 sm:w-36`}>
-          <option>All</option>
+        {/* Both of these read "All" when nothing is chosen, and side by side —
+            stacked on a phone — there was nothing on screen saying which was
+            priority and which was status. You had to open one to find out. The
+            placeholder option now names the field, so the closed control is
+            self-describing at every width, and aria-label does the same for a
+            screen reader without spending a line of vertical space. */}
+        <select
+          value={fPriority}
+          onChange={(e) => setFPriority(e.target.value)}
+          aria-label="Filter by priority"
+          className={`${inputClass} min-w-0 sm:w-40`}
+        >
+          <option value="All">Priority: All</option>
           {priorities.map((p) => (
             <option key={p.id} value={p.id}>
               {p.id} — {p.label}
             </option>
           ))}
         </select>
-        <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={`${inputClass} min-w-0 sm:w-52`}>
-          <option value="All">All</option>
+        <select
+          value={fStatus}
+          onChange={(e) => setFStatus(e.target.value)}
+          aria-label="Filter by status"
+          className={`${inputClass} min-w-0 sm:w-52`}
+        >
+          <option value="All">Status: All</option>
           {statuses.map((s) => (
             <option key={s.code} value={s.code}>
               {s.label}
@@ -256,7 +280,7 @@ export default function WorkOrderList() {
         <select
           value={preset}
           onChange={(e) => setPreset(e.target.value)}
-          aria-label="Date raised"
+          aria-label="Filter by date raised"
           className={`${inputClass} min-w-0 sm:w-44`}
         >
           {DATE_PRESETS.map((p) => (
@@ -304,7 +328,7 @@ export default function WorkOrderList() {
         <div
           className={`mb-3.5 flex items-start justify-between gap-3 rounded border px-3.5 py-2.5 text-[13px] ${
             exportNote.kind === "error"
-              ? "border-danger/40 bg-[#FCE9E9] text-danger"
+              ? "border-danger/40 bg-[#FCE9E9] text-danger-text"
               : exportNote.kind === "warn"
                 ? "border-accent/40 bg-accent-soft text-[#8A5A0A]"
                 : "border-good/40 bg-[#E7F5EE] text-[#166534]"
@@ -341,14 +365,14 @@ export default function WorkOrderList() {
           <div className="w-24 text-right">SLA</div>
         </div>
         {filtered.map((w, i) => (
-          <WorkOrderRow key={w.id} w={w} first={i === 0} onClick={() => router.push(`/work-orders/view?id=${w.id}`)} />
+          <WorkOrderRow key={w.id} w={w} first={i === 0} href={`/work-orders/view/?id=${w.id}`} />
         ))}
         {workOrders && filtered.length === 0 && <EmptyState>{EMPTY_MESSAGES[user.role]}</EmptyState>}
       </Card>
 
       <div className="md:hidden flex flex-col gap-2">
         {filtered.map((w) => (
-          <WorkOrderCard key={w.id} w={w} onClick={() => router.push(`/work-orders/view?id=${w.id}`)} />
+          <WorkOrderCard key={w.id} w={w} href={`/work-orders/view/?id=${w.id}`} />
         ))}
         {workOrders && filtered.length === 0 && <EmptyState>{EMPTY_MESSAGES[user.role]}</EmptyState>}
       </div>
@@ -394,11 +418,29 @@ function RaisedCell({ ts }) {
   );
 }
 
-function WorkOrderRow({ w, first, onClick }) {
+/**
+ * A row is an `<a>`, not a div with a click handler.
+ *
+ * It used to be `<div class="cursor-pointer">` with no role, no tabindex and no
+ * href, which meant a keyboard user could not open a work order at all — Tab
+ * went straight past every row — and nobody could middle-click one into a new
+ * tab, copy its link, or reach it with a screen reader. Being an anchor fixes
+ * all of that at once and costs nothing: the browser already knows how to
+ * focus, activate, and open one.
+ */
+function WorkOrderRow({ w, first, href }) {
   const { slaForPriority, departmentName } = useReferenceData();
   const remain = slaRemain(w, slaForPriority);
   return (
-    <div onClick={onClick} className={`flex items-center px-4 py-3 cursor-pointer hover:bg-canvas ${first ? "" : "border-t border-[#F1F3F5]"}`}>
+    <Link
+      href={href}
+      /* The row is the link, so its accessible name would otherwise be every
+         cell run together — "WO-2026-000005 Lampu IT P2 Completed 27/08/2026
+         11:34 AM Arun Kumar Breached". This names it once, in the order
+         somebody would say it. */
+      aria-label={`${w.wo_number || "Pending work order"} — ${w.asset_name || "no equipment"}`}
+      className={`flex items-center px-4 py-3 hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-navy ${first ? "" : "border-t border-[#F1F3F5]"}`}
+    >
       <div className="flex-[2] min-w-0">
         <div className="font-mono text-[11.5px] text-ink-soft">
           {w.wo_number || "Pending…"}
@@ -417,18 +459,26 @@ function WorkOrderRow({ w, first, onClick }) {
         <RaisedCell ts={w.created_at} />
       </div>
       <div className="flex-[1.2] text-[13px] text-ink">{w.assigned_to_name || <span className="text-ink-soft">Unassigned</span>}</div>
-      <div className="w-24 text-right font-mono text-[11.5px]" style={{ color: remain != null && remain < 0 ? "#EF4444" : "#64748B", fontWeight: remain < 0 ? 700 : 400 }}>
+      {/* #EF4444 measured 3.76:1 as text; #C1291F is the same red one step down
+          and clears 4.5. The muted case moves with the ink-soft token. */}
+      <div className="w-24 text-right font-mono text-[11.5px]" style={{ color: remain != null && remain < 0 ? "#C1291F" : "#5A6880", fontWeight: remain < 0 ? 700 : 400 }}>
         {w.status === "closed" ? "—" : remain != null ? (remain < 0 ? "Breached" : fmtDue(remain) + " left") : "—"}
       </div>
-    </div>
+    </Link>
   );
 }
 
-function WorkOrderCard({ w, onClick }) {
+/** The phone-width row. Same reasoning as WorkOrderRow — it is a link. */
+function WorkOrderCard({ w, href }) {
   const { slaForPriority, departmentName } = useReferenceData();
   const remain = slaRemain(w, slaForPriority);
   return (
-    <Card className="p-3.5" onClick={onClick}>
+    <Link
+      href={href}
+      aria-label={`${w.wo_number || "Pending work order"} — ${w.asset_name || "no equipment"}`}
+      className="block rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy"
+    >
+      <Card className="p-3.5">
       <div className="flex items-start justify-between">
         <div>
           <div className="font-mono text-[11px] text-ink-soft">
@@ -445,11 +495,12 @@ function WorkOrderCard({ w, onClick }) {
       </div>
       <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-[#F1F3F5]">
         <span className="text-[12px] text-ink-soft">{w.assigned_to_name || "Unassigned"}</span>
-        <span className="font-mono text-[11px]" style={{ color: remain < 0 ? "#EF4444" : "#64748B" }}>
+        <span className="font-mono text-[11px]" style={{ color: remain < 0 ? "#C1291F" : "#5A6880" }}>
           {w.status === "closed" ? "—" : remain != null ? (remain < 0 ? "Breached" : fmtDue(remain) + " left") : "—"}
         </span>
-      </div>
-      <div className="mt-1.5 text-[11.5px] text-ink-soft">Raised {fmtDateMY(w.created_at)} · {fmtTimeMY(w.created_at)}</div>
-    </Card>
+        </div>
+        <div className="mt-1.5 text-[11.5px] text-ink-soft">Raised {fmtDateMY(w.created_at)} · {fmtTimeMY(w.created_at)}</div>
+      </Card>
+    </Link>
   );
 }

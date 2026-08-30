@@ -337,7 +337,7 @@ export default function RoleDashboard({ viewRole }) {
               <div className="hidden sm:block">
                 <SlaCell w={w} remainMs={stats.remainMs} />
               </div>
-              <span className="text-accent font-semibold text-[12.5px] flex flex-shrink-0 items-center gap-1 whitespace-nowrap">
+              <span className="text-accent-text font-semibold text-[12.5px] flex flex-shrink-0 items-center gap-1 whitespace-nowrap">
                 <span className="hidden xs:inline">{attention.cta}</span> <ArrowRight size={13} />
               </span>
             </button>
@@ -399,7 +399,7 @@ export default function RoleDashboard({ viewRole }) {
 
       <p className="text-[11.5px] text-ink-soft mt-4">
         Signed in as {user?.name} · {ROLE_LABELS[view] || view}. These figures are your
-        own scope — Row Level Security means you only ever see work orders your role covers.
+        own scope — You only ever see the work orders your role covers.
       </p>
     </div>
   );

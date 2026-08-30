@@ -53,11 +53,11 @@ function isCompanyEmail(value) {
 }
 
 export default function LoginPage() {
-  const { signIn } = useAuth();
+  const { signIn, user, sessionState } = useAuth();
   const router = useRouter();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(true);
+  const [rememberMe, setRememberMe] = useState(false);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
   /**
@@ -74,6 +74,27 @@ export default function LoginPage() {
    * client render disagree with that HTML, and React discards the whole tree
    * on a hydration mismatch.
    */
+  /**
+   * Somebody who is already signed in does not need this page.
+   *
+   * With a live session in storage, /login rendered the sign-in form anyway:
+   * a dead end for the user, and on a shared machine an invitation to type
+   * credentials into a form while a different account is still active
+   * underneath — the next thing that happens is two people sharing one
+   * session without either of them realising.
+   *
+   * Gated on `active` deliberately. During recovery `user` deliberately keeps
+   * its value while there is no usable token (see AuthContext), and a `lost`
+   * session is exactly the case this page exists for; redirecting on either
+   * would bounce somebody away from the only screen that can help them.
+   * `mustChangePassword` is excluded because that account's one destination is
+   * /change-password, which dashboardPathForRole cannot name.
+   */
+  useEffect(() => {
+    if (sessionState !== "active" || !user || user.mustChangePassword) return;
+    router.replace(dashboardPathForRole(user.role));
+  }, [user, sessionState, router]);
+
   useEffect(() => {
     setRememberMe(wasRememberMeChecked());
     // Whatever was typed last time — an address or a number.
@@ -236,14 +257,14 @@ export default function LoginPage() {
     // min-h-dvh, not min-h-screen: 100vh on a mobile browser is the height with
     // the URL bar hidden, so the sign-in card sat partly below the fold and the
     // page scrolled for no reason.
-    <div className="min-h-dvh flex flex-col md:flex-row bg-navy font-sans">
+    <div className="min-h-dvh flex flex-col lg:flex-row bg-navy font-sans">
       {/* The navy panel, on a phone.
           Below `md` the branded half was simply hidden and the screen was a
           plain grey field with a form on it — the one place in the app with no
           brand surface at all. This is the same gradient, reduced to a band
           across the top, with the sign-in card overlapping its bottom edge so
           the two read as one object rather than two stacked blocks. */}
-      <div className="si-navy px-6 pb-11 pt-[calc(2.5rem+env(safe-area-inset-top))] md:hidden">
+      <div className="si-navy px-6 pb-11 pt-[calc(2.5rem+env(safe-area-inset-top))] lg:hidden">
         <div className="rise flex items-center gap-3">
           <Logo size={34} />
           <div>
@@ -256,7 +277,7 @@ export default function LoginPage() {
         </h1>
       </div>
 
-      <div className="si-navy hidden flex-1 flex-col justify-between p-12 md:flex">
+      <div className="si-navy hidden flex-1 flex-col justify-between p-12 lg:flex">
         <div className="flex items-center gap-3">
           <Logo />
           <div>
@@ -276,8 +297,11 @@ export default function LoginPage() {
         <div className="font-mono text-[#5B76AE] text-[12px]">Authentication Module · v1.0</div>
       </div>
 
-      <div className="-mt-6 flex flex-1 items-start justify-center rounded-t-[20px] bg-canvas px-5 pb-[calc(2rem+env(safe-area-inset-bottom))] pt-8 md:mt-0 md:items-center md:rounded-none md:p-6">
-        <div className="rise w-full max-w-sm">
+      <div className="-mt-6 flex flex-1 items-start justify-center rounded-t-[20px] bg-canvas px-5 pb-[calc(2rem+env(safe-area-inset-bottom))] pt-8 lg:mt-0 lg:items-center lg:rounded-none lg:p-6">
+        {/* max-w-sm is right on a phone and mean on a tablet, where the
+            stacked layout now runs up to 1024px — 24rem of form in a 768px
+            window looked like a phone screenshot pasted onto an iPad. */}
+        <div className="rise w-full max-w-sm sm:max-w-md">
           <h2 className="text-xl font-bold text-ink mb-1.5">Sign in</h2>
           <p className="text-[13.5px] text-ink-soft mb-5">
             {COMPANY_EMAIL_DOMAIN

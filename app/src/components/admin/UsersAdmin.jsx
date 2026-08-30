@@ -303,12 +303,19 @@ export default function UsersAdmin() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
+            type="search"
+            aria-label="Search users by name, email, employee ID or department"
             placeholder="Name, email, employee ID or department…"
             className="w-full min-w-0 bg-transparent text-[13.5px] outline-none"
           />
         </div>
-        <select value={fRole} onChange={(e) => setFRole(e.target.value)} className={`${inputClass} sm:w-48`}>
-          <option value="All">All roles</option>
+        <select
+          value={fRole}
+          onChange={(e) => setFRole(e.target.value)}
+          aria-label="Filter by role"
+          className={`${inputClass} sm:w-48`}
+        >
+          <option value="All">Role: All</option>
           {ALL_ROLES.map((r) => (
             <option key={r} value={r}>
               {ROLE_LABELS[r]}
@@ -514,7 +521,9 @@ function StatusText({ status }) {
   return (
     <span
       className="text-[11.5px] font-bold"
-      style={{ color: status === "active" ? "#22C55E" : "#94A3B8" }}
+      /* #22C55E is 2.28:1 as text on white; #178640 is the same green,
+         legible. The inactive grey moves with it for the same reason. */
+      style={{ color: status === "active" ? "#178640" : "#5A6880" }}
     >
       {status === "active" ? "Active" : "Inactive"}
     </span>
@@ -640,7 +649,7 @@ function UserActions({
           size="sm"
           variant="ghost"
           icon={BadgeCheck}
-          aria-label="Not a demo account"
+          aria-label="Mark as a real account"
           title="Mark this as a real account — clears the seed-related flags"
           onClick={() => onClearDemoMark(user)}
         />
@@ -739,7 +748,7 @@ function Modal({ title, subtitle, children, onClose }) {
     // Bottom-aligned on a phone so the dialog sits above the thumb and its own
     // content scrolls; the create-user form is six fields tall and used to run
     // off both ends of a 640px-high screen with no way to reach the buttons.
-    <ModalOverlay className="p-4">
+    <ModalOverlay label="User account" className="p-4">
       <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="flex items-start justify-between mb-4">
           <div>
@@ -1011,7 +1020,7 @@ function RoleDialog({ user, me, departments, onClose, onDone }) {
             ))}
           </div>
           {roles.length === 0 && (
-            <div className="mt-1.5 text-[11.5px] text-danger">
+            <div className="mt-1.5 text-[11.5px] text-danger-text">
               An account must have at least one role.
             </div>
           )}

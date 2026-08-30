@@ -127,20 +127,26 @@ function NotificationsInner() {
       {error && <ErrorBanner message={error} />}
 
       {typesPresent.length > 1 && (
-        <div className="flex gap-2 mb-4 flex-wrap">
+        <div className="flex gap-2 mb-4 flex-wrap" role="radiogroup" aria-label="Filter notifications by type">
           <button
+            type="button"
+            role="radio"
+            aria-checked={filter === "All"}
             onClick={() => setFilter("All")}
-            className="text-[12px] font-semibold px-3 py-1.5 rounded-full border"
-            style={{ borderColor: filter === "All" ? "#0F3D91" : "#E5E9F0", background: filter === "All" ? "#0F3D9112" : "#fff", color: filter === "All" ? "#0F3D91" : "#64748B" }}
+            className="min-h-[40px] text-[12px] font-semibold px-3.5 py-1.5 rounded-full border"
+            style={{ borderColor: filter === "All" ? "#0F3D91" : "#E5E9F0", background: filter === "All" ? "#0F3D9112" : "#fff", color: filter === "All" ? "#0F3D91" : "#5A6880" }}
           >
             All
           </button>
           {typesPresent.map((t) => (
             <button
               key={t}
+              type="button"
+              role="radio"
+              aria-checked={filter === t}
               onClick={() => setFilter(t)}
-              className="text-[12px] font-semibold px-3 py-1.5 rounded-full border"
-              style={{ borderColor: filter === t ? "#0F3D91" : "#E5E9F0", background: filter === t ? "#0F3D9112" : "#fff", color: filter === t ? "#0F3D91" : "#64748B" }}
+              className="min-h-[40px] text-[12px] font-semibold px-3.5 py-1.5 rounded-full border"
+              style={{ borderColor: filter === t ? "#0F3D91" : "#E5E9F0", background: filter === t ? "#0F3D9112" : "#fff", color: filter === t ? "#0F3D91" : "#5A6880" }}
             >
               {NOTIFICATION_META[t]?.label || t}
             </button>
@@ -208,7 +214,7 @@ function NotificationsInner() {
           month of them. Unread rows are not in `read`, so the copy can promise
           they survive and mean it. */}
       {confirmClear && (
-        <ModalOverlay onClose={() => setConfirmClear(false)}>
+        <ModalOverlay onClose={() => setConfirmClear(false)} label="Clear read notifications">
           <div className="bg-white rounded-t-xl sm:rounded-xl w-full sm:max-w-sm p-5">
             <h2 className="text-[15px] font-bold text-ink mb-1.5">
               Clear {read.length} read notification{read.length === 1 ? "" : "s"}?

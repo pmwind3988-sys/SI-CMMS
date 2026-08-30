@@ -3,6 +3,7 @@
 import { User, HardHat, Users, Briefcase, ShieldCheck } from "lucide-react";
 import { useReferenceData } from "../../lib/referenceData";
 import { ROLE_LABELS } from "../../lib/roles";
+import { readableText } from "../../lib/contrastColor";
 
 // Colours and labels come from the priorities and wo_statuses tables, so an
 // Administrator recolouring a status in Settings changes every badge in the app.
@@ -11,10 +12,18 @@ export function PriorityBadge({ p, size = "md" }) {
   const c = priorityColor(p);
   const pad = size === "sm" ? "1px 6px" : "2px 8px";
   const fs = size === "sm" ? 11 : 12;
+  // The tint and border keep the stored colour; only the text is darkened, and
+  // against the tint it actually sits on rather than against pure white.
   return (
     <span
       className="font-mono font-semibold rounded"
-      style={{ background: `${c}1A`, color: c, border: `1px solid ${c}55`, padding: pad, fontSize: fs }}
+      style={{
+        background: `${c}1A`,
+        color: readableText(c, "#FAFAFB"),
+        border: `1px solid ${c}55`,
+        padding: pad,
+        fontSize: fs,
+      }}
     >
       {p}
     </span>
@@ -24,9 +33,14 @@ export function PriorityBadge({ p, size = "md" }) {
 export function StatusBadge({ s }) {
   const { statusColor, statusLabel } = useReferenceData();
   const c = statusColor(s);
+  /* The dot is the colour cue and stays exactly as the Administrator set it;
+     the label beside it is darkened until it is legible. Splitting the two is
+     what lets the badge keep its identity and still be read — colouring the
+     word to match the dot is what put "Closed" at 2.28:1. The dot carries
+     nothing the word does not, so it is hidden from assistive tech. */
   return (
-    <span className="text-[12.5px] font-semibold whitespace-nowrap" style={{ color: c }}>
-      ● {statusLabel(s)}
+    <span className="text-[12.5px] font-semibold whitespace-nowrap" style={{ color: readableText(c) }}>
+      <span aria-hidden="true" style={{ color: c }}>●</span> {statusLabel(s)}
     </span>
   );
 }
@@ -53,7 +67,7 @@ export function RoleBadge({ role, compact = false }) {
   return (
     <span
       className="inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold"
-      style={{ background: `${cfg.c}12`, color: cfg.c, border: `1px solid ${cfg.c}45` }}
+      style={{ background: `${cfg.c}12`, color: readableText(cfg.c, "#FAFAFB"), border: `1px solid ${cfg.c}45` }}
       // The label is hidden from the accessibility tree along with the text
       // when it collapses, so the badge carries it itself.
       aria-label={label}

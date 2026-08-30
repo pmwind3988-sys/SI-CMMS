@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, ClipboardList, Bell, Search, LogOut, Users, Settings, Menu, X, KeyRound } from "lucide-react";
+import { LayoutDashboard, ClipboardList, Bell, LogOut, Users, Settings, Menu, X, KeyRound } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { RoleBadge } from "./ui/Badges";
 import { ROLES, dashboardPathForRole, hasRole, rolesLabel } from "../lib/roles";
@@ -41,6 +42,12 @@ export default function AppShell({ children }) {
   const { user, signOut } = useAuth();
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);
+  const closeBtnRef = useRef(null);
+  const menuBtnRef = useRef(null);
+  const mainColRef = useRef(null);
+  /* `lg` is where the drawer stops being a drawer and becomes a sticky
+     sidebar — the same 1024px the aside's own `lg:` classes switch on. */
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   // Navigating from the drawer must close it, or the page the user just asked
   // for stays hidden behind it.
@@ -53,6 +60,25 @@ export default function AppShell({ children }) {
   // scroll. Escape closes it for anyone on a keyboard.
   useEffect(() => {
     if (!navOpen) return;
+
+    /**
+     * Focus has to MOVE INTO the drawer, and be kept there.
+     *
+     * Without this the drawer was a modal in every respect except the one that
+     * matters to a keyboard: it covered the page and locked its scroll, but
+     * focus stayed wherever it was, and Tab then walked the tabs *underneath*
+     * the open drawer — measured, six presses, never once entering the menu.
+     * So on a phone the menu was the one thing you could not reach from it.
+     *
+     * The page behind is marked `inert` instead of hand-rolling a trap: it is
+     * one attribute, it removes the background from the tab order and from
+     * assistive tech together, and there is nothing left to wrap around from.
+     */
+    const returnTo = document.activeElement;
+    const main = mainColRef.current;
+    if (main) main.inert = true;
+    closeBtnRef.current?.focus();
+
     const onKey = (e) => {
       if (e.key === "Escape") setNavOpen(false);
     };
@@ -62,6 +88,10 @@ export default function AppShell({ children }) {
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
+      if (main) main.inert = false;
+      // Back to the hamburger, not to nowhere: closing a menu should leave you
+      // where you opened it, which is also where you are looking.
+      if (returnTo instanceof HTMLElement && document.contains(returnTo)) returnTo.focus();
     };
   }, [navOpen]);
 
@@ -107,8 +137,36 @@ export default function AppShell({ children }) {
     .join("")
     .slice(0, 2);
 
+  /**
+   * Below `lg` the drawer is hidden by translating it off-screen while it stays
+   * `visibility: visible` — measured at x=-240, fully focusable. So on every
+   * page a keyboard user tabbed through six invisible navigation links before
+   * reaching any content, watching focus vanish off the left edge. `inert`
+   * when closed is what makes "off-screen" and "out of reach" the same thing.
+   *
+   * It is applied only below `lg`, where the drawer is actually a drawer; from
+   * `lg` up it is a normal sticky sidebar and must stay reachable. `isDesktop`
+   * is read from a media query rather than assumed, and starts false so the
+   * server-rendered HTML and the first client render agree — this is a static
+   * export, and a mismatch there costs the whole tree.
+   */
+  const navInert = !isDesktop && !navOpen;
+
   return (
     <div className="min-h-dvh flex bg-canvas font-sans">
+      {/* Straight past the navigation to the content. Every page starts with
+          about a dozen nav stops; this is the one control that helps everyone
+          on a keyboard, and it stays invisible until it is focused. */}
+      <a
+        href="#main-content"
+        /* Out of reach while the drawer is over the page: the drawer is modal,
+           and the one thing it must not do is offer a way past itself. */
+        inert={navOpen}
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[60] focus:rounded focus:bg-navy focus:px-4 focus:py-2 focus:text-[13px] focus:font-semibold focus:text-white"
+      >
+        Skip to main content
+      </a>
+
       {/* Drawer backdrop — mobile only. */}
       {navOpen && (
         <div
@@ -121,6 +179,8 @@ export default function AppShell({ children }) {
       <aside
         id="app-nav"
         aria-label="Main navigation"
+        // React wants a real boolean here; an empty string is treated as false.
+        inert={navInert}
         // si-navy replaces the flat bg-navy fill: the brand gradient plus the
         // drifting highlight, defined once in globals.css so the sidebar, the
         // login panel and the mobile brand band cannot drift apart.
@@ -137,8 +197,11 @@ export default function AppShell({ children }) {
             </div>
           </Link>
           <button
+            ref={closeBtnRef}
             onClick={() => setNavOpen(false)}
-            className="-mr-1 p-1 text-[#9FB6E0] hover:text-white lg:hidden"
+            /* p-3 with -m-1.5 keeps the X where it was drawn while giving it a
+               44px hit area — it was 28x28, under even the 24px floor. */
+            className="-mr-1.5 -my-1.5 p-3 text-[#9FB6E0] hover:text-white lg:hidden"
             aria-label="Close navigation"
           >
             <X size={20} />
@@ -152,7 +215,7 @@ export default function AppShell({ children }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-2.5 rounded px-2.5 py-2.5 text-[13.5px] font-semibold lg:py-2 ${isActive ? "bg-navy-mid text-white" : "text-[#9FB6E0] hover:bg-navy-mid/40"}`}
+                className={`flex min-h-[44px] items-center gap-2.5 rounded px-2.5 py-2.5 text-[13.5px] font-semibold lg:min-h-0 lg:py-2 ${isActive ? "bg-navy-mid text-white" : "text-[#9FB6E0] hover:bg-navy-mid/40"}`}
               >
                 <item.icon size={16} />
                 {item.label}
@@ -175,22 +238,25 @@ export default function AppShell({ children }) {
           </div>
           <button
             onClick={signOut}
-            className="flex items-center gap-2 text-[12px] text-[#9FB6E0] hover:text-white"
+            /* Was 68x18. Full width and py-2.5 makes it a 44px row, which is
+               also the shape of every other item in this column. */
+            className="-mx-2.5 flex min-h-[44px] w-[calc(100%+1.25rem)] items-center gap-2 rounded px-2.5 py-2.5 text-[12.5px] text-[#9FB6E0] hover:bg-navy-mid/40 hover:text-white"
           >
-            <LogOut size={13} /> Sign out
+            <LogOut size={14} /> Sign out
           </button>
         </div>
       </aside>
 
       {/* Main */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div ref={mainColRef} className="flex min-w-0 flex-1 flex-col">
         {/* Sticky rather than static: on a phone the page itself scrolls (there
             is no inner scroll container any more), so the bar has to follow. */}
         <header className="sticky top-0 z-30 border-b border-border bg-white pt-[env(safe-area-inset-top)]">
           <div className="flex items-center gap-2 px-4 py-2.5 sm:gap-3 lg:px-6 lg:py-3.5">
             <button
+              ref={menuBtnRef}
               onClick={() => setNavOpen(true)}
-              className="-ml-1.5 p-1.5 text-ink-soft lg:hidden"
+              className="-my-2 -ml-2.5 p-3 text-ink-soft lg:hidden"
               aria-label="Open navigation"
               aria-controls="app-nav"
               aria-expanded={navOpen}
@@ -204,20 +270,20 @@ export default function AppShell({ children }) {
                 row is short of room — below `xs` the logo stands alone. */}
             <Link
               href={homeHref}
-              className="flex min-w-0 flex-shrink-0 items-center gap-2 lg:hidden"
+              className="-my-2 flex min-h-[44px] min-w-0 flex-shrink-0 items-center gap-2 lg:hidden"
               aria-label="SI — Service Inside"
             >
               <Logo size={26} variant="dark" />
               <span className="hidden text-[15px] font-extrabold text-navy xs:inline">SI</span>
             </Link>
 
-            <div className="hidden max-w-xs flex-1 items-center gap-2 rounded bg-canvas px-3 py-1.5 sm:flex">
-              <Search size={15} className="flex-shrink-0 text-ink-soft" />
-              <input
-                placeholder="Search work orders…"
-                className="w-full bg-transparent text-[13.5px] outline-none"
-              />
-            </div>
+            {/* The search box that used to sit here was never wired to
+                anything — no value, no onChange, no handler — while being the
+                widest control in the bar on every screen from 640px up. Typing
+                a work order number and pressing Enter did nothing at all, and
+                because the work order list has a real search directly below it,
+                the visible effect was that search looked broken. Removed rather
+                than faked: /work-orders owns searching, and its field works. */}
 
             <div className="ml-auto flex min-w-0 items-center gap-2.5 sm:gap-4">
               <NotificationBell />
@@ -234,8 +300,10 @@ export default function AppShell({ children }) {
             than only on first mount — which is the whole point of it: it marks
             that the content changed, on a phone where there is no other cue. */}
         <main
+          id="main-content"
+          tabIndex={-1}
           key={pathname}
-          className="rise flex-1 p-4 sm:p-5 lg:p-6 pb-[calc(2rem+env(safe-area-inset-bottom))]"
+          className="rise flex-1 p-4 sm:p-5 lg:p-6 pb-[calc(2rem+env(safe-area-inset-bottom))] focus:outline-none"
         >
           {children}
         </main>

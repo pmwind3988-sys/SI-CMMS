@@ -82,8 +82,21 @@ function readFrom(kind, key) {
 }
 
 function isRemembered() {
-  // Default to remembering, matching Firebase's default persistence.
-  return readFrom("localStorage", REMEMBER_ME_KEY) !== "false";
+  /**
+   * Default to NOT remembering.
+   *
+   * This used to default on, inherited from Firebase's default persistence —
+   * so unless somebody deliberately unticked the box, the session was written
+   * to localStorage and survived closing the browser. On the machine this
+   * product is actually used on that is the wrong way round: a shared workshop
+   * terminal is a scenario this codebase names repeatedly (it is the whole
+   * reason draft keys carry a uid), and there the safe default is that walking
+   * away ends the session.
+   *
+   * Anybody on their own phone ticks it once and it stays ticked, because the
+   * stored "true" is what this now looks for.
+   */
+  return readFrom("localStorage", REMEMBER_ME_KEY) === "true";
 }
 
 const hybridStorage = {

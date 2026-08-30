@@ -39,6 +39,13 @@ export default function Combobox({
   loading = false,
   onCreate,
   createLabel = "Add",
+  /* Field passes these down so its <label> actually points at something. The
+     collapsed trigger and the open search box swap places in the DOM, so the
+     id follows whichever one is currently on screen — a label pointing at a
+     removed element labels nothing. */
+  id,
+  "aria-describedby": describedBy,
+  "aria-required": ariaRequired,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -127,8 +134,12 @@ export default function Combobox({
       {!open && (
         <button
           type="button"
+          id={id}
           disabled={disabled}
           onClick={openPanel}
+          aria-describedby={describedBy}
+          aria-haspopup="listbox"
+          aria-expanded={false}
           className={`${inputClass} flex items-center justify-between gap-2 text-left disabled:bg-canvas disabled:text-ink-soft`}
         >
           <span className={`min-w-0 truncate ${selected ? "text-ink" : "text-ink-soft"}`}>
@@ -144,6 +155,7 @@ export default function Combobox({
             <Search size={15} className="pointer-events-none absolute left-3 top-3 text-ink-soft" />
             <input
               ref={inputRef}
+              id={id}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -151,6 +163,11 @@ export default function Combobox({
               placeholder={selected ? selected.label : placeholder}
               className={`${inputClass} pl-9`}
               autoComplete="off"
+              role="combobox"
+              aria-expanded={true}
+              aria-autocomplete="list"
+              aria-describedby={describedBy}
+              aria-required={ariaRequired}
             />
           </div>
 
