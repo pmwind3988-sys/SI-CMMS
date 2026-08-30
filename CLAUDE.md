@@ -1325,6 +1325,21 @@ shape 0033 used. Verified from the browser's own anon key: `rpc('si_derive_prior
 call that returns 200, so the probe distinguishes "revoked" from "everything fails". 0035 adds
 none.
 
+**Advisor run 2026-08-30 after 0043, on PRODUCTION: 0 errors, and the baseline plus exactly one
+row — `si_replace_attachment`, under `Signed-In Users Can Execute SECURITY DEFINER Function`.**
+That is the row this migration was always going to add and it must not be "fixed": the browser
+calls that RPC directly, so revoking `authenticated` would stop the feature working for
+everybody. It sits with `si_set_user_roles` and `si_refresh_dashboard_stats` for the same
+reason — an RPC the client calls, which re-checks its caller in its own body rather than
+leaning on the grant. Three times over here: the uploader test, the closed-work-order test,
+and `work_orders_select` restated.
+
+Where it is *absent* is the part worth reading. It is not under `Function Search Path Mutable`,
+which confirms the pin independently of the file; and it is not anon-callable — measured
+straight at production's anon key, `42501 permission denied for function
+si_replace_attachment`. `si_decline_work_order` also appears now and is not new fallout: 0037
+grants it to `authenticated` deliberately, and it simply post-dates the run recorded below.
+
 **Advisor run 2026-08-21 after 0036: 0 errors, 7 warnings, 2 info — the same seven warnings as
 the 0034 run below, entity for entity, and not one of them names either new function.** Five are
 the deliberate `authenticated` grants on `si_can_delete_work_orders`, `si_is_test_account`,
