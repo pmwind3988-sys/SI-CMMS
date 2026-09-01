@@ -17,7 +17,7 @@
  * The "needs you" queue is the point of the screen: each role has exactly one
  * status where work is waiting on them specifically.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   ClipboardList,
@@ -37,7 +37,7 @@ import { ROLES, ROLE_LABELS } from "../../lib/roles";
 import RoleSwitcher from "./RoleSwitcher";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, EmptyState } from "../ui/Surfaces";
-import { usePaged, PagerFooter } from "../ui/Paged";
+import { usePaged, useAutoPageSize, PagerFooter } from "../ui/Paged";
 import { describeError } from "../../lib/errors";
 import StatCard from "./StatCard";
 import CardDetail, { rowFromWorkOrder } from "./CardDetail";
@@ -195,7 +195,13 @@ export default function RoleDashboard({ viewRole }) {
      already sliced to 8. Keyed on the role being viewed: the switcher changes
      which queue this is, so it should start at the top again. The count beside
      the heading still prints `stats.needsMe.length`, the real total. */
-  const needsMePager = usePaged(stats.needsMe, { pageSize: 10, resetKey: view });
+  const needsMeRef = useRef(null);
+  /* Capped at 10 however tall the screen is: this strip has the stat cards above
+     it and the Recent list below, so filling the viewport with it would push the
+     rest of the dashboard off the bottom. */
+  const needsMeSize = useAutoPageSize(needsMeRef, { min: 3, max: 10, ready: !loading, signature: stats.needsMe.length });
+
+  const needsMePager = usePaged(stats.needsMe, { pageSize: needsMeSize, resetKey: view });
 
   /* Label, colour and the rows behind each figure, in one place so the card and
      its drill-down are built from the same entry. */
@@ -317,6 +323,7 @@ export default function RoleDashboard({ viewRole }) {
             left roughly 50px for the equipment name. Below `sm` the assignee and
             SLA drop under the title instead of taking columns of their own, and
             the CTA collapses to its arrow. */}
+        <div ref={needsMeRef}>
         {!loading &&
           needsMePager.visible.map((w, i) => (
             <button
@@ -349,6 +356,7 @@ export default function RoleDashboard({ viewRole }) {
               </span>
             </button>
           ))}
+        </div>
 
         {!loading && <PagerFooter pager={needsMePager} noun="work orders" />}
       </Card>

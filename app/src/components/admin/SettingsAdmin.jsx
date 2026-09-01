@@ -73,7 +73,7 @@ import { ALL_ROLES, ROLE_LABELS } from "../../lib/roles";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
 import { Card, ErrorBanner, Toast, ModalOverlay } from "../ui/Surfaces";
-import { usePaged, PagerFooter } from "../ui/Paged";
+import { usePaged, useAutoPageSize, PagerFooter } from "../ui/Paged";
 
 const TABS = [
   { key: "statuses", label: "Statuses" },
@@ -713,8 +713,16 @@ function EditableTable({
      sits under. The enum-keyed tables are four to eleven rows, so neither
      footer ever renders there - only departments and equipment grow. Keyed on
      the table rather than on the arrays, which are rebuilt every render. */
-  const livePager = usePaged(liveRows, { resetKey: `live|${rowKey}|${retireTable ?? ""}` });
-  const retiredPager = usePaged(retiredRows, { resetKey: `retired|${rowKey}|${retireTable ?? ""}` });
+  /* Only the live rows are measured. The retired block sits under them and is
+     usually short, so it keeps a fixed small page rather than competing for the
+     same screen height. */
+  const liveRef = useRef(null);
+  /* No reserve for the retired block below: the hook measures what is under the
+     list rather than being told about it. */
+  const liveSize = useAutoPageSize(liveRef, { min: 3, signature: rows.length });
+
+  const livePager = usePaged(liveRows, { pageSize: liveSize, resetKey: `live|${rowKey}|${retireTable ?? ""}` });
+  const retiredPager = usePaged(retiredRows, { pageSize: 10, resetKey: `retired|${rowKey}|${retireTable ?? ""}` });
 
   async function setActive(row, active) {
     setBusy(true);
@@ -875,7 +883,9 @@ function EditableTable({
               </div>
             </div>
 
-            {livePager.visible.map((row, i) => renderRow(row, i === 0, false))}
+            <div ref={liveRef}>
+              {livePager.visible.map((row, i) => renderRow(row, i === 0, false))}
+            </div>
             <PagerFooter pager={livePager} />
 
             {retiredRows.length > 0 && (
