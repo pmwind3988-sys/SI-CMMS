@@ -22,6 +22,7 @@ import { ROLES, hasRole, hasAnyRole } from "../../lib/roles";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import Button from "../ui/Button";
 import { Card, ErrorBanner, EmptyState } from "../ui/Surfaces";
+import { usePaged, PagerFooter } from "../ui/Paged";
 import { inputClass } from "../ui/Field";
 
 const TITLES = {
@@ -130,6 +131,15 @@ export default function WorkOrderList() {
   );
 
   const filtered = useMemo(() => (workOrders ? workOrders.filter(matches) : []), [workOrders, matches]);
+
+  /* Paginated AFTER the filter, never before: `matches` has already run over
+     every row loaded for this date range, so searching a WO number finds it
+     wherever it sits and the pager then walks the matches. Reset is keyed on
+     the controls rather than on `filtered`, which is a new array on every live
+     update. */
+  const pager = usePaged(filtered, {
+    resetKey: `${fPriority}|${fStatus}|${rangeKey}|${q}`,
+  });
 
   const needsAssignment = (workOrders || []).filter((w) => w.status === "open").length;
   // Assigned to THIS person, not merely assigned. A Supervisor+Technician sees
@@ -340,18 +350,22 @@ export default function WorkOrderList() {
           <div className="flex-[1.2]">Assigned</div>
           <div className="w-24 text-right">SLA</div>
         </div>
-        {filtered.map((w, i) => (
+        {pager.visible.map((w, i) => (
           <WorkOrderRow key={w.id} w={w} first={i === 0} onClick={() => router.push(`/work-orders/view?id=${w.id}`)} />
         ))}
         {workOrders && filtered.length === 0 && <EmptyState>{EMPTY_MESSAGES[user.role]}</EmptyState>}
       </Card>
 
       <div className="md:hidden flex flex-col gap-2">
-        {filtered.map((w) => (
+        {pager.visible.map((w) => (
           <WorkOrderCard key={w.id} w={w} onClick={() => router.push(`/work-orders/view?id=${w.id}`)} />
         ))}
         {workOrders && filtered.length === 0 && <EmptyState>{EMPTY_MESSAGES[user.role]}</EmptyState>}
       </div>
+
+      {/* One footer below both, because the table and the card stack are the
+          same slice rendered twice at different breakpoints. */}
+      <PagerFooter pager={pager} noun="work orders" standalone />
     </div>
   );
 }

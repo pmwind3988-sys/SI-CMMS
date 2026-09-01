@@ -73,6 +73,7 @@ import { ALL_ROLES, ROLE_LABELS } from "../../lib/roles";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
 import { Card, ErrorBanner, Toast, ModalOverlay } from "../ui/Surfaces";
+import { usePaged, PagerFooter } from "../ui/Paged";
 
 const TABS = [
   { key: "statuses", label: "Statuses" },
@@ -666,6 +667,13 @@ function EditableTable({
   const liveRows = rows.filter((r) => !retiredOf(r));
   const retiredRows = retireTable ? rows.filter(retiredOf) : [];
 
+  /* Two independent pagers, so a long retired list cannot bury the live one it
+     sits under. The enum-keyed tables are four to eleven rows, so neither
+     footer ever renders there - only departments and equipment grow. Keyed on
+     the table rather than on the arrays, which are rebuilt every render. */
+  const livePager = usePaged(liveRows, { resetKey: `live|${rowKey}|${retireTable ?? ""}` });
+  const retiredPager = usePaged(retiredRows, { resetKey: `retired|${rowKey}|${retireTable ?? ""}` });
+
   async function setActive(row, active) {
     setBusy(true);
     try {
@@ -825,7 +833,8 @@ function EditableTable({
               </div>
             </div>
 
-            {liveRows.map((row, i) => renderRow(row, i === 0, false))}
+            {livePager.visible.map((row, i) => renderRow(row, i === 0, false))}
+            <PagerFooter pager={livePager} />
 
             {retiredRows.length > 0 && (
               <>
@@ -833,7 +842,8 @@ function EditableTable({
                   <Archive size={13} className="flex-shrink-0" />
                   Retired — kept on existing records, no longer offered
                 </div>
-                {retiredRows.map((row) => renderRow(row, true, true))}
+                {retiredPager.visible.map((row) => renderRow(row, true, true))}
+                <PagerFooter pager={retiredPager} noun="retired rows" />
               </>
             )}
           </div>
