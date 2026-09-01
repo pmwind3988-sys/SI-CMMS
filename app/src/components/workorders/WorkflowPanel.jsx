@@ -139,7 +139,7 @@ function WorkflowActions({ wo, onGotoAssign }) {
     }
   }
 
-  const ErrorLine = () => (error ? <div className="text-danger text-[12.5px] mb-2">{error}</div> : null);
+  const ErrorLine = () => (error ? <div className="text-danger-text text-[12.5px] mb-2">{error}</div> : null);
 
   /* Matches the dismissal used in UsersAdmin and SettingsAdmin — Toast has no
      timer of its own, deliberately, so each caller owns the lifetime. */
@@ -165,17 +165,49 @@ function WorkflowActions({ wo, onGotoAssign }) {
         <div>
           <InfoBox>You've been assigned this work order. Accept it to start, or decline with a reason so the Supervisor can reassign.</InfoBox>
           <ErrorLine />
-          <div className="flex flex-wrap gap-2 mb-3">
-            <Button variant="success" icon={CheckCircle2} disabled={busy} onClick={async () => {
-              const ok = await run(acceptWorkOrder);
-              /* Accept keeps the technician on the row, and the panel visibly
-                 re-renders into the accepted state — but that redraw is easy to
-                 miss on a phone held at arm's length next to a machine, and
-                 tapping twice because nothing seemed to happen is how a
-                 technician ends up unsure whether the job is theirs. */
-              if (ok) flash("Accepted — " + (wo.wo_number || "work order") + " is yours.");
-            }}>Accept</Button>
-            <Button variant="danger" icon={Ban} onClick={() => setShowDecline((s) => !s)}>Decline</Button>
+          {/* Accept and Decline are NOT a matched pair, and they used to be
+              drawn as one: same size (99x40 and 101x40), same tinted
+              treatment, 12px apart, on a phone held in a gloved hand. Accept
+              happens dozens of times a day; Decline hands the job back,
+              notifies every Supervisor, Manager and Administrator, and cannot
+              be undone from this screen. Giving them equal weight invites the
+              mis-tap whose cost is entirely one-sided.
+
+              So Accept is now the filled, full-width, 48px primary action and
+              Decline is a quiet control beneath it, separated by a rule rather
+              than by 12px of gap. Decline keeps its typed reason and its
+              confirmation step. */}
+          <div className="mb-3 flex flex-col gap-3">
+            <Button
+              variant="successSolid"
+              size="lg"
+              icon={CheckCircle2}
+              className="w-full justify-center"
+              disabled={busy}
+              onClick={async () => {
+                const ok = await run(acceptWorkOrder);
+                /* Accept keeps the technician on the row, and the panel visibly
+                   re-renders into the accepted state — but that redraw is easy to
+                   miss on a phone held at arm's length next to a machine, and
+                   tapping twice because nothing seemed to happen is how a
+                   technician ends up unsure whether the job is theirs. */
+                if (ok) flash("Accepted — " + (wo.wo_number || "work order") + " is yours.");
+              }}
+            >
+              {busy ? "Accepting…" : "Accept this job"}
+            </Button>
+
+            <div className="flex items-center justify-center border-t border-border pt-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={Ban}
+                aria-expanded={showDecline}
+                onClick={() => setShowDecline((v) => !v)}
+              >
+                Can&rsquo;t take this one
+              </Button>
+            </div>
           </div>
           {showDecline && (
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -189,7 +221,7 @@ function WorkflowActions({ wo, onGotoAssign }) {
               somebody else's desk — so it gets the extra step that Accept does
               not, and reads the typed reason back before it goes. */}
           {confirmDecline && (
-            <ModalOverlay onClose={() => setConfirmDecline(false)}>
+            <ModalOverlay onClose={() => setConfirmDecline(false)} label={`Decline ${wo.wo_number || "this work order"}`}>
               <div className="bg-white rounded-t-xl sm:rounded-xl w-full sm:max-w-sm p-5">
                 <h2 className="text-[15px] font-bold text-ink mb-1.5">Decline {wo.wo_number}?</h2>
                 <p className="text-[12.5px] text-ink-soft mb-3">

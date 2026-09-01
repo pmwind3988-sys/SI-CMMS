@@ -67,7 +67,7 @@ export default function CardDetail({
   const pager = usePaged(list, { pageSize, resetKey: title });
 
   return (
-    <ModalOverlay onClose={onClose}>
+    <ModalOverlay onClose={onClose} label={title || "Work order details"}>
       {/* Bottom sheet on a phone, centred dialog from `sm` up. The height cap
           is on the sheet itself so the header and footnote stay put and only
           the row list scrolls; the safe-area padding keeps that footnote clear

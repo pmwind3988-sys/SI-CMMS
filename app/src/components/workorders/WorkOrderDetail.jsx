@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
@@ -16,6 +16,7 @@ import CommentsPanel from "./CommentsPanel";
 import AttachmentsPanel from "./AttachmentsPanel";
 import StatusTimeline from "./StatusTimeline";
 import WorkflowPanel from "./WorkflowPanel";
+import { nextStep } from "../../lib/nextStep";
 
 const TABS = [
   { key: "overview", label: "Overview" },
@@ -28,12 +29,54 @@ const TABS = [
 
 export default function WorkOrderDetail({ woId }) {
   const { user } = useAuth();
-  const { slaForPriority, roleCan } = useReferenceData();
+  const { slaForPriority, roleCan, transitions, statuses } = useReferenceData();
   const router = useRouter();
   const [wo, setWo] = useState(undefined); // undefined = loading, null = not found
   const [error, setError] = useState(null);
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const tabStripRef = useRef(null);
+
+  /**
+   * WHICH TAB THIS OPENS ON IS THE WHOLE POINT.
+   *
+   * Six tabs need about 700px. On a 375px phone the strip is a scrolling row
+   * and Workflow — the only place Accept and Decline exist — starts at x=591,
+   * entirely off-screen, with the strip at scrollLeft 0. So a technician who
+   * tapped a notification saying a job was theirs landed on Overview and there
+   * was nothing on the screen, and no cue anywhere on it, leading to the one
+   * action they had been asked to take.
+   *
+   * `nextStep(...).isYours` is the same signal WorkflowPanel already uses to
+   * print "Your move" — derived from `wo_status_transitions`, so it stays true
+   * as the matrix changes and never becomes a second copy of the workflow.
+   */
+  const statusOrder = useMemo(
+    () => new Map(statuses.map((st) => [st.code, st.sort_order])),
+    [statuses]
+  );
+  const step = wo ? nextStep(wo, user, transitions, statusOrder) : null;
+  const actionIsYours = !!step?.isYours;
+
+  /* Applied once per work order rather than on every render, so it opens on
+     Workflow and then lets the reader move freely — re-deriving it would drag
+     them back to Workflow every time the row changed underneath them, which on
+     a live subscription is often. */
+  useEffect(() => {
+    if (tab !== null) return;
+    if (wo === undefined) return;
+    setTab(actionIsYours ? "workflow" : "overview");
+  }, [wo, actionIsYours, tab]);
+
+  /* Keep the selected tab in view — it can be off-screen on a phone both when
+     it is chosen for the user above and when they arrive back at one they
+     picked earlier. */
+  useEffect(() => {
+    if (!tab || !tabStripRef.current) return;
+    tabStripRef.current
+      .querySelector(`[data-tab="${tab}"]`)
+      ?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [tab]);
 
   useEffect(() => {
     const unsub = listenWorkOrder(woId, setWo, () => setError("This work order couldn't be found or you no longer have access to it."));
@@ -85,7 +128,7 @@ export default function WorkOrderDetail({ woId }) {
 
   return (
     <div className="max-w-5xl">
-      <button onClick={() => router.push("/work-orders")} className="flex items-center gap-1.5 text-ink-soft text-[13px] mb-3.5">
+      <button onClick={() => router.push("/work-orders")} className="-my-2 -ml-1 mb-1 inline-flex min-h-[44px] items-center gap-1.5 rounded px-1 text-[13px] font-semibold text-ink-soft">
         <ArrowLeft size={15} /> Back to Work Orders
       </button>
 
@@ -121,29 +164,96 @@ export default function WorkOrderDetail({ woId }) {
         </div>
       </div>
 
-      {/* Six tabs need ~560px. It scrolls sideways on a phone, bleeding to the
-          screen edges so it's visibly a scrollable strip rather than a row that
-          happens to be cut off. */}
-      <div className="-mx-4 mb-5 mt-4 flex gap-1 overflow-x-auto border-b border-border px-4 no-scrollbar scroll-touch sm:mx-0 sm:px-0">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className="px-4 py-2.5 text-[13.5px] font-semibold whitespace-nowrap"
-            style={{ color: tab === t.key ? "#101828" : "#64748B", borderBottom: tab === t.key ? "2.5px solid #F59E0B" : "2.5px solid transparent" }}
-          >
-            {t.label}
-          </button>
-        ))}
+      {/* Six tabs need ~700px, so on a phone this is a scrolling strip. Three
+          things make that survivable rather than a place for controls to hide:
+          the selected tab is scrolled into view, the tab holding a pending
+          action carries a dot, and the container fades at its right edge while
+          there is more to reach — a row that is merely cut off looks like a row
+          that ends. `role="tablist"` and friends are what make the selection
+          something other than a colour: it was an amber underline and nothing
+          else, so a screen reader heard six unrelated buttons. */}
+      <div className="relative -mx-4 mb-5 mt-4 sm:mx-0">
+        <div
+          ref={tabStripRef}
+          role="tablist"
+          aria-label="Work order sections"
+          className="flex gap-1 overflow-x-auto border-b border-border px-4 no-scrollbar scroll-touch sm:px-0"
+          onKeyDown={(e) => {
+            /* Arrow keys are what `role="tablist"` promises. Without them the
+               role is a claim the widget does not honour. */
+            const i = TABS.findIndex((t) => t.key === tab);
+            if (i < 0) return;
+            let next = null;
+            if (e.key === "ArrowRight") next = TABS[(i + 1) % TABS.length];
+            else if (e.key === "ArrowLeft") next = TABS[(i - 1 + TABS.length) % TABS.length];
+            else if (e.key === "Home") next = TABS[0];
+            else if (e.key === "End") next = TABS[TABS.length - 1];
+            if (!next) return;
+            e.preventDefault();
+            setTab(next.key);
+            tabStripRef.current?.querySelector(`[data-tab="${next.key}"]`)?.focus();
+          }}
+        >
+          {TABS.map((t) => {
+            const isActive = tab === t.key;
+            const flagged = t.key === "workflow" && actionIsYours;
+            return (
+              <button
+                key={t.key}
+                data-tab={t.key}
+                role="tab"
+                id={`wo-tab-${t.key}`}
+                aria-selected={isActive}
+                aria-controls={`wo-panel-${t.key}`}
+                /* Only the selected tab is a tab stop; the arrow keys reach the
+                   rest. That is the tablist pattern, and it also cuts five stops
+                   out of every keyboard pass over this page. */
+                tabIndex={isActive ? 0 : -1}
+                onClick={() => setTab(t.key)}
+                className={`flex items-center gap-1.5 whitespace-nowrap px-4 py-2.5 text-[13.5px] font-semibold ${
+                  isActive ? "text-ink" : "text-ink-soft"
+                }`}
+                style={{ borderBottom: isActive ? "2.5px solid #F59E0B" : "2.5px solid transparent" }}
+              >
+                {t.label}
+                {flagged && (
+                  <span
+                    className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent"
+                    /* The dot repeats what the panel says in words, so it is
+                       decoration to a screen reader rather than a stray bullet. */
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
+        {/* Purely a cue that the strip continues. pointer-events-none so it
+            never swallows a tap meant for the tab underneath it. */}
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-canvas to-transparent sm:hidden" />
       </div>
 
       <Card className="p-4 sm:p-6">
-        {tab === "overview" && <OverviewTab wo={wo} />}
-        {tab === "assignment" && <AssignPanel wo={wo} />}
-        {tab === "comments" && <CommentsPanel wo={wo} />}
-        {tab === "attachments" && <AttachmentsPanel wo={wo} />}
-        {tab === "timeline" && <StatusTimeline wo={wo} />}
-        {tab === "workflow" && <WorkflowPanel wo={wo} onGotoAssign={() => setTab("assignment")} />}
+        {TABS.map((t) => (
+          <div
+            key={t.key}
+            role="tabpanel"
+            id={`wo-panel-${t.key}`}
+            aria-labelledby={`wo-tab-${t.key}`}
+            hidden={tab !== t.key}
+          >
+            {tab === t.key && (
+              <>
+                {t.key === "overview" && <OverviewTab wo={wo} />}
+                {t.key === "assignment" && <AssignPanel wo={wo} />}
+                {t.key === "comments" && <CommentsPanel wo={wo} />}
+                {t.key === "attachments" && <AttachmentsPanel wo={wo} />}
+                {t.key === "timeline" && <StatusTimeline wo={wo} />}
+                {t.key === "workflow" && <WorkflowPanel wo={wo} onGotoAssign={() => setTab("assignment")} />}
+              </>
+            )}
+          </div>
+        ))}
       </Card>
 
       {confirmingDelete && (
@@ -191,7 +301,7 @@ function DeleteDialog({ wo, onClose, onDeleted }) {
   }
 
   return (
-    <ModalOverlay className="p-4">
+    <ModalOverlay onClose={onClose} label="Delete work order" className="p-4">
       <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
         <div className="mb-4 flex items-start justify-between gap-3">
           <h2 className="text-[15.5px] font-bold text-ink">Delete this work order?</h2>
@@ -202,7 +312,7 @@ function DeleteDialog({ wo, onClose, onDeleted }) {
 
         {error && <ErrorBanner message={error} />}
 
-        <div className="mb-4 flex items-start gap-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-3.5 py-3 text-[12.5px] text-danger">
+        <div className="mb-4 flex items-start gap-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-3.5 py-3 text-[12.5px] text-danger-text">
           <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
           <span>
             <strong className="font-mono">{wo.wo_number || "This work order"}</strong> — {wo.asset_name} —
@@ -260,7 +370,18 @@ function OverviewTab({ wo }) {
     // only for the work orders raised while the field existed, exactly the way
     // Area above handles pre-0019 rows.
     ...(wo.est_downtime_value != null
-      ? [["Estimated downtime", `${wo.est_downtime_value} ${wo.est_downtime_unit ?? ""}`.trim()]]
+      ? [
+          [
+            "Estimated downtime",
+            // Printed "1 hours": the unit is stored plural, so singularise it
+            // at the point of display rather than storing a second form.
+            `${wo.est_downtime_value} ${
+              Number(wo.est_downtime_value) === 1
+                ? String(wo.est_downtime_unit ?? "").replace(/s$/, "")
+                : wo.est_downtime_unit ?? ""
+            }`.trim(),
+          ],
+        ]
       : []),
     ["Requested by", wo.requester_name],
     ["Requester phone", wo.requester_phone || "—"],
@@ -297,7 +418,7 @@ function OverviewTab({ wo }) {
         </div>
         {wo.resolution_notes && (
           <div className="mt-4 pt-4 border-t border-border">
-            <div className="text-[12px] font-bold text-good mb-1.5">Resolution notes</div>
+            <div className="text-[12px] font-bold text-good-text mb-1.5">Resolution notes</div>
             <div className="text-[13px] text-ink leading-relaxed">{wo.resolution_notes}</div>
           </div>
         )}

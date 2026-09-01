@@ -194,7 +194,7 @@ export default function DashboardModule() {
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="flex items-center gap-1.5 text-[12.5px] font-semibold text-navy border border-border rounded-lg px-3 py-2 bg-white disabled:opacity-50"
+            className="flex min-h-[44px] items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[12.5px] font-semibold text-navy disabled:opacity-50"
           >
             <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
             {refreshing ? "Refreshing…" : "Refresh now"}

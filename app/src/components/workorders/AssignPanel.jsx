@@ -92,7 +92,7 @@ export default function AssignPanel({ wo }) {
           Only a Supervisor (within their department), Manager, or Admin can assign or reassign a technician.
         </div>
       )}
-      {error && <div className="text-danger text-[12.5px] mb-3">{error}</div>}
+      {error && <div className="text-danger-text text-[12.5px] mb-3">{error}</div>}
       {allowed && technicians === null && (
         <div className="text-[12.5px] text-ink-soft">Loading technicians…</div>
       )}
@@ -129,7 +129,7 @@ export default function AssignPanel({ wo }) {
                   <div className="text-[13.5px] text-ink font-medium">
                     {t.name}{" "}
                     {isBest && (
-                      <span className="bg-[#E7F5EE] text-good text-[10.5px] rounded px-1.5 py-0.5 ml-1.5 font-bold">
+                      <span className="bg-[#E7F5EE] text-good-text text-[10.5px] rounded px-1.5 py-0.5 ml-1.5 font-bold">
                         Best match
                       </span>
                     )}

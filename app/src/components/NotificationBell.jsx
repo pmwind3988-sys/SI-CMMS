@@ -242,13 +242,33 @@ export default function NotificationBell() {
     <div className="relative" ref={rootRef}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="relative"
-        aria-label="Notifications"
+        /* The icon stays 19px; the button around it grows to 44. This was a
+           19x19 target — under even WCAG 2.5.8's 24px floor — on the control
+           that gets tapped more than any other in the app, on a plant floor,
+           often through a glove. The negative margin keeps the bell drawn
+           exactly where it was so nothing else in the header moves. */
+        className="relative -m-3 flex h-11 w-11 items-center justify-center rounded-full hover:bg-canvas"
+        /* The count belongs in the name: a red dot is not something a screen
+           reader can report, so unread notifications were silent. */
+        aria-label={
+          unread.length > 0
+            ? `Notifications, ${unread.length} unread`
+            : "Notifications"
+        }
         aria-expanded={open}
-        aria-haspopup="menu"
+        /* `dialog`, not `menu`. The panel is a list of notifications with a
+           couple of controls, not a menu of commands — declaring `role="menu"`
+           promised arrow-key navigation and `menuitem` children that were never
+           there, so screen readers announced a menu with zero items. */
+        aria-haspopup="dialog"
       >
-        <Bell size={19} className="text-ink-soft" />
-        {unread.length > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-danger" />}
+        <Bell size={19} className="text-ink-soft" aria-hidden="true" />
+        {unread.length > 0 && (
+          <span
+            className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-danger"
+            aria-hidden="true"
+          />
+        )}
       </button>
       {open && (
         <>
@@ -274,7 +294,8 @@ export default function NotificationBell() {
             nothing in the header chain sets a transform or a filter.
           */}
           <div
-            role="menu"
+            role="dialog"
+            aria-label="Notifications"
             className="rise fixed inset-x-3 top-[calc(3.5rem+env(safe-area-inset-top))] z-50 overflow-hidden rounded border border-border bg-white shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:top-8 sm:w-80"
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">

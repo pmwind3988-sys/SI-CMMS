@@ -475,7 +475,7 @@ export default function RaiseWorkOrderForm({ existing }) {
 
   return (
     <div className="max-w-4xl">
-      <button onClick={() => router.push(isEdit ? `/work-orders/view?id=${existing.id}` : "/work-orders")} className="flex items-center gap-1.5 text-ink-soft text-[13px] mb-3.5">
+      <button onClick={() => router.push(isEdit ? `/work-orders/view?id=${existing.id}` : "/work-orders")} className="-my-2 -ml-1 mb-1 inline-flex min-h-[44px] items-center gap-1.5 rounded px-1 text-[13px] font-semibold text-ink-soft">
         <ArrowLeft size={15} /> {isEdit ? "Back to Work Order" : "Back to Work Orders"}
       </button>
       <h1 className="text-xl font-bold text-ink mb-1">{isEdit ? `Edit ${existing.wo_number}` : "Raise Work Order"}</h1>
@@ -608,21 +608,39 @@ export default function RaiseWorkOrderForm({ existing }) {
               </div>
             )}
 
-            <Field label="Work order type">
-              <div className="flex flex-wrap gap-2">
+            {/* A group of buttons where exactly one is chosen IS a radio group,
+                and saying so is what makes the choice readable: these carried no
+                `aria-pressed` and no role, so which type was selected existed
+                only as a fill colour.
+
+                The description used to live in a `title`, which on a touch
+                device is unreachable — there is no hover on a phone — and where
+                it did surface it replaced the visible word as the accessible
+                name, so the button announced a sentence that did not match its
+                label. It is now rendered under the row for the selected type,
+                where everybody can read it. */}
+            <fieldset className="mb-4">
+              <legend className="mb-1.5 block text-[12.5px] font-semibold text-ink">Work order type</legend>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Work order type">
                 {offeredTypes.map((t) => (
                   <button
                     key={t.code}
                     type="button"
+                    role="radio"
+                    aria-checked={type === t.code}
                     onClick={() => setType(t.code)}
-                    title={t.description || undefined}
-                    className={`px-3.5 py-2 rounded text-[13px] font-medium border ${type === t.code ? "bg-ink text-white border-ink" : "bg-white text-ink border-[#D8DEE4]"}`}
+                    className={`min-h-[44px] px-3.5 py-2 rounded text-[13px] font-medium border ${type === t.code ? "bg-ink text-white border-ink" : "bg-white text-ink border-[#D8DEE4]"}`}
                   >
                     {t.label}
                   </button>
                 ))}
               </div>
-            </Field>
+              {offeredTypes.find((t) => t.code === type)?.description && (
+                <p className="mt-1.5 text-[11.5px] text-ink-soft">
+                  {offeredTypes.find((t) => t.code === type).description}
+                </p>
+              )}
+            </fieldset>
 
             <Field label="Complaint" required hint={errors.complaint}>
               <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)} rows={4} placeholder="What happened? Include symptoms, sounds, error codes…" className={`${inputClass} resize-y`} />
@@ -698,28 +716,51 @@ export default function RaiseWorkOrderForm({ existing }) {
             )}
 
             <Field label="Safety risk">
-              <div className="mb-2 flex flex-wrap items-center gap-3">
-                {["No", "Yes"].map((v) => (
-                  <button
-                    key={v}
-                    onClick={() => setSafetyFlag(v === "Yes")}
-                    className="px-5 py-2 rounded text-[13px] font-semibold border"
-                    style={{ borderColor: (v === "Yes") === safetyFlag ? "#EF4444" : "#D8DEE4", background: (v === "Yes") === safetyFlag ? "#FCE9E9" : "#fff", color: (v === "Yes") === safetyFlag ? "#EF4444" : "#64748B" }}
-                  >
-                    {v}
-                  </button>
-                ))}
+              {/* THE COLOUR FOLLOWS THE ANSWER, NOT THE FIELD.
+                  "No" used to be painted in the danger red because the *topic*
+                  was safety, so the reassuring answer wore the alarm colour and
+                  a form with nothing wrong with it read as though something
+                  were. Selected "No" is now neutral ink; only "Yes" is red,
+                  which is the state that actually escalates the priority. */}
+              <div className="mb-2 flex flex-wrap items-center gap-3" role="radiogroup" aria-label="Safety risk">
+                {["No", "Yes"].map((v) => {
+                  const on = (v === "Yes") === safetyFlag;
+                  const alarm = v === "Yes";
+                  return (
+                    <button
+                      key={v}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => setSafetyFlag(v === "Yes")}
+                      className="min-h-[44px] px-5 py-2 rounded text-[13px] font-semibold border"
+                      style={{
+                        borderColor: on ? (alarm ? "#C1291F" : "#101828") : "#D8DEE4",
+                        background: on ? (alarm ? "#FCE9E9" : "#F1F3F7") : "#fff",
+                        color: on ? (alarm ? "#C1291F" : "#101828") : "#5A6880",
+                      }}
+                    >
+                      {v}
+                    </button>
+                  );
+                })}
               </div>
               {safetyFlag && (
-                <div className="flex gap-2">
+                <div className="flex gap-2" role="radiogroup" aria-label="Safety severity">
                   {offeredSeverities.map((s) => (
                     <button
                       key={s.code}
                       type="button"
+                      role="radio"
+                      aria-checked={safetySeverity === s.code}
                       onClick={() => setSafetySeverity(s.code)}
-                      title={`${s.label} — raises the priority to at least ${s.escalates_to_priority}`}
-                      className="flex-1 py-1.5 rounded text-[12px] font-semibold border"
-                      style={{ borderColor: safetySeverity === s.code ? "#EF4444" : "#D8DEE4", background: safetySeverity === s.code ? "#FCE9E9" : "#fff", color: safetySeverity === s.code ? "#EF4444" : "#64748B" }}
+                      /* The code alone ("S1") is not a name, and the label plus
+                         what it does to the priority sat in a `title` that no
+                         phone can reach. The consequence stays spelled out in
+                         the line below the group for sighted users. */
+                      aria-label={`${s.label} — raises the priority to at least ${s.escalates_to_priority}`}
+                      className="min-h-[44px] flex-1 rounded border py-1.5 text-[12px] font-semibold"
+                      style={{ borderColor: safetySeverity === s.code ? "#C1291F" : "#D8DEE4", background: safetySeverity === s.code ? "#FCE9E9" : "#fff", color: safetySeverity === s.code ? "#C1291F" : "#5A6880" }}
                     >
                       {s.code}
                     </button>
@@ -740,17 +781,28 @@ export default function RaiseWorkOrderForm({ existing }) {
             </Field>
 
             <Field label="Environmental risk">
-              <div className="flex items-center gap-3">
-                {["No", "Yes"].map((v) => (
-                  <button
-                    key={v}
-                    onClick={() => setEnvFlag(v === "Yes")}
-                    className="px-5 py-2 rounded text-[13px] font-semibold border"
-                    style={{ borderColor: (v === "Yes") === envFlag ? "#F59E0B" : "#D8DEE4", background: (v === "Yes") === envFlag ? "#FDE7C4" : "#fff", color: (v === "Yes") === envFlag ? "#8A5A0A" : "#64748B" }}
-                  >
-                    {v}
-                  </button>
-                ))}
+              <div className="flex items-center gap-3" role="radiogroup" aria-label="Environmental risk">
+                {["No", "Yes"].map((v) => {
+                  const on = (v === "Yes") === envFlag;
+                  const alarm = v === "Yes";
+                  return (
+                    <button
+                      key={v}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => setEnvFlag(v === "Yes")}
+                      className="min-h-[44px] px-5 py-2 rounded text-[13px] font-semibold border"
+                      style={{
+                        borderColor: on ? (alarm ? "#9D6507" : "#101828") : "#D8DEE4",
+                        background: on ? (alarm ? "#FDE7C4" : "#F1F3F7") : "#fff",
+                        color: on ? (alarm ? "#7A4E06" : "#101828") : "#5A6880",
+                      }}
+                    >
+                      {v}
+                    </button>
+                  );
+                })}
               </div>
               {envCeiling && (
                 <p className="mt-1.5 text-[11.5px] text-ink-soft">
@@ -817,7 +869,7 @@ export default function RaiseWorkOrderForm({ existing }) {
           {blockedFields.length > 0 && (
             <div
               role="alert"
-              className="mt-4 flex items-start gap-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-3 py-2.5 text-[12.5px] text-danger"
+              className="mt-4 flex items-start gap-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-3 py-2.5 text-[12.5px] text-danger-text"
             >
               <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
               <span className="min-w-0">

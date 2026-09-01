@@ -90,6 +90,15 @@ const TABS = [
 export default function SettingsAdmin() {
   const ref = useReferenceData();
   const [tab, setTab] = useState("statuses");
+  const tabStripRef = useRef(null);
+
+  /* The selected tab can sit off-screen on a phone — nine of them need about
+     900px — so it is scrolled back into view whenever it changes. */
+  useEffect(() => {
+    tabStripRef.current
+      ?.querySelector(`[data-tab="${tab}"]`)
+      ?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [tab]);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
 
@@ -144,23 +153,56 @@ export default function SettingsAdmin() {
 
       {error && <ErrorBanner message={error} />}
 
-      {/* Eight tabs wrapped to four rows on a phone and pushed the table below
-          the fold. A single scrolling strip keeps it to one row. */}
-      <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 no-scrollbar scroll-touch sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => {
-              setTab(t.key);
-              setError(null);
-            }}
-            className={`flex-shrink-0 whitespace-nowrap rounded border px-3.5 py-2 text-[13px] font-semibold ${
-              tab === t.key ? "bg-ink text-white border-ink" : "bg-white text-ink border-[#D8DEE4]"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      {/* Nine tabs wrapped to four rows on a phone and pushed the table below
+          the fold. A single scrolling strip keeps it to one row — with a fade
+          at the right edge while there is more to reach, because a row that is
+          merely cut off looks like a row that ends, and with the selected tab
+          scrolled into view so it is never the one off-screen.
+
+          `role="tablist"` and the arrow keys make the selection something other
+          than a fill colour; without them these were nine unrelated buttons and
+          which one was active existed only in the styling. */}
+      <div className="relative -mx-4 mb-4 sm:mx-0">
+        <div
+          ref={tabStripRef}
+          role="tablist"
+          aria-label="Settings sections"
+          className="flex gap-1.5 overflow-x-auto px-4 no-scrollbar scroll-touch sm:flex-wrap sm:overflow-visible sm:px-0"
+          onKeyDown={(e) => {
+            const i = TABS.findIndex((t) => t.key === tab);
+            if (i < 0) return;
+            let next = null;
+            if (e.key === "ArrowRight") next = TABS[(i + 1) % TABS.length];
+            else if (e.key === "ArrowLeft") next = TABS[(i - 1 + TABS.length) % TABS.length];
+            else if (e.key === "Home") next = TABS[0];
+            else if (e.key === "End") next = TABS[TABS.length - 1];
+            if (!next) return;
+            e.preventDefault();
+            setTab(next.key);
+            setError(null);
+            tabStripRef.current?.querySelector(`[data-tab="${next.key}"]`)?.focus();
+          }}
+        >
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              data-tab={t.key}
+              role="tab"
+              aria-selected={tab === t.key}
+              tabIndex={tab === t.key ? 0 : -1}
+              onClick={() => {
+                setTab(t.key);
+                setError(null);
+              }}
+              className={`min-h-[44px] flex-shrink-0 whitespace-nowrap rounded border px-3.5 py-2 text-[13px] font-semibold ${
+                tab === t.key ? "bg-ink text-white border-ink" : "bg-white text-ink border-[#D8DEE4]"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-canvas to-transparent sm:hidden" />
       </div>
 
       {!ref.ready && <div className="text-[13px] text-ink-soft">Loading settings…</div>}
@@ -529,7 +571,7 @@ function PermissionsPanel({ rows, onFlash, onError }) {
       </div>
 
       {mayEdit && rows.length > 0 && (
-        <div className="mb-3 flex items-start gap-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-3.5 py-2.5 text-[12.5px] text-danger">
+        <div className="mb-3 flex items-start gap-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-3.5 py-2.5 text-[12.5px] text-danger-text">
           <ShieldAlert size={14} className="mt-0.5 flex-shrink-0" />
           <span>
             Deletion is the only irreversible action in this system. Everything else that looks

@@ -167,7 +167,7 @@ export default function StatusTimeline({ wo }) {
         );
       })}
       {wo.status === "waiting_spare_part" && (
-        <div className="flex items-center gap-2 bg-[#FCE9E9] rounded px-3.5 py-2.5 text-[12.5px] text-danger mt-1">
+        <div className="flex items-center gap-2 bg-[#FCE9E9] rounded px-3.5 py-2.5 text-[12.5px] text-danger-text mt-1">
           <PauseCircle size={15} /> {lastEvent?.remarks || "Waiting on a spare part"}
         </div>
       )}

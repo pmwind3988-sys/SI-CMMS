@@ -46,7 +46,11 @@ export default function PasswordInput({
       <button
         type="button"
         onClick={() => setVisible((v) => !v)}
-        className="absolute right-3 top-2.5 text-ink-soft"
+        /* The eye glyph stays 17px and stays where it was drawn; the button
+           around it becomes a 44px square. It was a 17x17 target — under even
+           the 24px floor — on a control that exists precisely for people who
+           are struggling to type the field correctly. */
+        className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-ink-soft"
         // The label says what the button will DO, not what the state is — a
         // screen reader announcing "hide password" on a hidden field is the
         // usual way to get this backwards.

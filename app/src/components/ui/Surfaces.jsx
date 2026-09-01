@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, AlertTriangle, RefreshCw, Loader2, WifiOff } from "lucide-react";
 
@@ -27,9 +27,53 @@ export function Card({ children, className = "", ...rest }) {
  *
  * The tree is prerendered by the static export, so the portal waits for mount.
  */
-export function ModalOverlay({ children, onClose, className = "" }) {
+export function ModalOverlay({ children, onClose, label, className = "" }) {
   const [mounted, setMounted] = useState(false);
+  const panelRef = useRef(null);
   useEffect(() => setMounted(true), []);
+
+  /**
+   * Announced, dismissable and focused — it was none of the three.
+   *
+   * The overlay covered the page and locked its scroll, so to a sighted user it
+   * was unmistakably a dialog. To a screen reader it was an anonymous div:
+   * measured on the dashboard drill-down, no `role`, no `aria-modal`, no
+   * accessible name, and focus left behind on the card that opened it — so the
+   * announcement for opening it was silence.
+   *
+   * Escape is handled here rather than at each call site, because "the drill-down
+   * closes on Escape but the delete dialog does not" is precisely the kind of
+   * inconsistency a shared component exists to prevent.
+   */
+  useEffect(() => {
+    if (!mounted) return;
+    const returnTo = document.activeElement;
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose?.();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    /* Focus the panel itself rather than hunting for the first control: these
+       dialogs open with text that has to be read before a button is pressed,
+       and landing on "Delete" is how somebody presses it by reflex.
+
+       The wrapper is `display: contents` so it does not disturb the flex
+       centring, and an element with `display: contents` generates no box and
+       cannot take focus — measured, the focus call was a silent no-op. So the
+       focus goes to its first real child, which is the dialog's own panel. */
+    const target = panelRef.current?.firstElementChild ?? panelRef.current;
+    if (target instanceof HTMLElement) {
+      if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+      target.focus();
+    }
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (returnTo instanceof HTMLElement && document.contains(returnTo)) returnTo.focus();
+    };
+  }, [mounted, onClose]);
+
   if (!mounted) return null;
 
   return createPortal(
@@ -39,7 +83,15 @@ export function ModalOverlay({ children, onClose, className = "" }) {
         if (e.target === e.currentTarget) onClose?.();
       }}
     >
-      {children}
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+        className="contents"
+      >
+        {children}
+      </div>
     </div>,
     document.body
   );
@@ -52,7 +104,7 @@ export function Toast({ message }) {
        at 320px a corner toast either wrapped to three lines or ran off the
        edge. The bottom offset clears Android's gesture pill. */
     <div className="fixed inset-x-4 bottom-[calc(1.5rem+env(safe-area-inset-bottom))] z-50 flex items-center gap-2 rounded bg-navy px-4 py-3 text-[13px] text-white shadow-lg sm:inset-x-auto sm:right-6">
-      <CheckCircle2 size={15} className="text-accent" />
+      <CheckCircle2 size={15} className="text-accent" aria-hidden="true" />
       {message}
     </div>
   );
@@ -95,17 +147,35 @@ export function SessionRecoveryBanner({ reason = "expired" }) {
   );
 }
 
-/** Consistent inline error state — used identically across every screen per the UI/UX spec. */
+/**
+ * Consistent inline error state — used identically across every screen per the
+ * UI/UX spec, which is exactly why the missing `role="alert"` mattered: this one
+ * component is every error surface in the product, so until it was added there
+ * were zero live regions on any screen. A screen reader user pressed Sign in,
+ * or Save, and heard nothing at all — the banner rendered above the fields, out
+ * of the reading position, with focus left on the button they had just pressed.
+ *
+ * `alert` rather than `status`: these are refusals and failures that interrupt
+ * what the user was doing, and they are rendered in response to a deliberate
+ * action, so interrupting the reader is the correct behaviour. The polite
+ * `status` role stays on the session-recovery banner, which appears
+ * unprompted and must not cut across whatever is being read.
+ *
+ * The text colour is darkened from the raw `--danger` token, which measured
+ * 3.22:1 on this pale ground.
+ */
 export function ErrorBanner({ message, onRetry }) {
   return (
     // Wraps rather than squashing: these messages are full sentences, and on a
     // phone the Retry button was compressed to an unreadable sliver beside them.
-    <div className="mb-4 flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-4 py-3 text-[13px] text-danger">
+    <div
+      role="alert"
+      className="mb-4 flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded border border-[#EF444455] bg-[#FCE9E9] px-4 py-3 text-[13px] text-[#A81E14]">
       <span className="flex min-w-0 items-start gap-2">
         <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" /> <span className="min-w-0">{message}</span>
       </span>
       {onRetry && (
-        <button onClick={onRetry} className="flex flex-shrink-0 items-center gap-1 font-semibold text-danger hover:underline">
+        <button onClick={onRetry} className="flex flex-shrink-0 items-center gap-1 font-semibold text-[#A81E14] hover:underline">
           <RefreshCw size={13} /> Retry
         </button>
       )}

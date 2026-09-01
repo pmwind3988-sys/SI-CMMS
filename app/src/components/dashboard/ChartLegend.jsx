@@ -36,7 +36,9 @@ export default function ChartLegend({ items }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={panelId}
-        className="inline-flex items-center gap-1 rounded text-[11.5px] font-semibold text-ink-soft hover:text-ink"
+        /* -my-2 keeps the row height it had; the button itself is now a 44px
+           target rather than a 17px one. */
+        className="-my-2 inline-flex min-h-[44px] items-center gap-1 rounded text-[11.5px] font-semibold text-ink-soft hover:text-ink"
       >
         Legend
         <ChevronDown

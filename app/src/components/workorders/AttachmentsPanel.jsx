@@ -159,7 +159,7 @@ function AttachmentViewer({ items, index, onIndex, onClose, replaceable, onRepla
     "absolute top-1/2 -translate-y-1/2 rounded-full bg-black/55 p-2 text-white disabled:opacity-0";
 
   return (
-    <ModalOverlay onClose={onClose} className="!bg-black/80 !items-center p-3 sm:p-6">
+    <ModalOverlay onClose={onClose} label="Attachment viewer" className="!bg-black/80 !items-center p-3 sm:p-6">
       <div className="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded bg-white">
         <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
           <div className="min-w-0 flex-1">
