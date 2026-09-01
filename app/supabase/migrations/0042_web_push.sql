@@ -1,5 +1,5 @@
 -- ===========================================================================
--- 0045 — Web Push: an alert that arrives when the app is not running
+-- 0042 — Web Push: an alert that arrives when the app is not running
 -- ===========================================================================
 -- lib/osNotifications.js can only present a notification while the app's
 -- Realtime websocket is alive. Once the browser is closed there is no process
