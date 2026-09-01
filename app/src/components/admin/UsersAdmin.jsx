@@ -10,7 +10,7 @@
  * because only the service role can set another user's password, and that key
  * cannot live in a browser.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   KeyRound,
   UserPlus,
@@ -63,6 +63,7 @@ import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
 import PasswordInput from "../ui/PasswordInput";
 import { Card, ErrorBanner, EmptyState, Toast, ModalOverlay } from "../ui/Surfaces";
+import { usePaged, useAutoPageSize, PagerFooter } from "../ui/Paged";
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -179,6 +180,15 @@ export default function UsersAdmin() {
       );
     });
   }, [users, q, fRole, demoOnly]);
+
+  /* After the filter, never before - the search box reaches every loaded
+     account, not just the page on screen. Reset is keyed on the controls, since
+     `filtered` is a fresh array on every live update. */
+  const tableRef = useRef(null);
+  const cardsRef = useRef(null);
+  const pageSize = useAutoPageSize([tableRef, cardsRef], { min: 2, ready: !!users, signature: filtered.length });
+
+  const pager = usePaged(filtered, { pageSize, resetKey: `${q}|${fRole}|${demoOnly}` });
 
   const demoCount = (users ?? []).filter(isDemoAccount).length;
 
@@ -332,7 +342,8 @@ export default function UsersAdmin() {
 
         {users === null && <div className="px-4 py-6 text-[13px] text-ink-soft">Loading users…</div>}
 
-        {filtered.map((u, i) => (
+        <div ref={tableRef}>
+        {pager.visible.map((u, i) => (
           <div
             key={u.id}
             className={`flex items-center px-4 py-3 ${i === 0 ? "" : "border-t border-[#F1F3F5]"}`}
@@ -373,14 +384,15 @@ export default function UsersAdmin() {
           </div>
         ))}
 
+        </div>
         {users && filtered.length === 0 && <EmptyState>No users match those filters.</EmptyState>}
       </Card>
 
-      <div className="flex flex-col gap-2 lg:hidden">
+      <div ref={cardsRef} className="flex flex-col gap-2 lg:hidden">
         {users === null && (
           <Card className="px-4 py-6 text-[13px] text-ink-soft">Loading users…</Card>
         )}
-        {filtered.map((u) => (
+        {pager.visible.map((u) => (
           <Card key={u.id} className="p-3.5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -423,6 +435,10 @@ export default function UsersAdmin() {
           </Card>
         )}
       </div>
+
+      {/* One footer under both: the lg table and the card stack below it are the
+          same slice rendered twice. */}
+      <PagerFooter pager={pager} noun="users" standalone />
 
       {panel?.kind === "password" && (
         <PasswordDialog

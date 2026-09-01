@@ -34,7 +34,7 @@
  * Edits reach every open session over Realtime, so a colour change shows up on a
  * supervisor's board without them reloading.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Check,
   X,
@@ -73,6 +73,7 @@ import { ALL_ROLES, ROLE_LABELS } from "../../lib/roles";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
 import { Card, ErrorBanner, Toast, ModalOverlay } from "../ui/Surfaces";
+import { usePaged, useAutoPageSize, PagerFooter } from "../ui/Paged";
 
 const TABS = [
   { key: "statuses", label: "Statuses" },
@@ -666,6 +667,21 @@ function EditableTable({
   const liveRows = rows.filter((r) => !retiredOf(r));
   const retiredRows = retireTable ? rows.filter(retiredOf) : [];
 
+  /* Two independent pagers, so a long retired list cannot bury the live one it
+     sits under. The enum-keyed tables are four to eleven rows, so neither
+     footer ever renders there - only departments and equipment grow. Keyed on
+     the table rather than on the arrays, which are rebuilt every render. */
+  /* Only the live rows are measured. The retired block sits under them and is
+     usually short, so it keeps a fixed small page rather than competing for the
+     same screen height. */
+  const liveRef = useRef(null);
+  /* No reserve for the retired block below: the hook measures what is under the
+     list rather than being told about it. */
+  const liveSize = useAutoPageSize(liveRef, { min: 3, signature: rows.length });
+
+  const livePager = usePaged(liveRows, { pageSize: liveSize, resetKey: `live|${rowKey}|${retireTable ?? ""}` });
+  const retiredPager = usePaged(retiredRows, { pageSize: 10, resetKey: `retired|${rowKey}|${retireTable ?? ""}` });
+
   async function setActive(row, active) {
     setBusy(true);
     try {
@@ -825,7 +841,10 @@ function EditableTable({
               </div>
             </div>
 
-            {liveRows.map((row, i) => renderRow(row, i === 0, false))}
+            <div ref={liveRef}>
+              {livePager.visible.map((row, i) => renderRow(row, i === 0, false))}
+            </div>
+            <PagerFooter pager={livePager} />
 
             {retiredRows.length > 0 && (
               <>
@@ -833,7 +852,8 @@ function EditableTable({
                   <Archive size={13} className="flex-shrink-0" />
                   Retired — kept on existing records, no longer offered
                 </div>
-                {retiredRows.map((row) => renderRow(row, true, true))}
+                {retiredPager.visible.map((row) => renderRow(row, true, true))}
+                <PagerFooter pager={retiredPager} noun="retired rows" />
               </>
             )}
           </div>

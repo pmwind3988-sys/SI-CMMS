@@ -17,12 +17,13 @@
  *   'duration'      — minutes elapsed
  *   'count'         — a plain tally, rendered with `metricUnit`
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { X, ArrowRight } from "lucide-react";
 import { fmtDue } from "../../lib/constants";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, EmptyState, ModalOverlay } from "../ui/Surfaces";
+import { usePaged, useAutoPageSize, PagerFooter } from "../ui/Paged";
 
 export default function CardDetail({
   title,
@@ -53,6 +54,17 @@ export default function CardDetail({
   }, [onClose]);
 
   const list = rows ?? [];
+
+  /* The heading keeps printing `list.length`, so the true total stays visible
+     while only part of it is rendered. Keyed on the title: the sheet is reused
+     for whichever card was opened. */
+  /* Measured against the sheet, not the window: this scrolls inside itself and
+     is capped at 88dvh, so the viewport is the wrong ruler. `reserve` is small
+     because the footnote strip is the only thing under the rows. */
+  const listRef = useRef(null);
+  const pageSize = useAutoPageSize(listRef, { min: 3, ready: !loading && !error, signature: list.length });
+
+  const pager = usePaged(list, { pageSize, resetKey: title });
 
   return (
     <ModalOverlay onClose={onClose}>
@@ -89,9 +101,10 @@ export default function CardDetail({
           {loading && <div className="px-4 py-6 text-[13px] text-ink-soft">Loading…</div>}
           {!loading && !error && list.length === 0 && <EmptyState>{emptyText}</EmptyState>}
 
+          <div ref={listRef}>
           {!loading &&
             !error &&
-            list.map((r, i) => {
+            pager.visible.map((r, i) => {
               const clickable = Boolean(r.href);
               const Tag = clickable ? "button" : "div";
               return (
@@ -149,6 +162,8 @@ export default function CardDetail({
                 </Tag>
               );
             })}
+          </div>
+          {!loading && !error && <PagerFooter pager={pager} />}
         </div>
 
         {footnote && (

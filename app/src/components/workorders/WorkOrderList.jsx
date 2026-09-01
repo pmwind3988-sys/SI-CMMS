@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Search, Download, AlertTriangle, Loader2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
@@ -22,6 +22,7 @@ import { ROLES, hasRole, hasAnyRole } from "../../lib/roles";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import Button from "../ui/Button";
 import { Card, ErrorBanner, EmptyState } from "../ui/Surfaces";
+import { usePaged, useAutoPageSize, PagerFooter } from "../ui/Paged";
 import { inputClass } from "../ui/Field";
 
 const TITLES = {
@@ -131,6 +132,28 @@ export default function WorkOrderList() {
 
   const filtered = useMemo(() => (workOrders ? workOrders.filter(matches) : []), [workOrders, matches]);
 
+  /* Paginated AFTER the filter, never before: `matches` has already run over
+     every row loaded for this date range, so searching a WO number finds it
+     wherever it sits and the pager then walks the matches. Reset is keyed on
+     the controls rather than on `filtered`, which is a new array on every live
+     update. */
+  /* One ref per layout - only one of the two is ever on screen, and a table row
+     and a stacked card are nothing like the same height, so the same list pages
+     25-at-a-time on a monitor and a handful at a time on a phone. */
+  const tableRef = useRef(null);
+  const cardsRef = useRef(null);
+  /* min 2, not a comfortable-looking 4. On a phone the title, the triage
+     banner and the four filter controls take about 300px before the list
+     starts, and a work order card is ~185px - so four cards cannot fit however
+     much one would like them to, and a floor of four just reintroduces the
+     scrolling this exists to remove. */
+  const pageSize = useAutoPageSize([tableRef, cardsRef], { min: 2, ready: !!workOrders, signature: filtered.length });
+
+  const pager = usePaged(filtered, {
+    pageSize,
+    resetKey: `${fPriority}|${fStatus}|${rangeKey}|${q}`,
+  });
+
   const needsAssignment = (workOrders || []).filter((w) => w.status === "open").length;
   // Assigned to THIS person, not merely assigned. A Supervisor+Technician sees
   // every work order in the plant (migration 0019), so counting every row at
@@ -199,8 +222,18 @@ export default function WorkOrderList() {
         <div>
           <h1 className="text-xl font-bold text-ink">{TITLES[user.role]}</h1>
           <p className="text-[13px] text-ink-soft">
+            {/* The range on screen, not the size of the set. This used to read
+                "44 of 44 work orders" beside a list showing 25 of them, which
+                says the opposite of what is true. When a filter is narrowing,
+                the size it narrowed FROM is still worth stating - otherwise
+                there is no way to tell a quiet week from an over-tight
+                filter. */}
             {workOrders
-              ? `${filtered.length} of ${workOrders.length} work orders · ${describeRange(range)}`
+              ? `Showing ${pager.from}–${pager.to} of ${pager.total} work order${
+                  pager.total === 1 ? "" : "s"
+                }${
+                  filtered.length === workOrders.length ? "" : ` (filtered from ${workOrders.length})`
+                } · ${describeRange(range)}`
               : "Loading…"}
           </p>
         </div>
@@ -340,18 +373,24 @@ export default function WorkOrderList() {
           <div className="flex-[1.2]">Assigned</div>
           <div className="w-24 text-right">SLA</div>
         </div>
-        {filtered.map((w, i) => (
-          <WorkOrderRow key={w.id} w={w} first={i === 0} onClick={() => router.push(`/work-orders/view?id=${w.id}`)} />
-        ))}
+        <div ref={tableRef}>
+          {pager.visible.map((w, i) => (
+            <WorkOrderRow key={w.id} w={w} first={i === 0} onClick={() => router.push(`/work-orders/view?id=${w.id}`)} />
+          ))}
+        </div>
         {workOrders && filtered.length === 0 && <EmptyState>{EMPTY_MESSAGES[user.role]}</EmptyState>}
       </Card>
 
-      <div className="md:hidden flex flex-col gap-2">
-        {filtered.map((w) => (
+      <div ref={cardsRef} className="md:hidden flex flex-col gap-2">
+        {pager.visible.map((w) => (
           <WorkOrderCard key={w.id} w={w} onClick={() => router.push(`/work-orders/view?id=${w.id}`)} />
         ))}
         {workOrders && filtered.length === 0 && <EmptyState>{EMPTY_MESSAGES[user.role]}</EmptyState>}
       </div>
+
+      {/* One footer below both, because the table and the card stack are the
+          same slice rendered twice at different breakpoints. */}
+      <PagerFooter pager={pager} noun="work orders" standalone />
     </div>
   );
 }
