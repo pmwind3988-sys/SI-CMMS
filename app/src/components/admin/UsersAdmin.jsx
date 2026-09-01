@@ -10,7 +10,7 @@
  * because only the service role can set another user's password, and that key
  * cannot live in a browser.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   KeyRound,
   UserPlus,
@@ -63,7 +63,7 @@ import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
 import PasswordInput from "../ui/PasswordInput";
 import { Card, ErrorBanner, EmptyState, Toast, ModalOverlay } from "../ui/Surfaces";
-import { usePaged, PagerFooter } from "../ui/Paged";
+import { usePaged, useAutoPageSize, PagerFooter } from "../ui/Paged";
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -184,7 +184,11 @@ export default function UsersAdmin() {
   /* After the filter, never before - the search box reaches every loaded
      account, not just the page on screen. Reset is keyed on the controls, since
      `filtered` is a fresh array on every live update. */
-  const pager = usePaged(filtered, { resetKey: `${q}|${fRole}|${demoOnly}` });
+  const tableRef = useRef(null);
+  const cardsRef = useRef(null);
+  const pageSize = useAutoPageSize([tableRef, cardsRef], { min: 2, ready: !!users, signature: filtered.length });
+
+  const pager = usePaged(filtered, { pageSize, resetKey: `${q}|${fRole}|${demoOnly}` });
 
   const demoCount = (users ?? []).filter(isDemoAccount).length;
 
@@ -338,6 +342,7 @@ export default function UsersAdmin() {
 
         {users === null && <div className="px-4 py-6 text-[13px] text-ink-soft">Loading users…</div>}
 
+        <div ref={tableRef}>
         {pager.visible.map((u, i) => (
           <div
             key={u.id}
@@ -379,10 +384,11 @@ export default function UsersAdmin() {
           </div>
         ))}
 
+        </div>
         {users && filtered.length === 0 && <EmptyState>No users match those filters.</EmptyState>}
       </Card>
 
-      <div className="flex flex-col gap-2 lg:hidden">
+      <div ref={cardsRef} className="flex flex-col gap-2 lg:hidden">
         {users === null && (
           <Card className="px-4 py-6 text-[13px] text-ink-soft">Loading users…</Card>
         )}

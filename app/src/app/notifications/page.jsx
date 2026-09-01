@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bell,
@@ -31,7 +31,7 @@ import {
 } from "../../lib/notifications";
 import { describeError } from "../../lib/errors";
 import { Card, EmptyState, ErrorBanner, ModalOverlay, Toast } from "../../components/ui/Surfaces";
-import { usePaged, PagerFooter } from "../../components/ui/Paged";
+import { usePaged, useAutoPageSize, PagerFooter } from "../../components/ui/Paged";
 import Button from "../../components/ui/Button";
 
 const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp };
@@ -67,7 +67,10 @@ function NotificationsInner() {
   /* "Mark all read" and "Clear read" deliberately keep acting on `unread` and
      `read` - every loaded row, not the page on screen. A button whose meaning
      changed with how far you had paged would be the worse bug. */
-  const pager = usePaged(filtered, { pageSize: 20, resetKey: filter });
+  const listRef = useRef(null);
+  const pageSize = useAutoPageSize(listRef, { min: 3, ready: !!items, signature: filtered.length });
+
+  const pager = usePaged(filtered, { pageSize, resetKey: filter });
   const typesPresent = Array.from(new Set((items || []).map((n) => n.type)));
 
   function flash(msg) {
@@ -161,6 +164,7 @@ function NotificationsInner() {
             No notifications yet.
           </EmptyState>
         )}
+        <div ref={listRef}>
         {pager.visible.map((n, i) => {
           const meta = NOTIFICATION_META[n.type] || { icon: "Bell", color: "#64748B" };
           const Icon = ICONS[meta.icon] || Bell;
@@ -207,6 +211,7 @@ function NotificationsInner() {
             </div>
           );
         })}
+        </div>
         <PagerFooter pager={pager} noun="notifications" />
       </Card>
 
