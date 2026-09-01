@@ -162,26 +162,6 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  /**
-   * A test account is the Superuser's alone (migration 0028), and this function
-   * is the one path its trigger guard cannot reach: that guard returns early when
-   * auth.uid() is null, which is exactly what the service role looks like.
-   *
-   * Nor does RLS help here — the service-role client above bypasses it entirely,
-   * so users_select hiding the row from an Administrator's *screen* does nothing
-   * to a request that names the id directly. Same shape as the check just above:
-   * the enforcement point that bypasses the others has to restate the rule.
-   */
-  async function isForbiddenTestAccount(userId: string) {
-    if (callerRow.is_protected) return false; // the Superuser may
-    const { data } = await admin
-      .from("users")
-      .select("is_test_account")
-      .eq("id", userId)
-      .maybeSingle();
-    return data?.is_test_account === true;
-  }
-
   let payload: Record<string, unknown>;
   try {
     payload = await req.json();
@@ -212,12 +192,6 @@ Deno.serve(async (req: Request) => {
       return json({ error: `Use at least ${MIN_PASSWORD_LENGTH} characters.` }, 400);
     }
 
-    if (await isForbiddenTestAccount(userId)) {
-      return json(
-        { error: "That is a test account. Only the Superuser can administer it." },
-        403,
-      );
-    }
 
     // Your own password needs no Superuser. That is /change-password, and this
     // branch keeps working for it.
@@ -315,12 +289,6 @@ Deno.serve(async (req: Request) => {
        is not available here and would be wrong anyway — Capacitor serves the same
        export from https://localhost, so a link built from it points the reader's
        mail client at their own phone. */
-    if (await isForbiddenTestAccount(userId)) {
-      return json(
-        { error: "That is a test account. Only the Superuser can administer it." },
-        403,
-      );
-    }
 
     const SITE_URL = Deno.env.get("SITE_URL") ?? "";
     if (!SITE_URL) {
@@ -414,12 +382,6 @@ Deno.serve(async (req: Request) => {
     const email = String(payload.email ?? "").trim().toLowerCase();
 
     if (!userId) return json({ error: "Which user?" }, 400);
-    if (await isForbiddenTestAccount(userId)) {
-      return json(
-        { error: "That is a test account. Only the Superuser can administer it." },
-        403,
-      );
-    }
 
     // Deliberately loose: the authority on what is a deliverable address is the
     // Admin API below, and a stricter regex here would only reject valid ones.
@@ -691,7 +653,7 @@ Deno.serve(async (req: Request) => {
 
     // .select() so a refusal is distinguishable from a success. RLS declining a
     // DELETE removes no rows and raises nothing — the same reason
-    // deleteWorkOrder() checks this, and the same reason setTestAccount() does.
+    // deleteWorkOrder() checks this, and the same reason every write here does.
     const { data: deleted, error: profileError } = await asCaller
       .from("users")
       .delete()

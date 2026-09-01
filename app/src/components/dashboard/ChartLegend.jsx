@@ -75,15 +75,3 @@ export default function ChartLegend({ items }) {
     </div>
   );
 }
-
-/**
- * Every chart on this dashboard is built from `si_compute_dashboard_stats`,
- * which excludes work raised by a test account (migrations 0033, 0034). The
- * work order LIST does not — it shows those rows tagged "Demo". So a chart and
- * the list can legitimately disagree, and someone comparing the two deserves
- * to be told why rather than left to find it.
- */
-export const EXCLUDES_TEST_DATA = {
-  label: "Demo work orders are left out",
-  note: "the list shows them tagged Demo; the charts do not count them",
-};

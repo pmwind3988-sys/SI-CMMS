@@ -212,10 +212,6 @@ function workOrderColumns(labels, ctx) {
     { header: "WO Number", width: 18, cell: (w) => ({ ...textCell(w.wo_number || "Pending…"), fontWeight: "bold" }) },
     { header: "Status", width: 16, cell: (w) => textCell(label("statusLabel", w.status)) },
     { header: "Priority", width: 18, cell: (w) => textCell(priorityText(w)) },
-    // A fixture's work order is still in the file, flagged rather than dropped:
-    // an export is a record, and silently omitting rows from a record is worse
-    // than a column Excel's autofilter clears in one click. See migration 0034.
-    { header: "Test Data", width: 11, cell: (w) => textCell(yesNo(w.is_test_data)) },
 
     // ---- What the form captured ----
     { header: "Date Raised", width: 21, cell: (w) => dateCell(w.created_at) },
@@ -405,11 +401,6 @@ export function buildWorkbook({
     ["Comments", comments.length],
     ["", ""],
     ["Scope", scopeNote || "Only work orders your role is permitted to see are included."],
-    [
-      "Test data",
-      "Rows raised by a test fixture are included and marked Yes in the Test Data column. " +
-        "They are excluded from the dashboard statistics.",
-    ],
   ].map(([k, v]) => [
     { value: String(k), type: String, fontWeight: "bold" },
     typeof v === "number" ? { value: v, type: Number, format: "0" } : { value: String(v), type: String, wrap: true },

@@ -1,7 +1,7 @@
 "use client";
 
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
-import ChartLegend, { EXCLUDES_TEST_DATA } from "./ChartLegend";
+import ChartLegend from "./ChartLegend";
 
 const COLORS = ["#0F3D91", "#F59E0B", "#22C55E", "#EF4444", "#1E4FA0", "#FBBF24", "#64748B"];
 
@@ -15,8 +15,7 @@ export default function DepartmentBreakdownChart({ data }) {
       color: COLORS[i % COLORS.length],
       label: r.department,
       note: `${r.count} work order${r.count === 1 ? "" : "s"}`,
-    })),
-    EXCLUDES_TEST_DATA,
+    })),
   ];
   return (
     <div className="bg-white border border-border rounded-xl shadow-card p-3 sm:p-4">

@@ -4,22 +4,13 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recha
 import { useIsNarrow } from "../../lib/useMediaQuery";
 import ChartLegend from "./ChartLegend";
 
-/* Single series, so this is not a colour key either. The two things worth
-   saying are that the average repair time is in the tooltip and not on the
-   chart — easy to miss, and it is the more interesting of the two numbers —
-   and that the exclusion here is narrower than the other three charts'.
-   Migration 0034: this chart and `active_technicians` are the only outputs
-   whose SUBJECT is the technician, so they alone drop work a fixture
-   PERFORMED, where the rest key on who raised the fault. Reusing the shared
-   EXCLUDES_TEST_DATA line here would have claimed the wrong rule. */
+/* Single series, so this is not a colour key either. The one thing worth
+   saying is that the average repair time lives in the tooltip and not on the
+   chart - easy to miss, and it is the more interesting of the two numbers. */
 const LEGEND = [
   { color: "#22C55E", label: "Completed", note: "work orders this technician finished" },
   { label: "Horizontal axis", note: "how many they completed" },
   { label: "Average repair time", note: "tap or hover a bar to see it" },
-  {
-    label: "Demo accounts are left out",
-    note: "work done by a test account is not credited to anyone here",
-  },
 ];
 
 function CustomTooltip({ active, payload }) {

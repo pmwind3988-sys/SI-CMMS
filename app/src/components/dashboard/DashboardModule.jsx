@@ -13,12 +13,10 @@ import {
   Wrench,
   Users,
   RefreshCw,
-  FlaskConical,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenDashboardCards, listenDashboardCharts, listenDashboardCardRows, refreshDashboardStatsNow } from "../../lib/dashboard";
-import { listenDemoAccounts, DEMO_FLAGS, demoFlagsOf } from "../../lib/admin";
-import { ELEVATED_ROLES, ROLES, hasRole, hasAnyRole, rolesLabel } from "../../lib/roles";
+import { ELEVATED_ROLES, hasAnyRole } from "../../lib/roles";
 import { describeError } from "../../lib/errors";
 import StatCard from "./StatCard";
 import CardDetail, { rowFromRpc } from "./CardDetail";
@@ -135,12 +133,7 @@ export default function DashboardModule() {
   const [charts, setCharts] = useState(null);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [drill, setDrill] = useState(null); // a CARDS entry, or the demo-accounts card
-
-  // System administration stays Admin-only, Manager's elevation notwithstanding
-  // — so does noticing that the demo accounts are still live.
-  const isAdmin = hasRole(user, ROLES.ADMIN);
-  const [demoAccounts, setDemoAccounts] = useState(null);
+  const [drill, setDrill] = useState(null); // a CARDS entry
 
   useEffect(() => {
     const unsub1 = listenDashboardCards(setCards, () => setError("Couldn't load dashboard metrics."));
@@ -150,13 +143,6 @@ export default function DashboardModule() {
       unsub2();
     };
   }, []);
-
-  useEffect(() => {
-    if (!isAdmin) return undefined;
-    return listenDemoAccounts(setDemoAccounts, (e) =>
-      setError(describeError(e, "Couldn't check for demo accounts."))
-    );
-  }, [isAdmin]);
 
   const canRefresh = hasAnyRole(user, ELEVATED_ROLES);
 
@@ -204,22 +190,6 @@ export default function DashboardModule() {
 
       {error && <ErrorBanner message={error} />}
 
-      {isAdmin && demoAccounts?.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setDrill(DEMO_CARD)}
-          className="mb-4 flex w-full items-start gap-2 rounded border border-[#F59E0B66] bg-[#FFFBEB] px-4 py-3 text-left text-[13px] text-[#92400E] hover:bg-[#FEF3C7]"
-        >
-          <FlaskConical size={15} className="mt-0.5 flex-shrink-0" />
-          <span>
-            <strong>{demoAccounts.length}</strong>{" "}
-            {demoAccounts.length === 1 ? "account is" : "accounts are"} still seeded demo data —
-            placeholder addresses, the shared bootstrap password, or profiles nobody has claimed.
-            Review them before this reaches anyone real.
-          </span>
-        </button>
-      )}
-
       {/* ---- CARDS: responsive grid — up to 5 cols on desktop, 2 on a phone,
            and one below 340px, where half of a 320px screen leaves ~95px for a
            label like "Total Open Work Orders" and it wrapped a word per line.
@@ -241,17 +211,6 @@ export default function DashboardModule() {
             />
           );
         })}
-        {isAdmin && (
-          <StatCard
-            icon={FlaskConical}
-            label="Demo accounts"
-            color="#F59E0B"
-            loading={demoAccounts === null}
-            value={demoAccounts?.length ?? 0}
-            emphasis={(demoAccounts?.length ?? 0) > 0}
-            onClick={() => setDrill(DEMO_CARD)}
-          />
-        )}
       </div>
 
       {/* ---- CHARTS: 1 column on mobile, 2 columns on desktop. `min-w-0` on the
@@ -265,42 +224,9 @@ export default function DashboardModule() {
         <TechnicianPerformanceChart data={charts?.technician_performance} />
       </div>
 
-      {drill?.key === DEMO_CARD.key && (
-        <CardDetail
-          title={DEMO_CARD.title}
-          blurb={DEMO_CARD.blurb}
-          rows={(demoAccounts ?? []).map(demoAccountRow)}
-          loading={demoAccounts === null}
-          emptyText="Every account looks real. Nothing seeded is still sitting unchanged."
-          footnote="Fix these from Admin → Users. Each reason disappears on its own once it is dealt with."
-          onClose={() => setDrill(null)}
-        />
-      )}
-      {drill && drill.key !== DEMO_CARD.key && (
-        <CardDrill card={drill} snapshotAt={snapshotAt} onClose={() => setDrill(null)} />
-      )}
+      {drill && <CardDrill card={drill} snapshotAt={snapshotAt} onClose={() => setDrill(null)} />}
     </div>
   );
-}
-
-const DEMO_CARD = {
-  key: "demo_accounts",
-  title: "Accounts that still look like demo data",
-  blurb: "Flagged for one reason each. A reason clears the moment it stops being true.",
-};
-
-function demoAccountRow(u) {
-  return {
-    id: u.id,
-    href: null,
-    title: u.email,
-    subtitle: u.name,
-    // rolesLabel, not ROLE_LABELS[u.role]: listenDemoAccounts selects `roles`
-    // since migration 0020, so the singular column is no longer there to read.
-    meta: `${rolesLabel(u.roles)} · ${u.status === "active" ? "Active" : "Inactive"}`,
-    tags: demoFlagsOf(u).map((f) => DEMO_FLAGS[f]?.short || f),
-    metricKind: "none",
-  };
 }
 
 /**

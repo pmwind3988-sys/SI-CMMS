@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.17"
+    PostgrestVersion: "14.5"
   }
   graphql_public: {
     Tables: {
@@ -838,7 +838,6 @@ export type Database = {
           employee_id: string | null
           id: string
           is_protected: boolean
-          is_test_account: boolean
           last_login_at: string | null
           must_change_password: boolean
           name: string
@@ -847,10 +846,6 @@ export type Database = {
           photo_url: string | null
           plant_ids: string[]
           roles: Database["public"]["Enums"]["si_role"][]
-          seed_name: string | null
-          seed_phone: string | null
-          seed_source: string | null
-          seeded_at: string | null
           status: Database["public"]["Enums"]["si_user_status"]
           updated_at: string
         }
@@ -861,7 +856,6 @@ export type Database = {
           employee_id?: string | null
           id: string
           is_protected?: boolean
-          is_test_account?: boolean
           last_login_at?: string | null
           must_change_password?: boolean
           name: string
@@ -870,10 +864,6 @@ export type Database = {
           photo_url?: string | null
           plant_ids?: string[]
           roles: Database["public"]["Enums"]["si_role"][]
-          seed_name?: string | null
-          seed_phone?: string | null
-          seed_source?: string | null
-          seeded_at?: string | null
           status?: Database["public"]["Enums"]["si_user_status"]
           updated_at?: string
         }
@@ -884,7 +874,6 @@ export type Database = {
           employee_id?: string | null
           id?: string
           is_protected?: boolean
-          is_test_account?: boolean
           last_login_at?: string | null
           must_change_password?: boolean
           name?: string
@@ -893,10 +882,6 @@ export type Database = {
           photo_url?: string | null
           plant_ids?: string[]
           roles?: Database["public"]["Enums"]["si_role"][]
-          seed_name?: string | null
-          seed_phone?: string | null
-          seed_source?: string | null
-          seeded_at?: string | null
           status?: Database["public"]["Enums"]["si_user_status"]
           updated_at?: string
         }
@@ -1132,7 +1117,6 @@ export type Database = {
           est_downtime_value: number | null
           id: string
           impact: Database["public"]["Enums"]["si_impact"] | null
-          is_test_data: boolean
           permit_required: boolean
           plant_id: string | null
           priority: Database["public"]["Enums"]["si_priority"]
@@ -1177,7 +1161,6 @@ export type Database = {
           est_downtime_value?: number | null
           id?: string
           impact?: Database["public"]["Enums"]["si_impact"] | null
-          is_test_data?: boolean
           permit_required?: boolean
           plant_id?: string | null
           priority: Database["public"]["Enums"]["si_priority"]
@@ -1222,7 +1205,6 @@ export type Database = {
           est_downtime_value?: number | null
           id?: string
           impact?: Database["public"]["Enums"]["si_impact"] | null
-          is_test_data?: boolean
           permit_required?: boolean
           plant_id?: string | null
           priority?: Database["public"]["Enums"]["si_priority"]
@@ -1341,10 +1323,6 @@ export type Database = {
         }
         Returns: Database["public"]["Enums"]["si_priority"]
       }
-      si_dummy_flags: {
-        Args: { u: Database["public"]["Tables"]["users"]["Row"] }
-        Returns: string[]
-      }
       si_eligible_roles: {
         Args: {
           p_assigned_to: string
@@ -1367,7 +1345,6 @@ export type Database = {
       si_is_superuser: { Args: never; Returns: boolean }
       si_is_supervisor: { Args: never; Returns: boolean }
       si_is_technician: { Args: never; Returns: boolean }
-      si_is_test_account: { Args: { p_user_id: string }; Returns: boolean }
       si_managers: { Args: never; Returns: string[] }
       si_notify: {
         Args: {
@@ -1469,7 +1446,6 @@ export type Database = {
           est_downtime_value: number | null
           id: string
           impact: Database["public"]["Enums"]["si_impact"] | null
-          is_test_data: boolean
           permit_required: boolean
           plant_id: string | null
           priority: Database["public"]["Enums"]["si_priority"]

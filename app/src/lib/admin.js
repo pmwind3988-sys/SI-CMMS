@@ -29,11 +29,6 @@ import { supabase, liveQuery } from "./supabase";
  * NOTE: employee_id and must_change_password join this select because the Users
  * screen shows both — the number beside the address, and a marker on any account
  * that owes a password change. Neither decides anything on the client.
- *
- * si_dummy_flags is a computed column, not a stored one — PostgREST calls
- * si_dummy_flags(users) per row (migration 0012). Selecting it here rather than
- * re-deriving "does this still look like demo data?" in the client keeps one
- * definition, and keeps it next to the columns it reads.
  */
 // is_protected is selected because the client predicates in constants.js read
 // it. RLS already hides protected rows from everyone but their owner (migration
@@ -41,8 +36,7 @@ import { supabase, liveQuery } from "./supabase";
 // honest rather than relying on that.
 const USER_SELECT =
   "id, name, email, phone, employee_id, must_change_password, roles, department_id, " +
-  "plant_ids, status, created_at, last_login_at, is_protected, is_test_account, " +
-  "seed_source, password_changed_at, si_dummy_flags";
+  "plant_ids, status, created_at, last_login_at, is_protected, password_changed_at";
 
 /** Every user, live. The users_select policy already limits who sees this. */
 export function listenUsers(cb, onError) {
@@ -52,81 +46,6 @@ export function listenUsers(cb, onError) {
     cb,
     onError,
   });
-}
-
-/* ------------------------------------------------------------------
-   Demo accounts
-
-   The six accounts bootstrapUsers.js creates share one password and an
-   @example.com address, and until now nothing in the app ever said so. Each
-   reason is tracked separately so it clears on its own the moment it is dealt
-   with — an account with no reasons left is simply not flagged.
--------------------------------------------------------------------*/
-
-export const DEMO_FLAGS = {
-  placeholder_email: {
-    short: "Placeholder email",
-    detail: "The sign-in address is at a reserved demo domain, so it can never receive mail.",
-    fix: "Create a real account for this person and deactivate this one.",
-  },
-  default_password: {
-    short: "Default password",
-    detail: "Still on the password the seeding script set — shared with every other seeded account.",
-    fix: "Set a new password from this row.",
-  },
-  unchanged_profile: {
-    short: "Seed profile",
-    detail: "Name and phone are still exactly what was seeded, so nobody has claimed this account.",
-    fix: "Edit the profile, or clear the demo mark if this is a real person.",
-  },
-  never_signed_in: {
-    short: "Never signed in",
-    detail: "Provisioned by the seeding script and never used.",
-    fix: "Deactivate it if nobody needs it.",
-  },
-};
-
-export function demoFlagsOf(user) {
-  return user?.si_dummy_flags ?? [];
-}
-
-export function isDemoAccount(user) {
-  return demoFlagsOf(user).length > 0;
-}
-
-/**
- * Only the flagged accounts, for the Admin dashboard card. Filtering client-side
- * rather than as a PostgREST predicate on the computed column: the user table is
- * small, and the card wants the full rows anyway to list them.
- */
-export function listenDemoAccounts(cb, onError) {
-  return liveQuery({
-    table: "users",
-    run: () => supabase.from("users").select(USER_SELECT).order("name", { ascending: true }),
-    cb: (rows) => cb(rows.filter(isDemoAccount)),
-    onError,
-  });
-}
-
-/**
- * "This is a real account, stop flagging it."
- *
- * A plain UPDATE, like the other profile writes: users_update already limits
- * this to an Administrator, and si_guard_user_self_update (migration 0012)
- * rejects it from anyone else — a flagged user must not be able to clear their
- * own flag.
- *
- * Clearing seed_source drops default_password, unchanged_profile and
- * never_signed_in together, because all three only apply to a seeded account.
- * placeholder_email survives deliberately: an @example.com address is still
- * fake, and the only honest fix is a different account.
- */
-export async function clearDemoMark(userId) {
-  const { error } = await supabase
-    .from("users")
-    .update({ seed_source: null, seed_name: null, seed_phone: null })
-    .eq("id", userId);
-  if (error) throw error;
 }
 
 /** Technician records, for skills and availability. */
@@ -285,34 +204,6 @@ export async function setUserRoles(userId, roles, departmentId, plantIds) {
 export async function setUserStatus(userId, status) {
   const { error } = await supabase.from("users").update({ status }).eq("id", userId);
   if (error) throw error;
-}
-
-/**
- * Mark an account as a test fixture, or stop.
- *
- * Superuser only, and enforced in two places rather than here: the users_update
- * policy, and si_guard_test_account, which catches the SECURITY DEFINER path the
- * policy never sees (migration 0028). This is a plain UPDATE precisely so the
- * policy is what decides — nothing needs restating client-side.
- *
- * A marked account vanishes from this list for everybody else, on or off. That
- * is the point, and it is also why the flag itself is Superuser-only: an
- * Administrator able to set it could hide an account from every other
- * Administrator.
- */
-export async function setTestAccount(userId, isTestAccount) {
-  const { data, error } = await supabase
-    .from("users")
-    .update({ is_test_account: isTestAccount })
-    .eq("id", userId)
-    .select("id");
-  if (error) throw error;
-  // RLS refusing an UPDATE removes no rows and raises nothing, so an empty
-  // result is a refusal wearing a success's clothes — the same check
-  // deleteWorkOrder() makes, for the same reason.
-  if (!data?.length) {
-    throw new Error("That account wasn't changed — only the Superuser can mark a test account.");
-  }
 }
 
 /**

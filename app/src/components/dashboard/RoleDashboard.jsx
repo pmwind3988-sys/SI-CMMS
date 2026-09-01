@@ -132,22 +132,7 @@ export default function RoleDashboard({ viewRole }) {
     // Scoped to the role being viewed, not to everything this account may read.
     // Every card, the recent list and each drill-down are built from this one
     // array, so none of them can disagree with the heading above them.
-    //
-    // Test data is dropped HERE, at that single point, rather than only from the
-    // card arithmetic (migration 0034). Filtering the counts but not the rows
-    // behind them would produce precisely the disagreement the paragraph above
-    // exists to prevent: a card reading 4 opening a list of 5. This is a
-    // dashboard, so the rule is the same one the server-side aggregate follows —
-    // statistics exclude test data. The Work Orders list is the record and still
-    // shows every row, tagged "Demo", which is where you go to find one.
-    //
-    // Only the Supervisor view could ever contain one: the requester and
-    // technician scopes are `requester_id === uid` / `assigned_to_id === uid`, so
-    // a real person's own dashboard cannot hold a fixture's work. Supervisor is
-    // `() => true` since 0019, which is what let the demo seed in.
-    const rows = (workOrders ?? [])
-      .filter((w) => !w.is_test_data)
-      .filter((w) => attention.scope(w, user?.uid));
+    const rows = (workOrders ?? []).filter((w) => attention.scope(w, user?.uid));
     const open = rows.filter((w) => w.status !== "closed");
 
     const remainMs = (w) => {

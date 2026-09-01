@@ -2,7 +2,7 @@
 
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from "recharts";
 import { useIsNarrow } from "../../lib/useMediaQuery";
-import ChartLegend, { EXCLUDES_TEST_DATA } from "./ChartLegend";
+import ChartLegend from "./ChartLegend";
 
 // The two colours are the only thing on this chart that carries meaning and is
 // nowhere stated. `i < 3` below is what draws them; this restates that rule
@@ -10,8 +10,7 @@ import ChartLegend, { EXCLUDES_TEST_DATA } from "./ChartLegend";
 const LEGEND = [
   { color: "#EF4444", label: "Top 3", note: "the three machines with the most work orders" },
   { color: "#F59E0B", label: "The rest of the top ten", note: "ranked by work order count" },
-  { label: "Horizontal axis", note: "how many work orders that machine has had" },
-  EXCLUDES_TEST_DATA,
+  { label: "Horizontal axis", note: "how many work orders that machine has had" },
 ];
 
 export default function MachineBreakdownChart({ data }) {

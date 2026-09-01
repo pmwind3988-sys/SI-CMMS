@@ -4,9 +4,9 @@
  * SI — Service Inside · Dashboard card drill-down
  *
  * The rows behind one stat card. Every dashboard feeds it the same normalised
- * row shape, so the Manager cards (rows from si_dashboard_card_rows), the
- * role dashboards (rows already in memory from listenWorkOrderList) and the
- * demo-account card (rows from listenDemoAccounts) all render identically.
+ * row shape, so the Manager cards (rows from si_dashboard_card_rows) and the
+ * role dashboards (rows already in memory from listenWorkOrderList) render
+ * identically.
  *
  * Row shape:
  *   { id, href?, title, subtitle?, meta?, priority?, status?, tags?,

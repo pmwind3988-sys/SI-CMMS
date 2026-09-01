@@ -441,25 +441,6 @@ function slaRemain(w, slaForPriority) {
   return sla.resolution_target_minutes * 60000 - (Date.now() - createdMs);
 }
 
-/**
- * "Demo" on a work order raised by a test fixture (migration 0034).
- *
- * The list deliberately still SHOWS these — one that vanished would be one
- * nobody could find to delete. But the dashboard excludes them from every
- * statistic, so without the tag a card reading 4 beside a list of 5 looks like a
- * bug rather than a rule.
- */
-function DemoTag() {
-  return (
-    <span
-      title="Raised by a test account — excluded from dashboard statistics"
-      className="ml-1.5 rounded bg-canvas border border-border px-1.5 py-px align-middle text-[10px] font-bold uppercase tracking-wide text-ink-soft"
-    >
-      Demo
-    </span>
-  );
-}
-
 function RaisedCell({ ts }) {
   return (
     <>
@@ -495,7 +476,6 @@ function WorkOrderRow({ w, first, href }) {
       <div className="flex-[2] min-w-0">
         <div className="font-mono text-[11.5px] text-ink-soft">
           {w.wo_number || "Pending…"}
-          {w.is_test_data && <DemoTag />}
         </div>
         <div className="text-[13.5px] text-ink font-medium">{w.asset_name}</div>
       </div>
@@ -534,7 +514,6 @@ function WorkOrderCard({ w, href }) {
         <div>
           <div className="font-mono text-[11px] text-ink-soft">
             {w.wo_number || "Pending…"}
-            {w.is_test_data && <DemoTag />}
           </div>
           <div className="text-[14px] text-ink font-semibold mt-0.5">{w.asset_name}</div>
           <div className="text-[12px] text-ink-soft mt-0.5">{departmentName(w.department_id)}</div>

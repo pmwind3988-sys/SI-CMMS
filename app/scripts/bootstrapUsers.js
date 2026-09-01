@@ -120,10 +120,6 @@ async function run() {
     // department_id matters most for Supervisor (their access is scoped to it);
     // Manager/Admin ignore it entirely per the RLS policies, but it costs
     // nothing to set consistently for every role.
-    // seed_* is what lets the app say "this is still demo data" without
-    // guessing (migration 0012). Recording what was seeded — not just that
-    // something was — is the whole trick: the flag clears by itself as soon as
-    // the live values stop matching these.
     const { error: profileError } = await db.from("users").upsert(
       {
         id: authUser.id,
@@ -134,10 +130,6 @@ async function run() {
         department_id: DEPARTMENT_ID,
         plant_ids: [PLANT_ID],
         status: "active",
-        seed_source: "bootstrap",
-        seed_name: u.name,
-        seed_phone: u.phone,
-        seeded_at: new Date().toISOString(),
       },
       { onConflict: "id" }
     );

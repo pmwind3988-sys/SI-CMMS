@@ -434,126 +434,70 @@ CLI wants to re-apply 0012. A letter suffix sorts correctly and is ignored outri
 version parser takes digits only. Both measured. 0013 is already applied on production, so
 editing it can never re-run there.
 
-### Test accounts (migrations 0028, 0029)
+### Test accounts are gone (migrations 0046, 0047)
 
-`users.is_test_account` marks a fixture: an account that exists to be signed into while a
-change is being tried, not to do work. The five bootstrap users carry it (backfilled from
-`seed_source`), and it is **the Superuser's alone** — both halves of that.
+**There is no such thing as a test account on this schema any more, and no such thing as
+test data.** 0028's `users.is_test_account` and 0033/0034's `work_orders.is_test_data` are
+both dropped, along with every policy, trigger and predicate built on them.
 
-*Invisible.* `users_select` adds `id = auth.uid() or si_is_superuser() or not is_test_account`,
-the same shape the `is_protected` clause already had. An Administrator therefore does not see
-these rows in Admin → Users, in any count, or in any picker — including the technician roster
-on the assign panel. Deliberate: a fixture that appears in a live picker is one somebody
-eventually assigns real work to.
+The argument for keeping fixtures on production expired when `SI-CMMS-test` was stood up.
+A fixture existed to be signed into while a change was being tried; there is now a whole
+project for that, and an account on production that nobody can account for is a liability
+rather than a convenience.
 
-*Invisible means the `users` row, not the name.* Measured as an ordinary Administrator going
-straight at PostgREST with a fixture's exact uuid: `users?id=eq.<uuid>` returns `[]`, both
-PATCHes return `[]`, and `users?select=name` returns two rows. But `technicians?select=name`
-*used to return* all three fixtures, because `technicians_select` was `using (si_signed_in())`
-and 0028 touched only `users`. The name is also denormalised onto `work_orders.requester_name` /
-`assigned_to_name`, `work_order_history.actor_name` and `comments.author_name`.
+**Two migrations, and the order is the point.** 0046 deletes the five fixture accounts;
+0047 removes the machinery. Reversed — or half-applied — the flag disappears while the rows
+are still there, and they surface as ordinary staff in Admin → Users and in the technician
+roster. That is precisely the outcome 0028 was written to prevent, reached by deleting 0028.
 
-None of that was a privilege — the uuid buys nothing, as the empty PATCHes show — but the
-claim is "cannot be seen or administered as an account", not "the name appears nowhere". The
-history columns *must* keep the name; an audit trail that hides who acted is not an audit
-trail. `technicians` was the one that was wrong rather than necessary, and **migration 0029
-fixes it**: `technicians_select` gained the same three-branch shape, so that table now returns
-`[]` to an Administrator and all three fixtures to a Superuser — both measured, the second
-against the assign panel itself.
+What 0046 could safely do was decided by measurement, not assumption. All five fixtures
+returned zero for work orders raised, work orders worked or verified, history rows, comments
+and attachments, so `si_guard_user_delete` (0030) never fired and no audit trail was touched.
+Had any of them acted on a real work order the migration would have failed on that guard,
+loudly, which is the right failure. **That guard has no null-uid early return, deliberately:
+it refuses a migration exactly as it refuses an Administrator.**
 
-0029 is worth reading for the trap in it. The obvious policy inlines the test as
-`not exists (select 1 from users u where u.id = technicians.user_id and u.is_test_account)`,
-and that does **nothing**: a policy expression evaluates with the querying user's privileges,
-so the subquery is filtered by `users_select`, which already hides test accounts from this
-exact caller. It finds no row, `not exists` is true, and the row stays visible to precisely
-the people it was meant to be hidden from. It fails open, silently, and reads as correct.
-Hence `si_is_test_account()`, SECURITY DEFINER — the same reason every other guard here is.
+`is_test_account` is also why 0046 is correct on both projects. The fixtures on
+`SI-CMMS-test` were never marked — 0028 backfills from `seed_source` in a one-time UPDATE
+that, on a project built from scratch, runs before `bootstrap:users` has created anybody —
+so it deletes five rows on production and none on test. The test project keeps the accounts
+you actually sign into. A hardcoded email list would have destroyed them.
 
-*Switchable by nobody else.* `users_update` excludes them from non-Superusers, and
-`si_guard_test_account` (BEFORE UPDATE, SECURITY DEFINER) refuses a `status` change and refuses
-any change to the mark itself. Two enforcement points rather than one because the policy does
-not cover `si_set_user_roles` — SECURITY DEFINER changes the database *role*, not `auth.uid()`,
-so the trigger still reads the caller's JWT and still refuses. `admin-users` is the third and
-restates the rule in TypeScript, because a service-role connection has `auth.uid() = null` and
-every check here is invisible to it. Same three points as every other rule about a `users` row;
-the loosest path wins.
+**What survives, and why.** `user_deletions.is_test_account` stays: that table is an archive,
+and 0046 has just written five rows into it with the flag true. Dropping the column would
+erase the record of the removal at the moment of recording it — the same reasoning that kept
+`priority_touched` as an export column that can now only read "No". `si_is_placeholder_email`
+stays too, because `admin-users` still refuses to send a recovery link to an address that can
+never receive mail.
 
-The guard refuses `status` and the mark, **not every write**. The first version refused
-everything, which would have stopped a fixture editing its own name or phone — exactly the
-thing you sign into it to test. Self-activation was never reachable anyway:
-`si_guard_user_self_update` already refuses a self `status` change for everyone, Superuser
-included.
+**The seeded-demo-data heuristic went with it.** 0012's `si_dummy_flags` computed column and
+the `seed_*` columns behind it drove a "Demo accounts" card on the dashboard, a banner and
+filter in Admin → Users, and a per-account chip naming why. It measured the same thing by a
+different route and has nothing left to measure. Nothing was ever gated on it, which is what
+made it safe to remove without ceremony — 0028's header explains why it was never the right
+thing to *enforce* with in the first place.
 
-`auth.uid() is null` returns early, so the bootstrap and seed scripts still run. That is the
-same door `si_protected_override()` opens for system writes, and it has the same shape of risk:
-it is safe only because a null uid means a service-role connection, which has already been
-authenticated as trusted somewhere else.
+One consequence to know: `canSendRecoveryLink()` used to read `si_dummy_flags`. It now tests
+the address against a domain list in `lib/constants.js` that **mirrors
+`si_is_placeholder_email`, and must be changed in both places** — the same standing rule that
+already binds `suggestPriority()` to `si_derive_priority()`. The server is still the boundary;
+the client predicate only avoids offering a button whose one possible outcome is a refusal.
 
-### Test data and the dashboard (migrations 0033, 0034)
+**The dashboard is simpler than it was.** `si_compute_dashboard_stats` and
+`si_dashboard_card_rows` are 0034's definitions with the predicates removed and nothing else
+altered. Both were replaced *before* the column was dropped — a plpgsql body is not parsed
+until it is called, so the reverse order pushes cleanly and leaves both functions to fail at
+the next pg_cron sweep. Same trap `si_guard_user_self_update` posed for the `seed_*` columns,
+and the same one 0036's header describes from the other direction: **a successful `db push` is
+not evidence that a plpgsql function works.**
 
-**The rule, and it is one sentence: statistics exclude test data; lists show everything,
-tagged.**
+The known gap CLAUDE.md used to record here — the two timing averages including work a fixture
+performed — resolved itself. There are no fixtures, so there is nothing to weigh.
 
-`si_compute_dashboard_stats()` aggregated `from work_orders` with no predicate at all, and
-`npm run seed:demo` walks one work order raised by `requester@example.com` and assigned to
-`tech.arun@example.com` — both fixtures — the whole way to `closed`. So it fed
-`completed_today`, both averages, `monthly_work_orders`, `department_breakdown`,
-`machine_breakdown` and `technician_performance`, which groups by `assigned_to_name`: the
-fixture's **name**, rendered on the Manager and Admin charts. The same side door 0029 closed
-on the technicians roster, reopened where nobody thought to look.
-
-**`work_orders.is_test_data` keys on the requester, not on either party.** 0033 stamped it
-`requester or assignee` and that was too broad by one word — measured on the live project it
-caught a real work order Amirul had raised and merely assigned to a fixture, and since the
-only other row was the demo seed, every card went to zero and every chart to `[]`. **0034
-narrows it**: whether the fault was real is decided by who raised it. The two outputs whose
-*subject* is the technician — `technician_performance` and `active_technicians` — additionally
-test `si_is_test_account(assigned_to_id)`, because those credit a person. Volume, department
-and machine breakdowns, open counts and SLA all keep the row.
-
-Recorded rather than hidden: the two timing averages still include a row a fixture worked,
-because they measure the work order's journey rather than crediting anyone. There is no
-reading of that pair where both halves are right.
-
-**Not `si_dummy_flags`.** The dashboard already carries a demo-accounts warning card built on
-it, and reusing it here would have been the tempting thing — but that column is a *heuristic*
-(placeholder email, still on the seeded password, profile never edited). A real person who had
-not yet changed the password they were given would have had their work silently dropped out of
-every statistic. 0028's mark is deliberate and set only by a Superuser.
-
-**A denormalised column rather than a join, because the client cannot do the join.** The
-aggregate is SECURITY DEFINER and could read `users` directly; `users_select` hides a fixture's
-row from everyone but the Superuser, so no client-side filter is even expressible. That is what
-`RoleDashboard` needed — it computes the Supervisor's cards from `listenWorkOrderList()`, whose
-scope is `() => true` since 0019 — and what the export needed. One column answers all three.
-
-Three consequences worth knowing:
-
-- **`si_dashboard_card_rows()` changed in the same migration, necessarily.** It exists (0012)
-  so a card and its drill-down share one definition of "open"; adding the predicate to the
-  aggregate alone reproduces exactly the disagreement it was written to prevent. Its
-  `active_technicians` branch is also where a fixture's name escaped despite 0028: `left join
-  users u` nulls for a row the caller may not see, and the coalesce falls through to
-  `max(w.assigned_to_name)`, the denormalised copy.
-- **The stamp trigger fires on every UPDATE, not `update of requester_id, assigned_to_id`.**
-  RLS grants *rows*, not columns, so a column list would leave `update work_orders set
-  is_test_data = false` unguarded — and `updateWorkOrderFields()` forwards an arbitrary
-  `fields` object, so that is a live path. It is named `c_stamp_work_order_test_data` because
-  Postgres fires BEFORE triggers alphabetically and 0003's `b_stamp_work_order` **clears
-  `assigned_to_id` on a decline**; running before it would read the technician being declined
-  away.
-- **`work_orders_select` is untouched.** A demo work order that vanished from the list would be
-  one nobody could find to delete, so `WorkOrderList` tags it "Demo" instead. `RoleDashboard`
-  drops test rows from the single array its cards, recent list and drill-downs all share —
-  filtering the counts but not the rows behind them would be the 0012 bug again.
-
-**A deleted work order used to sit in the charts for up to fifteen minutes.** Nothing was wrong
-with the arithmetic: `deleteWorkOrder()` hard-deletes (0018) and `stats` is a full rebuild, so a
-*recomputed* aggregate was already right — but only pg_cron recomputed, every fifteen minutes.
-`work_orders_recompute_stats_delete` is `after delete … for each statement` (once per statement,
-not once per row). It has to be server-side: `si_refresh_dashboard_stats()` re-checks for
-Manager/Admin, and 0018 lets a Superuser grant deletion to a Supervisor, who would then delete a
-work order and be refused the refresh.
+Every user-visible label went with the columns: the amber **Demo** tag on a work order row, the
+flask **Test account** badge, the two chart footnotes (`EXCLUDES_TEST_DATA` and the technician
+chart's narrower one), and the export's **Test Data** column and its Export Info paragraph.
+`RoleDashboard` no longer filters its row set, and `bootstrap:users` no longer writes `seed_*`.
 
 ### Estimated downtime is no longer collected
 
@@ -687,9 +631,8 @@ Three details in the shaping:
 rows *silently*, and ten history rows per work order overflows that at three hundred work
 orders. It shares `scopedWorkOrderQuery()` with `listenWorkOrderList` so the file cannot drift
 from the list it was taken from, and the priority/status/search predicate is defined once in
-`WorkOrderList` and reused by both. A fixture's work order is **included and marked** in a
-`Test Data` column rather than dropped — an export is a record, and silently omitting rows from
-a record is worse than a column Excel's autofilter clears in one click.
+`WorkOrderList` and reused by both. The `Test Data` column is gone with the concept it
+reported (migration 0047); every row the query returns is in the file.
 
 The date filter narrows **server-side**, which is a correctness fix rather than a performance
 one: the system-wide branch is `.limit(300)` on newest-first, so filtering a loaded array for
@@ -1419,18 +1362,18 @@ has happened on this project, and is what 0013 exists to fix.
 - `app/GO_LIVE.md` — env values, migrations, the access-token hook, seeding users.
 - `app/TEST_ENVIRONMENT.md` — the two projects, the switch, what the config clone does and
   does not copy, the Vercel Preview split that gives a staging site, and the ways test
-  deliberately differs from production (the fixtures are **not** marked `is_test_account`
-  there, so the demo work order counts in the dashboard statistics).
+  deliberately differs from production - most importantly that test still has the six
+  bootstrap fixtures, which migration 0046 removed from production.
 
 ## Known gaps
 
-- **The six fixtures on the test project are not marked `is_test_account`.** 0028 backfills
-  that flag from `seed_source` in a one-time UPDATE, which on a fresh project runs before
-  `bootstrap:users` has created anybody. So on test the fixtures show in Admin → Users and in
-  the technician roster, and the demo work order carries `is_test_data = false` and counts in
-  the dashboard statistics. Useful — a demo work order you can see — but it means the one thing
-  the test project cannot exercise is the test-account hiding itself. The tell is `technicians`:
-  production returns `[]` to an Administrator, test returns the fixtures.
+- **The fixtures live on the test project only, and nothing hides them there any more.**
+  Migration 0046 deleted the five on production; the six on test survive it, because 0028
+  never marked them and 0046 keys on that mark. With 0047 applied they are ordinary
+  accounts - they show in Admin > Users, in the technician roster, and the demo work order
+  counts in the test project's dashboard statistics. That is the intended end state rather
+  than a gap to close: test is where you want to see the seeded data, and production now has
+  none of it.
 - `npm run seed:demo` had been broken since migration 0021 and is fixed. It selected
   `users.role`, which 0021 dropped, and PostgREST answers a select naming a missing column with
   an error rather than a null — so it failed on its first lookup. Nothing read the value:
@@ -1453,12 +1396,6 @@ has happened on this project, and is what 0013 exists to fix.
   the same timestamp can read differently on two screens of the same app. Mechanical to fix —
   swap the call for `fmtDateTimeMY` — and deliberately left alone here to keep this change to
   what was asked for.
-- The dashboard's two timing averages (`avg_response_minutes`, `avg_repair_minutes`) still
-  include work a fixture performed on a genuinely-raised work order — only
-  `technician_performance` and `active_technicians` exclude a fixture assignee (migration 0034).
-  Signing into a fixture and closing a real work order in four minutes puts four minutes in the
-  average. Excluding it would instead lose a real resolution from the timing stats; 0034's
-  header records why neither answer is wholly right.
 - **Image compression is best-effort by design, and two cases fall short of halving.** A
   format the browser cannot decode uploads at full size — in practice HEIC on Chrome and
   Firefox, which have no decoder for it; and a text-heavy PNG reached only 49.6% smaller in

@@ -193,26 +193,7 @@ export function canEditUser(target, me) {
   if (!me || !target) return false;
   if (target.is_protected) return false;
   if (target.id === me.uid) return true;
-  // A test account is the Superuser's alone (migration 0028). Mirroring the
-  // policy rather than relying on it: users_select already hides these rows from
-  // everyone else, so in practice nobody else has one to pass in — and a
-  // predicate that would say "yes" if they did is the kind that survives into a
-  // screen that reads differently one day.
-  if (target.is_test_account && me.isSuperuser !== true) return false;
   return hasRole(me, ROLES.ADMIN) && accountRank(target) < accountRank(me);
-}
-
-/**
- * May `me` mark this account as a test fixture, or unmark it?
- *
- * Superuser only, and never your own row — an account that can mark itself can
- * hide itself, which is the same objection as everywhere else in this schema.
- */
-export function canMarkTestAccount(target, me) {
-  if (!me || !target) return false;
-  if (target.is_protected) return false;
-  if (target.id === me.uid) return false;
-  return me.isSuperuser === true;
 }
 
 /**
@@ -276,12 +257,29 @@ export function canSetUserPassword(target, me) {
  *
  * A placeholder address is excluded here as well as refused server-side. The
  * refusal is the boundary; this only avoids offering a button whose one possible
- * outcome is that refusal. si_dummy_flags is a computed column (migration 0012)
- * and already on every row this screen reads.
+ * outcome is that refusal.
+ *
+ * The domain list mirrors si_is_placeholder_email (migration 0012), which is
+ * what admin-users actually enforces with, and it is a deliberate duplicate
+ * rather than a lookup: 0045 dropped si_dummy_flags, the computed column this
+ * used to read, and re-adding a per-row RPC to grey out one button would cost a
+ * round trip per account to reach an answer the server re-checks anyway. If that
+ * list changes, change it in both places -- the same standing rule as
+ * suggestPriority() and si_derive_priority().
  */
+const PLACEHOLDER_EMAIL_DOMAINS = new Set([
+  "example.com", "example.org", "example.net", "example.edu",
+  "test.com", "test.local", "localhost", "local", "invalid",
+  "demo.com", "sample.com", "mailinator.com", "yopmail.com",
+]);
+
+export function isPlaceholderEmail(email) {
+  return PLACEHOLDER_EMAIL_DOMAINS.has(String(email ?? "").split("@")[1]?.toLowerCase() ?? "");
+}
+
 export function canSendRecoveryLink(target, me) {
   if (!canEditUser(target, me)) return false;
-  return !(target.si_dummy_flags ?? []).includes("placeholder_email");
+  return !isPlaceholderEmail(target.email);
 }
 
 /**

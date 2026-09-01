@@ -1,7 +1,7 @@
 "use client";
 
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import ChartLegend, { EXCLUDES_TEST_DATA } from "./ChartLegend";
+import ChartLegend from "./ChartLegend";
 
 // Single series, so nothing here is a colour key. What this chart actually
 // needs explaining is its vertical axis, which carries no title, and the fact
@@ -9,8 +9,7 @@ import ChartLegend, { EXCLUDES_TEST_DATA } from "./ChartLegend";
 // one reading of it that would otherwise be wrong.
 const LEGEND = [
   { color: "#0F3D91", label: "Work orders raised", note: "counted by the month they were reported in, not the month they were finished" },
-  { label: "Vertical axis", note: "how many were raised that month" },
-  EXCLUDES_TEST_DATA,
+  { label: "Vertical axis", note: "how many were raised that month" },
 ];
 
 export default function MonthlyWorkOrdersChart({ data }) {

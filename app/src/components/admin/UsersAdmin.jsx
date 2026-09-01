@@ -21,12 +21,9 @@ import {
   Search,
   Loader2,
   Pencil,
-  FlaskConical,
-  BadgeCheck,
   Mail,
   MailCheck,
   AlertTriangle,
-  FlaskRound,
   Trash2,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
@@ -38,21 +35,16 @@ import {
   createUser,
   setUserRoles,
   setUserStatus,
-  setTestAccount,
   deleteUser,
   updateUserProfile,
   setUserEmail,
-  clearDemoMark,
-  demoFlagsOf,
-  isDemoAccount,
-  DEMO_FLAGS,
 } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
 import {
   canEditUser,
   canSetUserPassword,
   canSendRecoveryLink,
-  canMarkTestAccount,
+  isPlaceholderEmail,
   canDeleteUser,
   canChangeUserEmail,
   assignableRoles,
@@ -120,7 +112,6 @@ export default function UsersAdmin() {
   const [toast, setToast] = useState(null);
   const [q, setQ] = useState("");
   const [fRole, setFRole] = useState("All");
-  const [demoOnly, setDemoOnly] = useState(false);
   const [panel, setPanel] = useState(null); // { kind: 'password'|'role'|'profile'|'create', user? }
   /* Sending a reset link is the one action on this screen that is rationed, so
      it is the one action that has to resist being pressed twice. `sendingTo`
@@ -168,7 +159,6 @@ export default function UsersAdmin() {
     return rows.filter((u) => {
       // Membership: filtering by Technician must surface a Supervisor+Technician.
       if (fRole !== "All" && !(u.roles ?? []).includes(fRole)) return false;
-      if (demoOnly && !isDemoAccount(u)) return false;
       if (!needle) return true;
       return (
         u.name?.toLowerCase().includes(needle) ||
@@ -179,7 +169,7 @@ export default function UsersAdmin() {
         u.department_id?.toLowerCase().includes(needle)
       );
     });
-  }, [users, q, fRole, demoOnly]);
+  }, [users, q, fRole]);
 
   /* After the filter, never before - the search box reaches every loaded
      account, not just the page on screen. Reset is keyed on the controls, since
@@ -188,9 +178,7 @@ export default function UsersAdmin() {
   const cardsRef = useRef(null);
   const pageSize = useAutoPageSize([tableRef, cardsRef], { min: 2, ready: !!users, signature: filtered.length });
 
-  const pager = usePaged(filtered, { pageSize, resetKey: `${q}|${fRole}|${demoOnly}` });
-
-  const demoCount = (users ?? []).filter(isDemoAccount).length;
+  const pager = usePaged(filtered, { pageSize, resetKey: `${q}|${fRole}` });
 
   /**
    * Emailing somebody a link to set their own password.
@@ -228,31 +216,6 @@ export default function UsersAdmin() {
     }
   }
 
-  async function handleToggleTestAccount(u) {
-    const next = !u.is_test_account;
-    setError(null);
-    try {
-      await setTestAccount(u.id, next);
-      flash(
-        next
-          ? `${u.name} is now a test account — nobody but you can see or switch it.`
-          : `${u.name} is no longer a test account and is visible to Administrators again.`,
-      );
-    } catch (e) {
-      setError(describeError(e, "Couldn't change that."));
-    }
-  }
-
-  async function handleClearDemoMark(u) {
-    setError(null);
-    try {
-      await clearDemoMark(u.id);
-      flash(`${u.name} is no longer marked as a demo account.`);
-    } catch (e) {
-      setError(describeError(e, "Couldn't clear that demo mark."));
-    }
-  }
-
   // The last-active-Administrator check that used to live here is gone, and not
   // by oversight. Migration 0015 makes locking out the last admin structurally
   // impossible — you cannot deactivate a peer Administrator (same rank) and you
@@ -287,25 +250,6 @@ export default function UsersAdmin() {
       </div>
 
       {error && <ErrorBanner message={error} />}
-
-      {demoCount > 0 && (
-        <div className="mb-3.5 flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded border border-[#F59E0B66] bg-[#FFFBEB] px-4 py-3 text-[13px] text-[#92400E]">
-          <span className="flex min-w-0 items-start gap-2">
-            <FlaskConical size={15} className="mt-0.5 flex-shrink-0" />
-            <span className="min-w-0">
-              <strong>{demoCount}</strong> {demoCount === 1 ? "account is" : "accounts are"} still
-              seeded demo data. Each one shows why below, and each reason disappears on its own once
-              it is dealt with.
-            </span>
-          </span>
-          <button
-            onClick={() => setDemoOnly((v) => !v)}
-            className="flex-shrink-0 font-semibold text-[#92400E] hover:underline"
-          >
-            {demoOnly ? "Show everyone" : "Show only these"}
-          </button>
-        </div>
-      )}
 
       <div className="mb-3.5 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center">
         <div className="flex items-center gap-2 rounded border border-border bg-white px-3 py-2 sm:w-72">
@@ -365,8 +309,6 @@ export default function UsersAdmin() {
                 {u.employee_id && <span> · #{u.employee_id}</span>}
               </div>
               {u.must_change_password && <MustChangePassword />}
-              {u.is_test_account && <TestAccountMark />}
-              <DemoFlags user={u} />
             </div>
             <div className="flex-[1.5]">
               <RoleBadges roles={u.roles} />
@@ -381,11 +323,9 @@ export default function UsersAdmin() {
                 me={me}
                 setPanel={setPanel}
                 onToggleStatus={handleToggleStatus}
-                onClearDemoMark={handleClearDemoMark}
                 onSendRecoveryLink={handleSendRecoveryLink}
                 sendingLink={sendingTo === u.id}
                 cooldownLeft={cooldownLeft}
-                onToggleTestAccount={handleToggleTestAccount}
               />
             </div>
           </div>
@@ -413,8 +353,6 @@ export default function UsersAdmin() {
                 </div>
                 <div className="mt-1 text-[12px] text-ink-soft">{u.department_id || "No department"}</div>
                 {u.must_change_password && <MustChangePassword />}
-                {u.is_test_account && <TestAccountMark />}
-                <DemoFlags user={u} />
               </div>
               <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
                 <RoleBadges roles={u.roles} />
@@ -427,11 +365,9 @@ export default function UsersAdmin() {
                 me={me}
                 setPanel={setPanel}
                 onToggleStatus={handleToggleStatus}
-                onClearDemoMark={handleClearDemoMark}
                 onSendRecoveryLink={handleSendRecoveryLink}
                 sendingLink={sendingTo === u.id}
                 cooldownLeft={cooldownLeft}
-                onToggleTestAccount={handleToggleTestAccount}
               />
             </div>
           </Card>
@@ -560,43 +496,9 @@ function StatusText({ status }) {
  * reach anything (migration 0026 withholds their roles), and if they are an
  * Administrator they cannot administer anyone either.
  */
-/**
- * Only the Superuser ever renders this, because only the Superuser can see the
- * row at all (migration 0028). It is a reminder of what the account is FOR —
- * these are the fixtures the app gets tested against, and switching one on makes
- * it a working account for as long as it stays on.
- */
-function TestAccountMark() {
-  return (
-    <div className="mt-1 inline-flex items-center gap-1 rounded bg-[#EEF2FF] px-1.5 py-0.5 text-[11px] font-semibold text-[#3730A3]">
-      <FlaskRound size={11} /> Test account — only you can see or switch this
-    </div>
-  );
-}
-
 function MustChangePassword() {
   return (
     <div className="mt-1 text-[11.5px] text-[#92400E]">Must change password at next sign-in</div>
-  );
-}
-
-function DemoFlags({ user }) {
-  const flags = demoFlagsOf(user);
-  if (flags.length === 0) return null;
-  return (
-    <div className="mt-1 flex flex-wrap items-center gap-1">
-      <FlaskConical size={11} className="flex-shrink-0 text-[#B45309]" aria-hidden="true" />
-      <span className="sr-only">Demo account:</span>
-      {flags.map((f) => (
-        <span
-          key={f}
-          title={`${DEMO_FLAGS[f]?.detail ?? f} ${DEMO_FLAGS[f]?.fix ?? ""}`.trim()}
-          className="rounded bg-[#FEF3C7] px-1.5 py-px text-[10.5px] font-semibold text-[#92400E]"
-        >
-          {DEMO_FLAGS[f]?.short || f}
-        </span>
-      ))}
-    </div>
   );
 }
 
@@ -611,17 +513,15 @@ function UserActions({
   me,
   setPanel,
   onToggleStatus,
-  onClearDemoMark,
   onSendRecoveryLink,
   sendingLink,
   cooldownLeft,
-  onToggleTestAccount,
 }) {
   const editable = canEditUser(user, me);
   const isSelf = user.id === me?.uid;
   const maySetPassword = canSetUserPassword(user, me);
   const maySendLink = canSendRecoveryLink(user, me);
-  const placeholderEmail = (user.si_dummy_flags ?? []).includes("placeholder_email");
+  const placeholderEmail = isPlaceholderEmail(user.email);
 
   if (!editable) {
     return (
@@ -640,36 +540,8 @@ function UserActions({
     );
   }
 
-  // Only offered when there is a seed mark to clear. A placeholder email is not
-  // dismissible on its own — it is still a fake address after any amount of
-  // acknowledging, and the only real fix is a different account.
-  const canClearMark = Boolean(user.seed_source);
   return (
     <>
-      {canMarkTestAccount(user, me) && (
-        <Button
-          size="sm"
-          variant="ghost"
-          icon={FlaskRound}
-          aria-label={user.is_test_account ? "Stop treating as a test account" : "Make this a test account"}
-          title={
-            user.is_test_account
-              ? "Stop treating this as a test account — Administrators will see it again"
-              : "Make this a test account — it disappears from every other Administrator's view, on or off"
-          }
-          onClick={() => onToggleTestAccount(user)}
-        />
-      )}
-      {canClearMark && (
-        <Button
-          size="sm"
-          variant="ghost"
-          icon={BadgeCheck}
-          aria-label="Mark as a real account"
-          title="Mark this as a real account — clears the seed-related flags"
-          onClick={() => onClearDemoMark(user)}
-        />
-      )}
       {/* Superuser only, for anyone but yourself. An Administrator who can set a
           subordinate's password holds that person's credential — so the button
           is simply absent for them, rather than present and refused. */}
