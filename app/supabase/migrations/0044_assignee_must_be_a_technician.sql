@@ -1,5 +1,5 @@
 -- ============================================================================
--- SI - Service Inside · 0023 An assignment must land on someone who can move it
+-- SI - Service Inside · 0044 An assignment must land on someone who can move it
 -- ============================================================================
 -- The client half of this fix is listenTechnicians() in src/lib/workOrders.js,
 -- which now intersects `technicians` with `users` on "holds technician" and
@@ -19,12 +19,23 @@
 -- An account set inactive produced the same dead end, because the roster had no
 -- status filter either.
 --
--- NUMBERED 0023, not 0022. 0022 is taken by 0022_realtime_technicians.sql on
--- another branch, committed the same afternoon. Two files sharing a version
--- prefix is not a cosmetic clash: the CLI matches history on the prefix, not
--- the filename, so whichever applied first would make the other look already
--- applied and skip it in silence. The two are independent -- a publication
--- membership and a function body -- so either order is fine.
+-- RENUMBERED 0023 -> 0044 when this branch was merged, and the original note is
+-- worth keeping because the hazard changed shape rather than going away. It was
+-- written 0023 to dodge 0022_realtime_technicians.sql on a sibling branch, since
+-- the CLI matches history on the version prefix and not the filename, so two
+-- files sharing 0022 would have made whichever applied first mask the other in
+-- silence. By merge time the schema had moved to 0043 and BOTH low numbers were
+-- wrong for a second reason: a file sorting before the last version applied on
+-- the remote desynchronises the applied-version pairing, which is the trap
+-- CLAUDE.md records against inserting 00125_ between 0012_ and 0013_. So this
+-- moved to the end of the sequence instead. Safe to reorder: nothing between
+-- 0024 and 0043 redefines si_guard_work_order_transition(), so this is still
+-- 0020's function plus one check, and si_eligible_roles() -- which 0040 did
+-- replace -- is resolved at call time rather than inlined here.
+--
+-- The realtime-publication migration it was avoiding is already applied as
+-- 0024_realtime_technicians.sql, with byte-identical SQL, so the duplicate
+-- 0022 file was dropped in this merge rather than renumbered.
 --
 -- ONE function is replaced and nothing else changes: no new object, no policy
 -- change, no widening. si_guard_work_order_transition() is 0020's function with
