@@ -37,6 +37,7 @@ import { ROLES, ROLE_LABELS } from "../../lib/roles";
 import RoleSwitcher from "./RoleSwitcher";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, EmptyState } from "../ui/Surfaces";
+import { usePaged, PagerFooter } from "../ui/Paged";
 import { describeError } from "../../lib/errors";
 import StatCard from "./StatCard";
 import CardDetail, { rowFromWorkOrder } from "./CardDetail";
@@ -190,6 +191,12 @@ export default function RoleDashboard({ viewRole }) {
 
   const loading = workOrders === null || !ready;
 
+  /* The attention list is the only uncapped strip on this screen - `recent` is
+     already sliced to 8. Keyed on the role being viewed: the switcher changes
+     which queue this is, so it should start at the top again. The count beside
+     the heading still prints `stats.needsMe.length`, the real total. */
+  const needsMePager = usePaged(stats.needsMe, { pageSize: 10, resetKey: view });
+
   /* Label, colour and the rows behind each figure, in one place so the card and
      its drill-down are built from the same entry. */
   const cards = [
@@ -311,7 +318,7 @@ export default function RoleDashboard({ viewRole }) {
             SLA drop under the title instead of taking columns of their own, and
             the CTA collapses to its arrow. */}
         {!loading &&
-          stats.needsMe.map((w, i) => (
+          needsMePager.visible.map((w, i) => (
             <button
               key={w.id}
               onClick={() => router.push(`/work-orders/view?id=${w.id}`)}
@@ -342,6 +349,8 @@ export default function RoleDashboard({ viewRole }) {
               </span>
             </button>
           ))}
+
+        {!loading && <PagerFooter pager={needsMePager} noun="work orders" />}
       </Card>
 
       {/* Recent activity. */}

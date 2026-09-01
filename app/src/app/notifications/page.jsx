@@ -31,6 +31,7 @@ import {
 } from "../../lib/notifications";
 import { describeError } from "../../lib/errors";
 import { Card, EmptyState, ErrorBanner, ModalOverlay, Toast } from "../../components/ui/Surfaces";
+import { usePaged, PagerFooter } from "../../components/ui/Paged";
 import Button from "../../components/ui/Button";
 
 const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp };
@@ -62,6 +63,11 @@ function NotificationsInner() {
   const unread = (items || []).filter((n) => n.status !== "read");
   const read = (items || []).filter((n) => n.status === "read");
   const filtered = (items || []).filter((n) => filter === "All" || n.type === filter);
+
+  /* "Mark all read" and "Clear read" deliberately keep acting on `unread` and
+     `read` - every loaded row, not the page on screen. A button whose meaning
+     changed with how far you had paged would be the worse bug. */
+  const pager = usePaged(filtered, { pageSize: 20, resetKey: filter });
   const typesPresent = Array.from(new Set((items || []).map((n) => n.type)));
 
   function flash(msg) {
@@ -161,7 +167,7 @@ function NotificationsInner() {
             No notifications yet.
           </EmptyState>
         )}
-        {filtered.map((n, i) => {
+        {pager.visible.map((n, i) => {
           const meta = NOTIFICATION_META[n.type] || { icon: "Bell", color: "#64748B" };
           const Icon = ICONS[meta.icon] || Bell;
           const isUnread = n.status !== "read";
@@ -207,6 +213,7 @@ function NotificationsInner() {
             </div>
           );
         })}
+        <PagerFooter pager={pager} noun="notifications" />
       </Card>
 
       {/* Named count rather than "are you sure": the number is the only thing

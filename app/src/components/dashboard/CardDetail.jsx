@@ -23,6 +23,7 @@ import { X, ArrowRight } from "lucide-react";
 import { fmtDue } from "../../lib/constants";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, EmptyState, ModalOverlay } from "../ui/Surfaces";
+import { usePaged, PagerFooter } from "../ui/Paged";
 
 export default function CardDetail({
   title,
@@ -53,6 +54,11 @@ export default function CardDetail({
   }, [onClose]);
 
   const list = rows ?? [];
+
+  /* The heading keeps printing `list.length`, so the true total stays visible
+     while only part of it is rendered. Keyed on the title: the sheet is reused
+     for whichever card was opened. */
+  const pager = usePaged(list, { pageSize: 20, resetKey: title });
 
   return (
     <ModalOverlay onClose={onClose} label={title || "Work order details"}>
@@ -91,7 +97,7 @@ export default function CardDetail({
 
           {!loading &&
             !error &&
-            list.map((r, i) => {
+            pager.visible.map((r, i) => {
               const clickable = Boolean(r.href);
               const Tag = clickable ? "button" : "div";
               return (
@@ -149,6 +155,7 @@ export default function CardDetail({
                 </Tag>
               );
             })}
+          {!loading && !error && <PagerFooter pager={pager} />}
         </div>
 
         {footnote && (
