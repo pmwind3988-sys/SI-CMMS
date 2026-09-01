@@ -33,6 +33,7 @@ import {
   primeNotificationSound,
   requestOsNotificationPermission,
 } from "../lib/osNotifications";
+import { ensurePushSubscription } from "../lib/pushSubscription";
 
 const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp };
 
@@ -191,6 +192,12 @@ export default function NotificationBell() {
     const next = await requestOsNotificationPermission();
     setOsPermission(next);
     if (next === "granted") {
+      // Without this, granting through the bell registers no device: the
+      // permission is on but push_subscriptions never gets a row, so the
+      // "Alerts are on" toast below is a promise this browser cannot keep.
+      // AlertsGate does the same call after its own grant; this is the other
+      // place a grant can happen.
+      ensurePushSubscription();
       // Deliberately shown while the app is in the foreground, against the rule
       // above: it is the only proof the user gets that the permission took and
       // that the sound is audible at their current volume.

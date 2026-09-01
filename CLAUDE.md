@@ -980,24 +980,93 @@ machine back on the raise form the next time an Administrator corrected its name
 synthesised Web Audio chime on the web. `NotificationBell` drives it off the subscription it
 already owns, so there is no second websocket.
 
-Delivery reaches exactly as far as that websocket. App backgrounded → status-bar notification
-with sound; app in the foreground → chime only, because the badge on the bell is already the
-notification and duplicating it is what gets alerts muted; **app swiped away or browser
-closed → nothing.** That last case needs a server to push to the device and `output: "export"`
-means there isn't one — the FCM/Web Push path is written up in `app/DATA_AND_STORAGE.md` §5.
+Delivery reaches exactly as far as that websocket, for the in-app case: app backgrounded →
+status-bar notification with sound; app in the foreground → chime only, because the badge on
+the bell is already the notification and duplicating it is what gets alerts muted. **App
+swiped away or browser closed** used to mean nothing — no process, nothing to present a
+notification — and now goes through Web Push instead (migration 0042,
+`supabase/functions/push-notify`, `app/DATA_AND_STORAGE.md` §5): a work order transition
+writes a `notifications` row, an `after insert` trigger hands it to the Edge Function over
+`net.http_post`, and the function encrypts and sends one payload per registered device. It
+reaches Android Chrome and an iPhone with SI added to the Home Screen; it does not touch the
+native Android build, which still delivers only through `@capacitor/local-notifications` and
+was never missing this case in the first place.
 
-On the web the notification is shown through `public/sw.js` when a registration is available
-and falls back to the `new Notification()` constructor. That is not preference, it is iOS:
-WebKit implements `registration.showNotification()` and **not** the constructor, so without
-the worker an iPhone throws instead of notifying. The worker is registered lazily, on opt-in
-rather than on mount, and **has no `fetch` handler on purpose** — a cache in front of a Next
-static export serves last week's chunks against this week's HTML and fails as a blank screen.
-It also has no `push` handler, for the same reason there is no push at all.
+**Two things about that path are invisible from reading the feature's own files, and both
+cost real debugging time if rediscovered the hard way:**
+
+- **`si_guard_notification_update` (0002) had to be amended.** That trigger refuses every
+  change to a notification except `status`, compared with a whole-row jsonb diff. The push
+  sender runs on the service role, where `auth.uid()` is null and `si_is_admin()` is
+  therefore false — so without an explicit `auth.uid() is null` early return (0042 adds one,
+  the same door `si_protected_override()` opens elsewhere), the guard refuses the sender's own
+  `pushed_at` stamp. The failure does not look like a permission error: nothing is ever marked
+  delivered, so `si_push_retry_sweep()` re-enqueues the same notification once a minute
+  forever, and what a phone sees is the same alert arriving over and over.
+- **The VAPID private key must be stored as a full JWK, not the bare 32-byte scalar the npm
+  `web-push` ecosystem normally passes around.** `crypto.subtle.importKey` cannot derive the
+  public coordinates (x, y) from the private scalar (d) alone, so a bare scalar imports as a
+  key that cannot sign — and it fails as an opaque `DataError` at send time, long after the
+  migration, the function deploy and every other piece look correct.
+
+`pushed_at` on a notification means *delivered*, not merely *attempted* — a distinct
+`push_claimed_at` is a 5-minute expiring lease the sender uses to fence a concurrent
+invocation of the same row, separate from `pushed_at` specifically so a killed invocation
+(isolate recycled mid-loop, a bad deploy) cannot leave a row permanently marked delivered with
+nobody having actually received it; the lease just goes stale and the sweep picks the row back
+up. A third column, `push_gave_up_at`, is written after 24 hours of failure so the retry set
+does not grow forever — kept separate from `pushed_at` so a long outage still shows as a
+growing "unstamped and old" count rather than quietly self-clearing once everything times out.
+
+**The bare "unstamped and old" count is not, by itself, a usable alarm.** The retry sweep
+correctly excludes recipients with no registered device — otherwise every notification for
+someone who never opted into push would sit in the retry set for 24 hours, retried once a
+minute, for nothing — but that means the bare count also grows monotonically in ordinary
+healthy operation and cannot distinguish "push is broken" from "eleven people declined." The
+query an operator should actually run, which restates the sweep's own predicate, is in
+`app/DATA_AND_STORAGE.md` §5.
+
+The Edge Function is deployed with `supabase functions deploy push-notify --no-verify-jwt` — a
+CLI flag, deliberately **not** a `config.toml` entry — precisely so nobody ever has a reason to
+run `supabase config push`, which this file already forbids because it overwrites the
+project's entire auth configuration from CLI defaults.
+
+**The encryption path has never executed.** Every verification so far — including Task 2's own
+code review, which checked the RFC 8291/8292 crypto line by line — stopped at the
+zero-subscription branch, because no device had been registered on the test project at the
+time. Confirming it actually works needs a real phone: sign in, pass `AlertsGate`, close the
+browser, and check that a push arrives and `notifications.pushed_at` gets stamped.
+
+On the web the notification is shown through `public/sw.js`, which now has both a `push`
+handler (Web Push, above) and the pre-existing tap-to-open behaviour, and falls back to the
+`new Notification()` constructor when no registration is available for the plain in-app
+Realtime case. That fallback is not preference, it is iOS: WebKit implements
+`registration.showNotification()` and **not** the constructor, so without the worker an iPhone
+throws instead of notifying. **The worker still has no `fetch` handler** — a cache in front of
+a Next static export serves last week's chunks against this week's HTML and fails as a blank
+screen — that constraint did not change with Web Push; only the addition of a `push` handler
+did.
+
+Registration is no longer opt-in-only through the bell. `AlertsGate` (`src/components/
+AlertsGate.jsx`, wired into `RequireAuth`) makes the ask mandatory: the app will not open past
+it until the browser's notification permission has been asked for, because Chrome and Safari
+both remember a refusal and refuse to prompt again, so a person who is never asked can never
+be reached. The escape at `denied` or `unsupported` — "Continue without alerts" — is
+persisted to **sessionStorage keyed by uid**, not component state, because `RequireAuth` (and
+this gate with it) is mounted per page file (14 of them, not the root layout) and remounts on
+every navigation; a plain `useState` escape would reappear on the very next click instead of
+holding for the session the copy promises. `NotificationBell` keeps its own independent
+"Enable alerts" opt-in for a permission already granted through some other path, and both call
+sites funnel into `ensurePushSubscription()` in `lib/pushSubscription.js`, which registers the
+service worker and calls `si_register_push_subscription` — an RPC rather than a client
+upsert, because a push subscription's endpoint identifies the *browser*, not the account, and
+on a shared plant terminal the row has to move to whoever signs in next.
 
 WebKit gives an *uninstalled* iOS site no Notification API whatsoever, so the bell's opt-in
-button cannot appear in a Safari tab. `iosNeedsInstallForAlerts()` separates that fixable
-"unsupported" from a genuinely incapable browser, and the panel shows Add-to-Home-Screen
-instructions in its place.
+button cannot appear in a Safari tab, and neither can `AlertsGate`'s prompt.
+`iosNeedsInstallForAlerts()` separates that fixable "unsupported" from a genuinely incapable
+browser, and the panel shows Add-to-Home-Screen instructions in its place with no escape —
+it is the one ungated state, because installing is something the person can actually go and do.
 
 Two things that fail silently if changed carelessly. The permission request must originate in
 a user gesture on both platforms, which is why the opt-in is a button in the bell panel rather
@@ -1491,3 +1560,33 @@ has happened on this project, and is what 0013 exists to fix.
   accounts the *only* credential route is the Superuser issuing a temporary password. That
   is the accepted trade-off of Superuser-only resets working as designed, but it is more
   absolute than intended until real addresses are set. Not a code gap; a data one.
+- **Web Push (migration 0042) has never delivered an alert to a real device.** Every
+  verification stopped at the zero-subscription branch — no device was registered on the test
+  project during Tasks 1–5, and the real-device test that would exercise `encryptPayload` and
+  `vapidHeader` for the first time is Task 6, run by the user, not yet done. Configured is not
+  delivered; see `app/DATA_AND_STORAGE.md` §5.
+- **Every Manager and Administrator now receives a push notification per accept and per
+  decline, plant-wide, on top of the in-app row 0038 already gave them** — roughly two per
+  work order each — with no quiet hours, no per-account mute, and no server-side retention on
+  `notifications`. The volume problem 0038 accepted as a trade-off is now also a phone buzzing.
+- **The sound is the device's own default notification sound, at whatever volume the device is
+  set to.** There is no web API to choose a sound, raise the volume, or bypass silent mode or
+  Do Not Disturb — only a native build with its own notification channel could do more, and
+  this feature does not touch the native path.
+- **Permission cannot be granted on anyone's behalf.** `AlertsGate` makes the ask unavoidable;
+  it cannot make the answer yes. Taking the `denied`/`unsupported` escape opts a person out of
+  push with no admin visibility anywhere into who has.
+- **A deactivated account no longer receives pushes, and this is NOT the same ~hour of
+  latency every other role/status change already has.** `si_push_retry_sweep`'s predicate and
+  the Edge Function's own recipient read both now check `users.status = 'active'` before
+  sending — two enforcement points, per this schema's standing "the loosest path wins" rule,
+  because the sweep's `exists` join and the function's own read are independent paths onto the
+  same row. Before this, neither checked it at all: deactivation only withholds role claims
+  from the *next minted JWT* (migration 0026), and the sender runs on the service role, which
+  never carries a JWT — so without an explicit check here the gap was indefinite, not an hour,
+  and a deactivated technician still named on an open work order kept receiving
+  `status_change` pushes containing work-order numbers and fault text on their personal phone
+  forever. `push_subscriptions` itself still has no lifecycle tied to the account — the row is
+  removed only on 404/410 from the push service or by the user's own device unregistering —
+  so a deactivated-then-reactivated account resumes receiving pushes on the same device with
+  no re-registration needed, which is intended.

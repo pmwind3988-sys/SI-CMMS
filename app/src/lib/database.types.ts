@@ -485,6 +485,9 @@ export type Database = {
           entity_label: string | null
           entity_type: Database["public"]["Enums"]["si_entity_type"]
           id: string
+          push_claimed_at: string | null
+          push_gave_up_at: string | null
+          pushed_at: string | null
           recipient_id: string
           recipient_role: Database["public"]["Enums"]["si_role"] | null
           status: Database["public"]["Enums"]["si_notif_status"]
@@ -498,6 +501,9 @@ export type Database = {
           entity_label?: string | null
           entity_type?: Database["public"]["Enums"]["si_entity_type"]
           id?: string
+          push_claimed_at?: string | null
+          push_gave_up_at?: string | null
+          pushed_at?: string | null
           recipient_id: string
           recipient_role?: Database["public"]["Enums"]["si_role"] | null
           status?: Database["public"]["Enums"]["si_notif_status"]
@@ -511,6 +517,9 @@ export type Database = {
           entity_label?: string | null
           entity_type?: Database["public"]["Enums"]["si_entity_type"]
           id?: string
+          push_claimed_at?: string | null
+          push_gave_up_at?: string | null
+          pushed_at?: string | null
           recipient_id?: string
           recipient_role?: Database["public"]["Enums"]["si_role"] | null
           status?: Database["public"]["Enums"]["si_notif_status"]
@@ -592,6 +601,53 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          failed_at: string | null
+          id: string
+          last_error: string | null
+          last_seen_at: string
+          p256dh: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          failed_at?: string | null
+          id?: string
+          last_error?: string | null
+          last_seen_at?: string
+          p256dh: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          failed_at?: string | null
+          id?: string
+          last_error?: string | null
+          last_seen_at?: string
+          p256dh?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_subscriptions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       role_permissions: {
         Row: {
@@ -1357,6 +1413,10 @@ export type Database = {
         Args: { p_employee_id: string }
         Returns: string
       }
+      si_enqueue_push: {
+        Args: { p_notification_id: string }
+        Returns: undefined
+      }
       si_has_role: { Args: { p_role: string }; Returns: boolean }
       si_in_same_department: { Args: { dept: string }; Returns: boolean }
       si_is_admin: { Args: never; Returns: boolean }
@@ -1386,6 +1446,7 @@ export type Database = {
         Returns: Database["public"]["Enums"]["si_wo_status"][]
       }
       si_protected_override: { Args: never; Returns: boolean }
+      si_push_retry_sweep: { Args: never; Returns: undefined }
       si_rank: {
         Args: {
           p_protected?: boolean
@@ -1398,6 +1459,15 @@ export type Database = {
         Returns: boolean
       }
       si_refresh_dashboard_stats: { Args: never; Returns: Json }
+      si_register_push_subscription: {
+        Args: {
+          p_auth: string
+          p_endpoint: string
+          p_p256dh: string
+          p_user_agent?: string
+        }
+        Returns: undefined
+      }
       si_replace_attachment: {
         Args: {
           p_attachment_id: string
@@ -1500,6 +1570,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      si_unregister_push_subscription: {
+        Args: { p_endpoint: string }
+        Returns: undefined
       }
     }
     Enums: {

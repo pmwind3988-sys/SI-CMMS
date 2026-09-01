@@ -18,10 +18,12 @@
  * notification surface. Offline support, if it is ever wanted, is a separate
  * decision with its own invalidation story — not something to bolt on here.
  *
- * There is no `push` handler either, for the reason in lib/osNotifications.js:
- * a push arrives from a server, and `output: "export"` means this app has none.
- * Every notification shown here originates in the app's own Realtime
- * subscription, so the page is running whenever one is displayed.
+ * THERE IS NOW A `push` HANDLER, and it is why this file matters more than it
+ * used to. Everything above still holds for the in-app path — a notification
+ * shown while the tab is open comes from the app's own Realtime subscription.
+ * The push handler below is the other case: the browser is closed, no page is
+ * running, and this worker is the only code the device will execute. It is fed
+ * by supabase/functions/push-notify (migration 0042).
  *
  * Scope is "/" because the file is served from the root of `out/`. Moving it
  * anywhere else silently narrows the scope to that directory.
@@ -34,6 +36,81 @@
 self.addEventListener("install", () => self.skipWaiting());
 
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
+/**
+ * A push arrived. The browser may be closed; this handler is all that runs.
+ *
+ * `event.waitUntil` is load-bearing: without it the worker can be terminated
+ * before showNotification resolves and the alert silently never appears. There
+ * is no error and nothing to see — it simply does not happen.
+ *
+ * A push must ALWAYS result in a visible notification. Chrome revokes the push
+ * permission of an origin that receives pushes and shows nothing, so the catch
+ * below shows a generic notification rather than returning quietly.
+ */
+self.addEventListener("push", (event) => {
+  event.waitUntil(
+    (async () => {
+      let data = {};
+      try {
+        data = event.data ? event.data.json() : {};
+      } catch {
+        /* not our payload, or not JSON — fall through to the generic below */
+      }
+
+      // A payload that parses but isn't a plain object (null, a bare string, a
+      // number, an array) would make every `data.x` access below throw outside
+      // this try/catch, which is a rejected `waitUntil` promise and therefore a
+      // push that shows nothing at all — the one outcome this handler must
+      // never produce. Coerce anything that isn't a non-null object back to {}.
+      if (typeof data !== "object" || data === null) data = {};
+
+      // A focused, same-origin tab already showed this via the in-app
+      // Realtime path (lib/osNotifications.js chimes rather than banners
+      // while foregrounded, per CLAUDE.md's "app in the foreground -> chime
+      // only, because the badge on the bell is already the notification").
+      // Without checking this, the push handler below duplicates it: two
+      // alerts and two vibrations for one event on a phone that is simply
+      // unlocked with the app open. `userVisibleOnly` means a push that shows
+      // NOTHING gets the origin's push permission revoked by Chrome, so the
+      // answer here is a quieter notification, never a suppressed one.
+      const windows = await self.clients.matchAll({ type: "window" });
+      const focused = windows.some((c) => c.focused && new URL(c.url).origin === self.location.origin);
+
+      const title = data.title || "SI — Service Inside";
+      await self.registration.showNotification(title, {
+        body: data.body || "You have a new notification.",
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+        // Tagged by the notification's own row id — data.id is
+        // notifications.id, the same value lib/osNotifications.js tags its
+        // `si-${id}` in-app notification with (see that file for why: a
+        // second alert about a DIFFERENT event must not replace the first).
+        // The `si-` prefix is repeated here on purpose: this and the in-app
+        // path are two deliveries of the SAME event and must collapse onto
+        // the same OS notification, not stack as two. A bare `data.id` here
+        // used to leave them on different tags, which is exactly the
+        // duplicate this comment is about. Falling back to a random value
+        // when there is no id (malformed payload, parse failure above) keeps
+        // unrelated pushes from colliding with each other on a shared tag.
+        tag: data.id ? `si-${data.id}` : crypto.randomUUID(),
+        renotify: true,
+        // Android only; desktop ignores it and iOS has no vibration API at
+        // all. Skipped when a focused tab already alerted — the chime from
+        // that path is the alert; this is a quiet confirmation, not a second
+        // interruption.
+        vibrate: focused ? undefined : [200, 100, 200, 100, 400],
+        // Desktop only: stays on screen until dismissed instead of auto-hiding
+        // after a few seconds. Mobile ignores it. Off while focused for the
+        // same reason as vibrate above — a banner that insists on being
+        // dismissed competes with the bell for attention instead of backing
+        // it up.
+        requireInteraction: !focused,
+        data: { path: data.path || "/notifications/" },
+      });
+    })()
+  );
+});
 
 /**
  * Tapping a notification opens the work order it is about.
