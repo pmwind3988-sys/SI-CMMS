@@ -545,6 +545,26 @@ export function AuthProvider({ children }) {
         beginRecovery();
         return;
       }
+      /**
+       * A session has arrived but `user` is not built yet, and resolve() below
+       * is asynchronous — it fetches the profile row before it can set one.
+       * Nothing awaits it, so without this line there is a window in which
+       * `loading` is false and `user` is null, which is indistinguishable from
+       * "nobody is signed in" to every consumer of this context.
+       *
+       * That window is what produced the double sign-in: the login page has the
+       * session, navigates to the dashboard, and RequireAuth — reaching the
+       * false/null pair — bounces straight back to /login. The user re-typed a
+       * password they had already got right, and the second attempt worked only
+       * because the first one's profile fetch had landed by then. Intermittent
+       * because it is a race between one `users` row fetch and a client-side
+       * route change: won on a desk, lost on a plant phone.
+       *
+       * Guarded on there being no user yet, so an ordinary hourly TOKEN_REFRESHED
+       * on a live page does not flash a "Loading…" screen over somebody's work.
+       * resolve() clears it again in its `finally`.
+       */
+      if (session && !userRef.current) setLoading(true);
       /* Any event carrying a session means the token works again — whether it
          came from our own refreshSession() or from the auth client's ticker
          getting there first. Either way recovery is over. */
