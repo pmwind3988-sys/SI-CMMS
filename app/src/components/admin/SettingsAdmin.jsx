@@ -68,13 +68,20 @@ import {
   canEditRolePermissions,
   canRetireReferenceData,
   canRemoveReferenceRow,
+  canSeePlatformUsage,
 } from "../../lib/constants";
 import { ALL_ROLES, ROLE_LABELS } from "../../lib/roles";
 import Button from "../ui/Button";
 import Field, { inputClass } from "../ui/Field";
 import { Card, ErrorBanner, Toast, ModalOverlay } from "../ui/Surfaces";
 import { usePaged, useAutoPageSize, PagerFooter } from "../ui/Paged";
+import StorageUsagePanel from "./StorageUsagePanel";
 
+/* `superuserOnly` is a display narrowing and nothing more. si_storage_usage()
+   re-checks the caller in its own body (migration 0053), which is what actually
+   refuses an Administrator — hiding the tab only avoids offering a screen whose
+   one possible outcome is an error. Same rule as every predicate in
+   lib/constants.js. */
 const TABS = [
   { key: "statuses", label: "Statuses" },
   { key: "priorities", label: "Priorities" },
@@ -85,12 +92,24 @@ const TABS = [
   { key: "departments", label: "Departments" },
   { key: "assets", label: "Equipment" },
   { key: "permissions", label: "Permissions" },
+  { key: "storage", label: "Storage", superuserOnly: true },
 ];
 
 export default function SettingsAdmin() {
   const ref = useReferenceData();
+  const { user: me } = useAuth();
   const [tab, setTab] = useState("statuses");
   const tabStripRef = useRef(null);
+
+  /* Storage is a Superuser's tab. Filtering the list here rather than hiding one
+     button keeps the arrow-key ring and the Home/End ends correct — a button left
+     in TABS and merely styled away is still a stop in the keyboard order and
+     still selectable, which would land an Administrator on a panel whose only
+     possible content is a refusal. */
+  const tabs = useMemo(
+    () => TABS.filter((t) => !t.superuserOnly || canSeePlatformUsage(me)),
+    [me]
+  );
 
   /* The selected tab can sit off-screen on a phone — nine of them need about
      900px — so it is scrolled back into view whenever it changes. */
@@ -169,13 +188,13 @@ export default function SettingsAdmin() {
           aria-label="Settings sections"
           className="flex gap-1.5 overflow-x-auto px-4 no-scrollbar scroll-touch sm:flex-wrap sm:overflow-visible sm:px-0"
           onKeyDown={(e) => {
-            const i = TABS.findIndex((t) => t.key === tab);
+            const i = tabs.findIndex((t) => t.key === tab);
             if (i < 0) return;
             let next = null;
-            if (e.key === "ArrowRight") next = TABS[(i + 1) % TABS.length];
-            else if (e.key === "ArrowLeft") next = TABS[(i - 1 + TABS.length) % TABS.length];
-            else if (e.key === "Home") next = TABS[0];
-            else if (e.key === "End") next = TABS[TABS.length - 1];
+            if (e.key === "ArrowRight") next = tabs[(i + 1) % tabs.length];
+            else if (e.key === "ArrowLeft") next = tabs[(i - 1 + tabs.length) % tabs.length];
+            else if (e.key === "Home") next = tabs[0];
+            else if (e.key === "End") next = tabs[tabs.length - 1];
             if (!next) return;
             e.preventDefault();
             setTab(next.key);
@@ -183,7 +202,7 @@ export default function SettingsAdmin() {
             tabStripRef.current?.querySelector(`[data-tab="${next.key}"]`)?.focus();
           }}
         >
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.key}
               data-tab={t.key}
@@ -484,6 +503,11 @@ export default function SettingsAdmin() {
       {ref.ready && tab === "permissions" && (
         <PermissionsPanel rows={ref.rolePermissions} onFlash={flash} onError={setError} />
       )}
+
+      {/* Deliberately not behind `ref.ready`: this panel reads no reference
+          data, so waiting on the provider would leave it showing "Loading
+          settings…" for a load it does not depend on. */}
+      {tab === "storage" && canSeePlatformUsage(me) && <StorageUsagePanel />}
     </div>
   );
 }

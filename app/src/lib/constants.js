@@ -305,3 +305,63 @@ export function canChangeUserEmail(target, me) {
 export function assignableRoles(me) {
   return ALL_ROLES.filter((r) => roleRank(r) < accountRank(me));
 }
+
+/* ------------------------------------------------------------------
+   Platform quotas — how full the Supabase project is (migration 0053)
+-------------------------------------------------------------------*/
+
+/**
+ * The two ceilings the Storage tab measures against.
+ *
+ * These are NOT in the database, and cannot be: 500 MB and 1 GB are properties
+ * of the billing plan, and nothing in Postgres knows which plan a project is on.
+ * si_storage_usage() therefore returns bytes used and says nothing about how
+ * many are allowed.
+ *
+ * They mirror DATA_AND_STORAGE.md §1 and MUST BE CHANGED IN BOTH PLACES if this
+ * project moves to Pro — the same standing rule that binds suggestPriority() to
+ * si_derive_priority(). Left stale after an upgrade, the gauge reads 94% full
+ * against a ceiling sixteen times higher than the real one, which is worse than
+ * no gauge: it is a false alarm that trains people to ignore the real one.
+ *
+ * Pro, for when that day comes: database 8 GB, storage 100 GB.
+ */
+export const PLATFORM_QUOTAS = {
+  plan: "Free",
+  databaseBytes: 500 * 1024 * 1024,
+  storageBytes: 1024 * 1024 * 1024,
+};
+
+/**
+ * The consequence of each quota filling, which is what makes one of these two
+ * gauges much more urgent than the other. Database full puts the whole project
+ * into read-only mode — every raise, assign and status change fails. Storage
+ * full fails new uploads and nothing else. DATA_AND_STORAGE.md §1.
+ */
+export const QUOTA_CONSEQUENCE = {
+  database:
+    "At 100% the project goes read-only: sign-in and history still work, but every raise, assignment and status change fails.",
+  storage: "At 100% new photo uploads fail. Nothing else in the app is affected.",
+};
+
+/**
+ * Where a gauge turns from a number into a warning.
+ *
+ * Amber at 70% rather than 90% because neither quota is fixed by a click: the
+ * database one needs a plan upgrade or a backup-then-delete, and both are
+ * dashboard operations with lead time. A bar that only goes amber once the work
+ * is urgent is a bar that tells you too late.
+ */
+export const QUOTA_THRESHOLDS = { warn: 0.7, critical: 0.9 };
+
+/**
+ * May this account see the project's storage usage?
+ *
+ * Superuser only, mirroring si_storage_usage()'s own check (migration 0053).
+ * The function re-checks in its body, so this predicate only avoids showing a
+ * tab whose one possible outcome is a refusal — the standing rule for every
+ * predicate in this file.
+ */
+export function canSeePlatformUsage(currentUser) {
+  return currentUser?.isSuperuser === true;
+}
