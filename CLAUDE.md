@@ -825,6 +825,24 @@ exception to the FSD's "once set, does not clear itself": that rule protects a b
 erased by the passage of time, and what clears it here is a named Administrator with a recorded
 reason.
 
+**The assignee and the phase do not move, and the omission is the mechanism.** The UPDATE names
+the four override columns, the impact and the five SLA columns, and deliberately does not name
+`status` or `assigned_to_id` — a re-grade changes what is expected of a work order, not who is
+doing it or how far along it is. Three things make that hold rather than merely appear to:
+`si_stamp_work_order` opens with `if new.status = old.status then return new`, so on this UPDATE
+it does nothing — which matters most for the decline branch just below it, the thing that clears
+the assignee; `si_notify_work_order_update` opens with the same test, so a re-grade announces
+itself once as `priority_changed` and never as a `status_change` or a fresh `assigned` row; and
+the transition guard's self-assignment and assignee-eligibility checks both open with
+`new.assigned_to_id is distinct from old.assigned_to_id`, so an unchanged assignee skips them.
+
+Measured across every phase an override is allowed in — open, assigned, accepted, repairing,
+waiting_spare_part, testing, completed — 72 assertions: assignee, status, `acknowledged_at`,
+`responded_at`, `resolved_at` and `decline_count` byte-identical either side; the ack deadline
+moved every time; the resolution deadline moved wherever work had started and stayed null where
+it had not; the only notification written was `priority_changed`, once to the assignee and once
+to the requester. **Do not add `status` or the assignee columns to that UPDATE.**
+
 **Three enforcement points, because `work_orders` cannot lose its UPDATE policy.** 0043's answer
 for `attachments` — no UPDATE policy at all — is unavailable here, since every transition and
 every edit needs one. Instead:
@@ -1345,8 +1363,12 @@ owns the test; three readers use it and each was wrong without it:
   photo swapped while assigned added an imaginary one to `Times Reassigned`. The Status
   History sheet gains an **Event** column; the rows stay in it, they are only kept out of
   the arithmetic.
-- The `waiting_spare_part` banner is the *last* history row's remarks, which a photo
-  replaced during the wait would have retitled with a filename, hiding why the job stopped.
+- The third reader this note used to name — a `waiting_spare_part` banner built from the
+  *last* history row's remarks — **is not in the code**, and looking for it costs a hunt.
+  `WorkflowPanel`'s banner is a static sentence and the reason comes from
+  `work_orders.spare_part_reason`, its own column. The hazard it described is real and the
+  column is what avoids it: nothing renders "the latest history row", so neither a replaced
+  photo nor an Administrator's priority re-grade (0051) can retitle a banner.
 
 Three client details worth not undoing. The replacement goes through `compressImage` in
 `replaceAttachment()` rather than relying on `addAttachment`'s chokepoint, which this path

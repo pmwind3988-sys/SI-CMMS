@@ -98,7 +98,40 @@
 -- recorded reason, which is the opposite of silent.
 --
 -- ---------------------------------------------------------------------------
--- 5. Three enforcement points, because two of them bypass RLS
+-- 5. The assignee and the phase do not move, and the omission is what does it
+-- ---------------------------------------------------------------------------
+-- A re-grade changes what is *expected* of a work order, not who is doing it or
+-- how far along it is. So the UPDATE below names the four override columns, the
+-- impact and the five SLA columns, and **deliberately does not name `status` or
+-- `assigned_to_id`/`assigned_to_name`.** Leaving them out is the mechanism, not
+-- an oversight — do not add them, and do not "helpfully" re-stamp a phase here.
+--
+-- Three things make it hold rather than merely look like it holds:
+--
+--   * `si_stamp_work_order` opens with `if new.status = old.status then return
+--     new` — so on this UPDATE it does nothing at all. That matters most for the
+--     decline branch three lines below it, which is what clears the assignee: an
+--     override that touched `status` could reach it and hand the job back to the
+--     queue as a side effect of re-prioritising it.
+--   * `si_notify_work_order_update` opens with the same test and returns NULL,
+--     so a re-grade announces itself once (`priority_changed`) and never as a
+--     `status_change` or a fresh `assigned` row. A technician mid-repair is told
+--     the priority moved, not that they have been reassigned.
+--   * `si_guard_work_order_transition`'s self-assignment and assignee-eligibility
+--     checks both open with `new.assigned_to_id is distinct from
+--     old.assigned_to_id`, so an unchanged assignee skips them — which is why
+--     this works on a work order assigned to the Administrator's own account.
+--
+-- Measured on the live test project across every phase an override is allowed in
+-- (open, assigned, accepted, repairing, waiting_spare_part, testing, completed),
+-- 72 assertions: assignee, status, `acknowledged_at`, `responded_at`,
+-- `resolved_at` and `decline_count` all byte-identical either side; the ack
+-- deadline moved every time; the resolution deadline moved wherever work had
+-- started and stayed null where it had not; and the only notification written
+-- was `priority_changed`, once to the assignee and once to the requester.
+--
+-- ---------------------------------------------------------------------------
+-- 6. Three enforcement points, because two of them bypass RLS
 -- ---------------------------------------------------------------------------
 -- `work_orders` has an UPDATE policy that has to stay open for every
 -- transition and every edit, so "no UPDATE policy" — 0043's answer for
@@ -146,7 +179,7 @@ $$;
 revoke all on function si_priority_override() from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
--- Nothing writes those four columns except through the RPC — see note 5
+-- Nothing writes those four columns except through the RPC — see note 6
 -- ---------------------------------------------------------------------------
 create or replace function si_guard_priority_override()
 returns trigger
@@ -311,7 +344,8 @@ begin
     raise exception 'That is already this work order''s priority.' using errcode = 'check_violation';
   end if;
 
-  -- Only P7 moves the impact — see note 2.
+  -- Only P7 moves the impact — see note 2. Note the absence of `status` and
+  -- `assigned_to_id` from the UPDATE below: see note 5.
   v_impact := case when p_priority = 'P7' then 'long_term'::si_impact else w.impact end;
 
   select ack, response, resolution, sequential

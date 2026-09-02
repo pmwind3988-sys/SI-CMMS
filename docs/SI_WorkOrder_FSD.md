@@ -269,6 +269,12 @@ Five rules govern it:
    recorded in the audit entry either way.
 5. **The SLA deadlines are recomputed** from the creation time — see Section 6.2.
    The breach flag moves with them, in both directions.
+6. **Nothing else about the work order moves.** It keeps its assigned technician
+   and it keeps its current status, at every stage from `Open` to `Completed` —
+   a job being repaired goes on being repaired by the same person, and the
+   technician is told the priority changed rather than that they have been
+   reassigned. Re-grading is not a re-triage: only what is expected of the work
+   order changes, never who owns it or how far along it is.
 
 The record keeps "auto-suggested vs manually set" (Section 7.3) separate from
 this. They are different events, and an Administrator's re-grade is reported in
