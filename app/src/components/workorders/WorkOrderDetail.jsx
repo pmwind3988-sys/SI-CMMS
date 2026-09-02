@@ -700,8 +700,12 @@ function OverviewTab({ wo }) {
               stage prints nothing rather than a zero — see slaStages(), which
               also decides whether each actual is measured from the raise time
               or from the previous stage. Green means the stage came in under
-              its target, red over; grey means it has not finished, and "not
-              yet" is a different answer from "no". */}
+              its target, red over. Grey is one of two things: "···" for a stage
+              that has not finished, "n/r" for one that finished without its
+              start ever being recorded — "not yet", "not known" and "no" are
+              three different answers. A re-grade changes the targets and never
+              the actuals: verified against the RPC on the test project, every
+              stamp byte-identical after overriding to P1, P4, P7 and back. */}
           {stages.map((st) => (
             <div key={st.key} className="flex items-baseline justify-between gap-3 py-1 text-[12.5px]">
               <span className="flex-shrink-0 text-ink-soft">{st.label}</span>
@@ -715,6 +719,17 @@ function OverviewTab({ wo }) {
                   >
                     {st.actualLabel}
                   </span>
+                ) : st.reason === "unstamped" ? (
+                  /* Finished, but its start was never recorded — see the note in
+                     slaStages(). A third symbol rather than the same "···",
+                     because "not yet" and "cannot be known" are different
+                     answers and only one of them will ever change. */
+                  <span
+                    className="ml-2 font-mono text-ink-soft"
+                    title={`This stage finished (${st.endedNote}), but the moment it started was never recorded, so the time it took cannot be worked out.`}
+                  >
+                    n/r
+                  </span>
                 ) : (
                   <span className="ml-2 font-mono text-ink-soft" title="This stage has not finished yet">
                     &middot;&middot;&middot;
@@ -723,6 +738,17 @@ function OverviewTab({ wo }) {
               </span>
             </div>
           ))}
+          {/* "n/r" explained in words, on the page rather than in a tooltip: a
+              title attribute does not exist on a phone, and this is exactly the
+              row somebody stops to query. Only rendered when a stage is actually
+              in that state, so a normal work order carries no apology. */}
+          {stages.some((st) => st.reason === "unstamped") && (
+            <div className="mt-2 border-t border-border pt-2 text-[11.5px] leading-relaxed text-ink-soft">
+              <span className="font-mono">n/r</span> — that stage finished, but one end of it was
+              never timed on this work order, so how long it took cannot be worked out. Everything
+              recorded since is exact.
+            </div>
+          )}
           {/* Without this the three numbers above read as three deadlines
               counted from the same moment, which is what they are for P1-P4 and
               is not what they are for P7: each window starts when the previous

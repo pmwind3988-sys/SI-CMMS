@@ -40,14 +40,18 @@ const MIN = 60000;
  * appends "overdue" to a negative. An elapsed time is never negative and never
  * wants that word.
  *
- * Rounds nothing away silently: under a minute reads "<1m" rather than "0m",
- * because a stage that genuinely completed instantly (a supervisor assigning a
- * job the moment it lands) is worth distinguishing from one that was not
- * measured.
+ * Rounds nothing away silently, and below a minute it changes unit rather than
+ * giving up. It used to print "<1m", which is not a duration — it is a refusal
+ * to say. A stage really can complete in seconds (a supervisor assigning a job
+ * the moment it lands, a technician closing a two-minute fix), those are the
+ * work orders somebody is most likely to be checking, and "<1m" made every one
+ * of them look unmeasured. Sub-second is kept to one decimal so an instant
+ * transition reads as "0.4s" instead of collapsing to "0s".
  */
 export function fmtElapsed(ms) {
   if (ms == null || Number.isNaN(ms)) return null;
-  if (ms < MIN) return "<1m";
+  if (ms < 1000) return `${(Math.max(ms, 0) / 1000).toFixed(1)}s`;
+  if (ms < MIN) return `${Math.round(ms / 1000)}s`;
   const mins = Math.floor(ms / MIN);
   const d = Math.floor(mins / 1440);
   const h = Math.floor((mins % 1440) / 60);
@@ -67,12 +71,12 @@ const at = (v) => {
  * The three stages, each with its target and — once the stage has finished —
  * what it actually took.
  *
- * `actualMs` is null while a stage is unfinished, and also when its start was
- * never recorded: a work order closed without ever reaching `repairing` has no
- * response stamp, so the response stage cannot be measured rather than having
- * taken zero. `met` is null in exactly those cases too — the honest answer to
- * "did it meet the target" for something not yet finished is "not yet", not
- * "no".
+ * `actualMs` is null while a stage is unfinished, and also when either of its
+ * two instants was never recorded — `reason` says which of those applies, and
+ * the note beside it says why the difference has to reach the screen. `met` is
+ * null in both cases: the honest answer to "did it meet the target" for
+ * something not yet finished is "not yet", and for something never measured it
+ * is "not known". Neither is "no".
  *
  * Returns [] when there is no SLA row to compare against, which is what the
  * caller already renders as nothing.
@@ -118,9 +122,40 @@ export function slaStages(wo, sla) {
     },
   ];
 
-  return defs.map((d) => {
+  /* The three stage ends in order, so a stage can ask whether anything after it
+     has happened. */
+  const ends = defs.map((d) => d.to);
+
+  return defs.map((d, i) => {
     const actualMs = d.from != null && d.to != null ? d.to - d.from : null;
     const targetMs = d.targetMinutes != null ? d.targetMinutes * MIN : null;
+
+    /* Why there is no actual, when there is none — the two reasons need telling
+     * apart on screen and only this function knows which applies.
+     *
+     * `pending`  the stage has not finished. Nothing is wrong; ask again later.
+     * `unstamped` the work order has demonstrably moved PAST this stage, and one
+     *   of its two instants was never recorded, so the duration is unknowable
+     *   rather than zero. Real and not rare: a work order moved into `assigned`
+     *   by a direct write rather than a transition leaves no history row, so
+     *   migration 0050's backfill has nothing to read and `acknowledged_at`
+     *   stays null forever. Measured on the test project — WO-2026-000008 is
+     *   closed with no arrival-at-`assigned` row anywhere in its trail.
+     *
+     * "Moved past" is decided by a LATER stamp existing, not by this stage's own
+     * being absent. Testing only its own is what a first attempt does and it is
+     * wrong in the commonest case: a missing `acknowledged_at` is missing from
+     * the END of the acknowledge stage, so that stage looked merely pending on a
+     * work order that was closed days ago.
+     *
+     * Falling back to `created_at` for a missing start would fill the gap with a
+     * number, and it would be the from-creation reading of a sequential stage:
+     * the exact arithmetic the header of this file exists to prevent. A stage
+     * one of whose ends was never recorded has no honest duration, and saying so
+     * is the whole point. */
+    const later = ends.slice(i + 1).some((t) => t != null);
+    const reason = actualMs != null ? null : later ? "unstamped" : "pending";
+
     return {
       key: d.key,
       label: d.label,
@@ -128,6 +163,7 @@ export function slaStages(wo, sla) {
       actualMs,
       actualLabel: fmtElapsed(actualMs),
       finished: actualMs != null,
+      reason,
       met: actualMs != null && targetMs != null ? actualMs <= targetMs : null,
       endedNote: d.endedNote,
       sequential,
