@@ -157,6 +157,23 @@ export default function SettingsAdmin() {
     () => ref.activeDepartments.map((d) => ({ value: d.id, label: d.name })),
     [ref.activeDepartments]
   );
+  /* Retired plants included in the edit column, active only in the add dialog —
+     the same split as departments above, and for the same reason. Equipment
+     registered before migration 0049 sits on 'PLT001', which is retired, so
+     leaving it out of the edit column would silently move those machines to
+     whichever plant happened to be first. */
+  const plantOptions = useMemo(
+    () =>
+      ref.plants.map((pl) => ({
+        value: pl.id,
+        label: `${pl.name}${isRetired("plants", pl) ? " (retired)" : ""}`,
+      })),
+    [ref.plants]
+  );
+  const activePlantOptions = useMemo(
+    () => ref.activePlants.map((pl) => ({ value: pl.id, label: pl.name })),
+    [ref.activePlants]
+  );
 
   return (
     <div className="max-w-6xl">
@@ -420,12 +437,19 @@ export default function SettingsAdmin() {
 
       {ref.ready && tab === "assets" && (
         <EditableTable
-          note="The equipment the raise form offers. Adding a machine here makes it selectable immediately — no code change and no redeploy."
+          note="The equipment the raise form offers, and since migration 0049 the only place it can be added — the raise form's own “+ Add equipment” is gone, replaced by “Other (specify)”. The plant is what the raise form narrows the picker by, so a machine without one cannot be chosen. Department is optional: the imported master lists record a location, not a department."
           rows={ref.assets}
           rowKey="id"
           columns={[
             { key: "id", label: "ID", type: "readonly", width: "flex-1" },
             { key: "name", label: "Name", type: "text", width: "flex-[1.6]" },
+            {
+              key: "plant_id",
+              label: "Plant",
+              type: "select",
+              options: plantOptions,
+              width: "flex-[1.4]",
+            },
             {
               key: "department_id",
               label: "Department",
@@ -450,6 +474,7 @@ export default function SettingsAdmin() {
               id: row.id,
               assetCode: row.asset_code,
               name: patch.name ?? row.name,
+              plantId: patch.plant_id ?? row.plant_id,
               departmentId: patch.department_id ?? row.department_id,
               criticality: patch.criticality ?? row.criticality,
               category: row.category,
@@ -466,11 +491,17 @@ export default function SettingsAdmin() {
             { key: "id", label: "Asset ID", placeholder: "AST-0777", required: true },
             { key: "name", label: "Name", placeholder: "Surface Grinder 2", required: true },
             {
+              key: "plant_id",
+              label: "Plant",
+              type: "select",
+              options: activePlantOptions,
+              required: true,
+            },
+            {
               key: "department_id",
-              label: "Department",
+              label: "Department (optional)",
               type: "select",
               options: activeDepartmentOptions,
-              required: true,
             },
             {
               key: "criticality",
@@ -489,7 +520,8 @@ export default function SettingsAdmin() {
               id: values.id.trim(),
               assetCode: values.id.trim(),
               name: values.name.trim(),
-              departmentId: values.department_id,
+              plantId: values.plant_id,
+              departmentId: values.department_id || null,
               criticality: values.criticality || "medium",
             });
             flash(`${values.name} added.`);

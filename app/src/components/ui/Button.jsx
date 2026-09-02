@@ -1,5 +1,7 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
+
 const VARIANTS = {
   primary: "bg-ink text-white hover:bg-ink/90",
   amber: "bg-accent text-ink hover:bg-accent/90",
@@ -29,22 +31,40 @@ const SIZES = {
   lg: "text-[15px] px-5 py-3 min-h-[48px]",
 };
 
+/**
+ * `loading` shows a spinning Loader2 in place of the icon and disables the
+ * button, so a press that starts a round trip looks like one.
+ *
+ * The spin is applied here rather than at the call site, and that fixes more
+ * than the callers that opt in: a dozen buttons across the app already pass
+ * `icon={busy ? Loader2 : Check}`, which rendered a **motionless** spinner
+ * glyph — `Icon` was drawn with no className, so the only place anything
+ * actually spun was the three pages that hand-roll their own
+ * `<Loader2 className="animate-spin" />`. A frozen spinner is worse than no
+ * spinner: it reads as a hung screen rather than a working one. Comparing the
+ * component identity catches those without touching them.
+ */
 export default function Button({
   children,
   variant = "primary",
   size = "md",
   icon: Icon,
+  loading = false,
   disabled,
   className = "",
   ...props
 }) {
+  const Glyph = loading ? Loader2 : Icon;
+  const spinning = !!Glyph && (loading || Glyph === Loader2);
   return (
     <button
-      disabled={disabled}
+      // A loading button is never also clickable — otherwise the second press
+      // fires the same request again.
+      disabled={disabled || loading}
       className={`inline-flex items-center gap-1.5 rounded font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
       {...props}
     >
-      {Icon && <Icon size={14} />}
+      {Glyph && <Glyph size={14} className={spinning ? "animate-spin" : undefined} />}
       {children}
     </button>
   );

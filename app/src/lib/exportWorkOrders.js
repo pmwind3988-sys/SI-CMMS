@@ -218,6 +218,14 @@ function workOrderColumns(labels, ctx) {
     { header: "Raised By", width: 18, cell: (w) => textCell(w.requester_name) },
     { header: "Contact Phone", width: 16, cell: (w) => textCell(w.requester_phone) },
     { header: "Department", width: 18, cell: (w) => textCell(label("departmentName", w.department_id)) },
+    /* Migration 0049. Every work order raised before it reads "Main Plant" —
+       createWorkOrder hardcoded PLT001 — which is the honest answer for those
+       rows rather than a blank: there was one plant and that was it. */
+    { header: "Plant", width: 22, cell: (w) => textCell(label("plantName", w.plant_id)) },
+    /* `asset_name` first, and for "Other (specify)" it is the ONLY answer: that
+       work order's asset_id points at the plant's Other row, so resolving the
+       id would print "Other (specify)" instead of the machine the requester
+       named. The denormalised column is what carries it. */
     { header: "Equipment", width: 24, cell: (w) => textCell(w.asset_name || label("assetName", w.asset_id)) },
     { header: "Equipment Code", width: 16, cell: (w) => textCell(assetCode(w)) },
     { header: "Area / Location", width: 20, cell: (w) => textCell(w.area) },
@@ -230,7 +238,17 @@ function workOrderColumns(labels, ctx) {
     { header: "Safety Severity", width: 16, cell: (w) => textCell(severityText(w)) },
     { header: "Permit Required", width: 15, cell: (w) => textCell(yesNo(w.permit_required)) },
     { header: "Environmental Risk", width: 17, cell: (w) => textCell(yesNo(w.environmental_risk?.flag)) },
+    /* Reads "No" for every row and always will — 0036 made the priority derived
+       and this column records the requester overriding a suggestion, which
+       nobody can do now. Kept because an export is a record and churning a
+       record's shape is worse than a constant column. The Administrator
+       re-grade added by 0051 is the three columns below, deliberately NOT this
+       one: they are different events and folding them together would make the
+       heading mean two things. */
     { header: "Priority Overridden", width: 17, cell: (w) => textCell(yesNo(w.priority_touched)) },
+    { header: "Priority Set By Admin", width: 18, cell: (w) => textCell(w.priority_override || "") },
+    { header: "Priority Change Reason", width: 40, cell: (w) => wrapCell(w.priority_override_reason) },
+    { header: "Priority Changed At", width: 21, cell: (w) => dateCell(w.priority_overridden_at) },
 
     // ---- Assignment ----
     { header: "Assigned To", width: 18, cell: (w) => textCell(w.assigned_to_name || "Unassigned") },
@@ -240,7 +258,17 @@ function workOrderColumns(labels, ctx) {
 
     // ---- SLA ----
     { header: "Ack Due", width: 21, cell: (w) => dateCell(w.sla_ack_due_at) },
+    /* Both blank on a P7 that has not reached the stage yet, and that is the
+       reading: a sequential priority's response and resolution clocks do not
+       start until the previous stage is met (migration 0050), so there is no
+       deadline to report rather than one nobody promised. `Acknowledged` and
+       `Work Started` are the moments those clocks started from — they are the
+       same instants the Lifecycle columns record, and they are here so a
+       sequential deadline can be checked against its own origin in one row. */
+    { header: "Response Due", width: 21, cell: (w) => dateCell(w.sla_response_due_at) },
     { header: "Resolution Due", width: 21, cell: (w) => dateCell(w.sla_resolution_due_at) },
+    { header: "Acknowledged At", width: 21, cell: (w) => dateCell(w.acknowledged_at) },
+    { header: "Work Started At", width: 21, cell: (w) => dateCell(w.responded_at) },
     { header: "SLA Status", width: 16, cell: (w) => textCell(w.sla_breached ? "Breached" : "Within target") },
     { header: "SLA Warning Sent", width: 16, cell: (w) => textCell(yesNo(w.sla_warning_sent)) },
   ];

@@ -6,7 +6,7 @@ import { ArrowLeft, Factory, Image as ImageIcon, X, Sparkles, AlertTriangle, Sen
 import { useAuth } from "../../context/AuthContext";
 import { createWorkOrder, updateWorkOrderFields, addAttachment } from "../../lib/workOrders";
 import { useReferenceData, includingCurrent } from "../../lib/referenceData";
-import { createAsset, createDepartment } from "../../lib/admin";
+import { createDepartment } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
 import { registerDraftSource, takeDraft } from "../../lib/draftRecovery";
 import Field, { inputClass } from "../ui/Field";
@@ -39,9 +39,21 @@ import { PriorityBadge } from "../ui/Badges";
  * Keep these in step with the `label` on each Field, since the whole value of
  * the summary is that the words match what the eye is hunting for.
  */
+/**
+ * What an "Other (specify)" work order's equipment name is prefixed with.
+ *
+ * One constant because it is written on submit and read back when editing, and
+ * the two have to agree — a mismatch would show an empty "Which equipment"
+ * field on a work order that plainly has one, and then require it to be retyped
+ * before the form would submit.
+ */
+const OTHER_PREFIX = "Other — ";
+
 const ERROR_FIELD_LABELS = {
   department: "Department",
+  plant: "Plant",
   asset: "Equipment",
+  otherEquipment: "Which equipment",
   complaint: "Complaint",
   impact: "Production impact",
   requester: "Requester",
@@ -56,18 +68,21 @@ export default function RaiseWorkOrderForm({ existing }) {
      see includingCurrent() below. */
   const {
     ready,
+    plants,
     departments,
     assets,
     impacts,
     types,
     severities,
+    activePlants,
     activeDepartments,
     activeAssets,
     activeImpacts,
     activeTypes,
     activeSeverities,
     assetById,
-    departmentName,
+    assetsForPlant,
+    plantName,
     priorityColor,
     slaForPriority,
     suggestPriority,
@@ -76,13 +91,30 @@ export default function RaiseWorkOrderForm({ existing }) {
   const isEdit = !!existing;
 
   const [departmentId, setDepartmentId] = useState(existing?.department_id || "");
+  /* Which site the machine is on, and what the equipment picker narrows to
+     (migration 0049). Blank on a new work order rather than defaulted to a
+     plant, because guessing it would silently file an F3 fault against F1 —
+     the four master lists are disjoint and several codes appear in more than
+     one of them. */
+  const [plantId, setPlantId] = useState(existing?.plant_id || "");
   const [assetId, setAssetId] = useState(existing?.asset_id || "");
+  /* What the user typed after choosing "Other (specify)". Recorded on THIS work
+     order as its equipment name and nowhere else: no row is added to the
+     equipment register, which is the whole point of the option.
+
+     Read back off `asset_name` when editing, rather than left blank. The name is
+     not recoverable from `asset_id` — that points at the plant's shared Other
+     row — so the prefix is the only thing carrying it, and starting empty would
+     make editing anything else about the work order silently demand the machine
+     name again. Tested on the string rather than through assetById() because
+     this runs before the reference data has arrived. */
+  const [otherEquipment, setOtherEquipment] = useState(
+    existing?.asset_name?.startsWith(OTHER_PREFIX)
+      ? existing.asset_name.slice(OTHER_PREFIX.length)
+      : ""
+  );
   const [area, setArea] = useState(existing?.area || "");
   const [creatingDept, setCreatingDept] = useState(false);
-  const [creatingAsset, setCreatingAsset] = useState(false);
-  /* Equipment is scoped to the chosen department by default; this is the escape
-     hatch back to the whole plant. See assetOptions below. */
-  const [showAllAssets, setShowAllAssets] = useState(false);
   const [type, setType] = useState(existing?.type || "breakdown");
   const [complaint, setComplaint] = useState(existing?.description || "");
   const [impact, setImpact] = useState(existing?.impact || "");
@@ -132,15 +164,16 @@ export default function RaiseWorkOrderForm({ existing }) {
    * somebody submit a fault report believing the picture is still attached.
    *
    * Transient state is absent too — `errors`, `submitting`, `submitError`,
-   * `creatingDept`, `creatingAsset`. Restoring a validation error the user has
+   * `creatingDept`. Restoring a validation error the user has
    * not earned yet, or a spinner for a submit that never happened, would be
    * restoring the interruption rather than the work.
    */
   const snapshot = () => ({
     departmentId,
+    plantId,
     assetId,
+    otherEquipment,
     area,
-    showAllAssets,
     type,
     complaint,
     impact,
@@ -199,9 +232,10 @@ export default function RaiseWorkOrderForm({ existing }) {
     const draft = takeDraft(user.uid, draftKey);
     if (!draft) return;
     if (draft.departmentId !== undefined) setDepartmentId(draft.departmentId);
+    if (draft.plantId !== undefined) setPlantId(draft.plantId);
     if (draft.assetId !== undefined) setAssetId(draft.assetId);
+    if (draft.otherEquipment !== undefined) setOtherEquipment(draft.otherEquipment);
     if (draft.area !== undefined) setArea(draft.area);
-    if (draft.showAllAssets !== undefined) setShowAllAssets(draft.showAllAssets);
     if (draft.type !== undefined) setType(draft.type);
     if (draft.complaint !== undefined) setComplaint(draft.complaint);
     if (draft.impact !== undefined) setImpact(draft.impact);
@@ -260,6 +294,10 @@ export default function RaiseWorkOrderForm({ existing }) {
    */
   const offeredAssets = includingCurrent(activeAssets, assets, isEdit ? assetId : null, "id");
   const offeredDepartments = includingCurrent(activeDepartments, departments, isEdit ? departmentId : null, "id");
+  /* PLT001 is retired (0049) and every work order raised before then carries
+     it, so editing one of those has to keep its own plant in the picker — the
+     same reason every other picker here goes through includingCurrent. */
+  const offeredPlants = includingCurrent(activePlants, plants, isEdit ? plantId : null, "id");
   const offeredTypes = includingCurrent(activeTypes, types, isEdit ? type : null, "code");
   /* No offeredPriorities any more: nothing picks a priority, so there is no
      picker whose current value has to be added back. suggestPriority() already
@@ -295,60 +333,102 @@ export default function RaiseWorkOrderForm({ existing }) {
     .map((k) => ERROR_FIELD_LABELS[k]);
 
   /**
-   * Equipment, narrowed to the chosen department — a *display* narrowing, and
-   * only that.
+   * Equipment, narrowed to the chosen plant — and narrowed to nothing until one
+   * is chosen.
    *
-   * Migration 0019 unfiltered this list on purpose: whoever notices a fault
-   * files it, so a work order against another department's machine has to stay
-   * possible. That reasoning is about what may be SUBMITTED, and nothing here
-   * changes it — the policy still accepts any asset, `handleAssetChange` still
-   * exists, and "Show equipment from every department" is one tap away. What it
-   * fixes is that every asset on site in one flat list is a picker you scroll
-   * rather than a question you answer, and the department has just been asked
-   * for one field above.
+   * Migration 0049 replaced the department narrowing with this one. The two are
+   * not the same shape and the difference is deliberate: with no department
+   * chosen the old picker offered every machine on site, because a department
+   * was a hint about who triages and a fault could be filed against anything
+   * (0019). A plant is a fact about where the machine physically is, and the
+   * four master lists overlap — F1, F2 and F3 each have an AC1 and F2 and F3
+   * each have a BP — so one flat list of all four sites would offer four
+   * different machines under the same code and no way to tell them apart. With
+   * no plant chosen there is nothing sensible to offer, so nothing is.
    *
-   * Three details:
-   *  - `includingCurrent` again, for the same reason as everywhere else: an
-   *    asset already selected must never drop out of its own picker. It cannot
-   *    normally be out of scope (handleAssetChange moves the department to the
-   *    machine's own), but it can be when EDITING a work order whose pair was
-   *    deliberately left disagreeing.
-   *  - With no department chosen the whole list is offered, so the form still
-   *    works answered in either order.
-   *  - The toggle resets when the department changes. Left sticky, choosing a
-   *    department would silently stop narrowing after the first time somebody
-   *    widened it.
+   * There is no "show equipment from every plant" escape hatch for the same
+   * reason. Choosing the plant IS the answer, it sits one field above, and
+   * changing it re-narrows immediately.
+   *
+   * includingCurrent again, and load-bearing here: editing a work order raised
+   * against a machine since decommissioned — which is every machine that was in
+   * the register before 0049 — must not silently move the selection to the
+   * first row still offered.
    */
-  const departmentAssets =
-    departmentId && !showAllAssets
-      ? includingCurrent(
-          offeredAssets.filter((m) => m.department_id === departmentId),
-          offeredAssets,
-          assetId || null,
-          "id"
-        )
-      : offeredAssets;
-
-  const hiddenAssetCount = offeredAssets.length - departmentAssets.length;
-
-  const assetOptions = departmentAssets.map((m) => ({
-    value: m.id,
-    label: m.name,
-    hint: `${m.asset_code || m.id} · ${departmentName(m.department_id)}`,
-  }));
-
-  const departmentOptions = offeredDepartments.map((d) => ({ value: d.id, label: d.name, hint: d.code }));
+  const plantAssets = plantId
+    ? includingCurrent(
+        offeredAssets.filter((m) => m.plant_id === plantId),
+        offeredAssets,
+        assetId || null,
+        "id"
+      )
+    : includingCurrent([], offeredAssets, assetId || null, "id");
 
   /**
-   * Picking equipment sets the department to whoever maintains that machine —
-   * every time, not only when the field is empty. The asset is the more specific
-   * choice of the two, so it wins; the field stays editable afterwards for the
-   * case where the machine's registered owner is not who should handle it.
+   * The "Other (specify)" row for the chosen plant, kept out of the ordinary
+   * list and appended last.
+   *
+   * Sorting it to the bottom rather than letting it fall alphabetically among
+   * the machines is the point: it is an escape hatch, not a machine, and in
+   * F1's 63 rows it would otherwise sit between "Milling No 4" and "Plasma No
+   * 2" where nobody looking for it would find it.
+   */
+  const otherAsset = plantAssets.find((m) => m.asset_code === "OTHER") || null;
+  const listedAssets = plantAssets.filter((m) => m.asset_code !== "OTHER");
+
+  /** Has the user chosen "Other" rather than a machine? */
+  const isOther = !!assetId && assetById(assetId)?.asset_code === "OTHER";
+
+  const assetOptions = [
+    ...listedAssets.map((m) => ({
+      value: m.id,
+      label: m.name,
+      hint: [m.asset_code || m.id, m.model, plantName(m.plant_id)].filter(Boolean).join(" · "),
+    })),
+    ...(otherAsset
+      ? [{ value: otherAsset.id, label: otherAsset.name, hint: "Not in the list — type what it is" }]
+      : []),
+  ];
+
+  const departmentOptions = offeredDepartments.map((d) => ({ value: d.id, label: d.name, hint: d.code }));
+  const plantOptions = offeredPlants.map((pl) => ({ value: pl.id, label: pl.name, hint: pl.code }));
+
+  /**
+   * Picking equipment sets the PLANT from the machine, not the department.
+   *
+   * The old version filled the department in from `assets.department_id`, which
+   * 0049 left null on all 134 imported machines — the master lists record a
+   * location, not a department. So it would have cleared a department the user
+   * had just chosen, on every machine in the register. The plant is the field
+   * the machine actually knows, and this only matters when the picker was
+   * answered before the plant was: the list is already scoped to the plant, so
+   * the value it sets is normally the one already there.
+   *
+   * Leaving "Other" clears what was typed for it. Left behind, a work order
+   * would carry a machine chosen from the list and a leftover free-text name
+   * for something else, and the free text is what gets stored.
    */
   function handleAssetChange(id) {
     setAssetId(id);
     const a = assetById(id);
-    if (a?.department_id) setDepartmentId(a.department_id);
+    if (a?.plant_id) setPlantId(a.plant_id);
+    if (a?.asset_code !== "OTHER") setOtherEquipment("");
+  }
+
+  /**
+   * Changing the plant clears the equipment, which is not what changing the
+   * department does.
+   *
+   * The pair is allowed to disagree for department and asset (0019: department
+   * says who triages, the asset says which machine). Plant and asset cannot
+   * disagree — the plant IS where that machine is, so a work order naming F3
+   * and an F1 lathe is not a real situation, it is a stale selection. Keeping
+   * it would also leave a machine on screen that the picker no longer offers.
+   */
+  function handlePlantChange(id) {
+    setPlantId(id);
+    setAssetId("");
+    setOtherEquipment("");
   }
 
   /**
@@ -358,29 +438,13 @@ export default function RaiseWorkOrderForm({ existing }) {
    */
   function handleDepartmentChange(id) {
     setDepartmentId(id);
-    // Back to that department's own equipment; see assetOptions.
-    setShowAllAssets(false);
   }
 
-  /**
-   * Register a machine that isn't in the list (migration 0032). Selected right
-   * away rather than waiting for Realtime to deliver the row, same as the
-   * department below — and it sets the department too, because handleAssetChange
-   * is bypassed here and the pair would otherwise disagree on a brand new asset.
-   */
-  async function handleCreateAsset(name) {
-    setCreatingAsset(true);
-    setSubmitError(null);
-    try {
-      const created = await createAsset({ name, departmentId });
-      setAssetId(created.id);
-      if (created.department_id) setDepartmentId(created.department_id);
-    } catch (e) {
-      setSubmitError(describeError(e, "Couldn't register that equipment."));
-    } finally {
-      setCreatingAsset(false);
-    }
-  }
+  /* handleCreateAsset is gone. Migration 0049 narrowed assets_insert to
+     si_is_admin(), so this form can no longer register a machine — the
+     controlled per-plant lists plus "Other (specify)" replace it. The policy is
+     the boundary; removing the button only stops offering an action whose one
+     possible outcome is now a refusal. */
 
   async function handleCreateDepartment(name) {
     setCreatingDept(true);
@@ -401,13 +465,32 @@ export default function RaiseWorkOrderForm({ existing }) {
   function validate() {
     const errs = {};
     if (!departmentId) errs.department = "Select a department.";
+    if (!plantId) errs.plant = "Select the plant.";
     if (!assetId) errs.asset = "Select the affected equipment.";
+    /* Only when "Other" is chosen, and it has to be required: the work order
+       would otherwise record its equipment as the literal words "Other
+       (specify)", which names nothing. */
+    if (isOther && otherEquipment.trim().length < 3) {
+      errs.otherEquipment = "Say what the equipment is (min. 3 characters).";
+    }
     if (!complaint || complaint.length < 10) errs.complaint = "Describe the complaint (min. 10 characters).";
     if (!impact) errs.impact = "Select the production impact.";
     if (!requester) errs.requester = "Requester name is required.";
     if (!phone || phone.replace(/\D/g, "").length < 7) errs.phone = "Enter a valid phone number.";
     return errs;
   }
+
+  /**
+   * What goes into `work_orders.asset_name`.
+   *
+   * For a listed machine it is the register's own name, denormalised the way it
+   * always was. For "Other" it is what the user typed, prefixed so the row
+   * reads honestly everywhere it appears — the list, the detail page and the
+   * export all show this column, and "Other (specify)" on its own would name
+   * nothing. `asset_id` still points at the plant's Other row, so the foreign
+   * key holds and the equipment register gains nothing.
+   */
+  const equipmentName = isOther ? `${OTHER_PREFIX}${otherEquipment.trim()}` : asset?.name ?? null;
 
   async function handleSubmit() {
     const errs = validate();
@@ -420,8 +503,9 @@ export default function RaiseWorkOrderForm({ existing }) {
       if (isEdit) {
         await updateWorkOrderFields(existing.id, {
           department_id: departmentId,
+          plant_id: plantId,
           asset_id: asset.id,
-          asset_name: asset.name,
+          asset_name: equipmentName,
           area: area.trim() || null,
           type,
           priority: effectivePriority || "P3",
@@ -438,9 +522,10 @@ export default function RaiseWorkOrderForm({ existing }) {
       }
 
       const woId = await createWorkOrder({
+        plantId,
         departmentId,
         assetId: asset.id,
-        assetName: asset.name,
+        assetName: equipmentName,
         area,
         type,
         priority: effectivePriority || "P3",
@@ -515,21 +600,19 @@ export default function RaiseWorkOrderForm({ existing }) {
       <div className="flex flex-col gap-5 lg:flex-row lg:gap-6">
         <div className="min-w-0 lg:flex-[2]">
           <Card className="p-4 sm:p-5">
-            {/* Department first, equipment second.
+            {/* Department, then plant, then equipment.
 
-                Picking a machine still fills the department in from whoever
-                maintains it — handleAssetChange has not changed — so answering
-                in this order means the second answer can overwrite the first.
-                That is the right way round: the asset is the more specific of
-                the two and knows its own owner, and the field stays editable
-                afterwards for the case where the registered owner is not who
-                should handle this one.
+                Department stays first because it is the one question a person
+                answers about themselves — who should handle this — and 0019 is
+                still the rule there: it says who triages and is allowed to
+                disagree with where the machine is.
 
-                It also un-inverts registering a NEW machine, which is the case
-                the old order got backwards: createAsset() refuses to start
-                without a department (migration 0032), because assets.department_id
-                is `not null`. Asking for equipment first meant the person adding
-                a machine had to go back up for the field they had just skipped. */}
+                Plant sits between them because it is what the equipment picker
+                narrows on (migration 0049), and a list you have to scope is
+                unusable until the thing that scopes it has been answered. The
+                old form had equipment second and filled the department in from
+                the machine; that stopped working when the imported machines
+                arrived carrying a location and no department. */}
             <Field
               label="Department"
               required
@@ -547,9 +630,23 @@ export default function RaiseWorkOrderForm({ existing }) {
                 createLabel="Add department"
               />
               <p className="mt-1.5 text-[11.5px] text-ink-soft">
-                Who should handle this. Picking the equipment below fills this in from the machine&apos;s
-                own department — change it afterwards if someone else should take it, or type a name
+                Who should handle this. Change it if someone else should take it, or type a name
                 that isn&apos;t listed to add it.
+              </p>
+            </Field>
+
+            <Field label="Plant" required hint={errors.plant}>
+              <Combobox
+                value={plantId}
+                onChange={handlePlantChange}
+                options={plantOptions}
+                loading={!ready}
+                placeholder="Search plants…"
+                emptyLabel="No plants configured"
+              />
+              <p className="mt-1.5 text-[11.5px] text-ink-soft">
+                Where the machine is. This is what decides the equipment list below — changing it
+                clears the equipment, because each plant keeps its own machines.
               </p>
             </Field>
 
@@ -558,39 +655,49 @@ export default function RaiseWorkOrderForm({ existing }) {
                 value={assetId}
                 onChange={handleAssetChange}
                 options={assetOptions}
-                loading={!ready || creatingAsset}
-                loadingLabel={creatingAsset ? "Adding…" : "Loading…"}
-                placeholder="Search equipment by name, asset code or department…"
-                emptyLabel={
-                  departmentId && !showAllAssets
-                    ? "No equipment in this department yet"
-                    : "No equipment registered yet"
+                loading={!ready}
+                placeholder={
+                  plantId ? "Search equipment by name or machine code…" : "Choose a plant first"
                 }
-                noMatchLabel="No equipment matches that"
-                onCreate={handleCreateAsset}
-                createLabel="Add equipment"
+                emptyLabel={
+                  plantId ? "No equipment registered for this plant" : "Choose a plant first"
+                }
+                noMatchLabel="No equipment matches that — choose “Other (specify)”"
               />
+              {/* No "+ Add equipment" any more: migration 0049 narrowed
+                  assets_insert to si_is_admin(), so the one possible outcome of
+                  offering it would be a policy refusal. "Other (specify)" is
+                  what replaces it, and it deliberately registers nothing. */}
               <p className="mt-1.5 text-[11.5px] text-ink-soft">
-                {departmentId && !showAllAssets
-                  ? `Showing ${departmentName(departmentId)}'s equipment. Can't find the machine? Type the name here to register it.`
-                  : "Can't find the machine? With the department above set, type the name here to register it."}
+                {plantId
+                  ? `Showing ${plantName(plantId)}'s machines. Not listed? Choose “Other (specify)” at the bottom and say what it is.`
+                  : "Pick the plant above and its machines appear here."}
               </p>
-              {/* Only when something is actually hidden — a link offering to
-                  reveal nothing reads as a fault in the list. Both directions,
-                  because narrowing has to be undoable: the fault may well be on
-                  a machine another department maintains (migration 0019). */}
-              {departmentId && (hiddenAssetCount > 0 || showAllAssets) && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllAssets((s) => !s)}
-                  className="mt-1.5 text-[11.5px] font-medium text-navy underline underline-offset-2"
-                >
-                  {showAllAssets
-                    ? `Show only ${departmentName(departmentId)}'s equipment`
-                    : `Show equipment from every department (${hiddenAssetCount} more)`}
-                </button>
-              )}
             </Field>
+
+            {/* Only once "Other" is actually chosen.
+
+                Rendered as its own required field rather than as a hint on the
+                picker, because it IS the equipment on this work order — it is
+                what `asset_name` gets stored as, and it is what the list, the
+                detail page and the export will show. The sentence under it says
+                out loud that nothing is added to the register, so nobody
+                expects to find it in the picker next time. */}
+            {isOther && (
+              <Field label="Which equipment" required hint={errors.otherEquipment}>
+                <input
+                  value={otherEquipment}
+                  onChange={(e) => setOtherEquipment(e.target.value)}
+                  maxLength={120}
+                  placeholder="Name the machine, tool or fixture"
+                  className={inputClass}
+                  autoFocus
+                />
+                <p className="mt-1.5 text-[11.5px] text-ink-soft">
+                  Recorded on this work order only — it is not added to the equipment list.
+                </p>
+              </Field>
+            )}
 
             <Field label="Area">
               <input
@@ -601,10 +708,22 @@ export default function RaiseWorkOrderForm({ existing }) {
                 className={inputClass}
               />
             </Field>
-            {asset && (
-              <div className="flex items-center gap-2 bg-canvas rounded px-3 py-2 mb-4 text-[12.5px] text-ink-soft">
+            {/* Facts about the machine chosen — and nothing for "Other", whose
+                row carries the register's defaults (criticality "medium", code
+                "OTHER") and would state them as though they described the thing
+                the user just typed. `model` is shown when the master list had
+                one; most rows do not. */}
+            {asset && !isOther && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-canvas rounded px-3 py-2 mb-4 text-[12.5px] text-ink-soft">
                 <Factory size={14} /> Criticality: <strong className="text-ink">{asset.criticality}</strong>
-                <span className="mx-1">·</span> Asset ID: <span className="font-mono">{asset.asset_code || asset.id}</span>
+                <span className="mx-1">·</span> Machine code:{" "}
+                <span className="font-mono">{asset.asset_code || asset.id}</span>
+                {asset.model && (
+                  <>
+                    <span className="mx-1">·</span> Model:{" "}
+                    <span className="font-mono">{asset.model}</span>
+                  </>
+                )}
               </div>
             )}
 
@@ -842,18 +961,34 @@ export default function RaiseWorkOrderForm({ existing }) {
                   <PriorityBadge p={effectivePriority} />
                   <span className="text-[12.5px] text-[#B9C9E8]">From production impact</span>
                 </div>
+                {/* "by" only reads correctly for a priority whose targets are
+                    offsets from the raise time. P7's are stage durations that
+                    start when the previous stage is reached (migration 0050),
+                    so "Response by 3 days after assignment" would promise
+                    something the database does not do — there is no response
+                    deadline at all until a technician is assigned. Sequential
+                    priorities drop the "by" and gain a sentence saying the
+                    clocks start in turn. */}
                 <div className="flex flex-col gap-2.5">
                   {[
-                    ["Acknowledge by", slaForPriority(effectivePriority)?.ack_target_label],
-                    ["Response by", slaForPriority(effectivePriority)?.response_target_label],
-                    ["Resolution by", slaForPriority(effectivePriority)?.resolution_target_label],
+                    ["Acknowledge", slaForPriority(effectivePriority)?.ack_target_label],
+                    ["Response", slaForPriority(effectivePriority)?.response_target_label],
+                    ["Resolution", slaForPriority(effectivePriority)?.resolution_target_label],
                   ].map(([label, val]) => (
-                    <div key={label} className="flex items-center justify-between text-[12.5px]">
-                      <span className="text-[#B9C9E8]">{label}</span>
-                      <span className="font-mono font-semibold">{val ?? "—"}</span>
+                    <div key={label} className="flex items-center justify-between gap-3 text-[12.5px]">
+                      <span className="flex-shrink-0 text-[#B9C9E8]">
+                        {slaForPriority(effectivePriority)?.targets_are_sequential ? label : `${label} by`}
+                      </span>
+                      <span className="text-right font-mono font-semibold">{val ?? "—"}</span>
                     </div>
                   ))}
                 </div>
+                {slaForPriority(effectivePriority)?.targets_are_sequential && (
+                  <div className="mt-3 border-t border-[#2C5AA8] pt-3 text-[11px] text-[#B9C9E8]">
+                    A long-term task is measured in stages: each window starts when the one before it
+                    is met, not when the job is raised.
+                  </div>
+                )}
                 {isEdit && (
                   <div className="text-[11px] text-[#B9C9E8] mt-3 pt-3 border-t border-[#2C5AA8]">
                     Changing the impact re-derives the priority, but SLA deadlines already set at creation are not changed retroactively.

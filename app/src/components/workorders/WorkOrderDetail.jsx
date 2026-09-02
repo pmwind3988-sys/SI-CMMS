@@ -2,12 +2,14 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle, ArrowUpDown, UserCircle2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import { listenWorkOrder, deleteWorkOrder } from "../../lib/workOrders";
-import { fmtDue, canEditWhileOpen, canDeleteWorkOrder } from "../../lib/constants";
+import { listenWorkOrder, deleteWorkOrder, overrideWorkOrderPriority } from "../../lib/workOrders";
+import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
+import { slaStages } from "../../lib/slaStages";
+import { fmtDateTimeMY } from "../../lib/datetime";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, ModalOverlay } from "../ui/Surfaces";
 import Button from "../ui/Button";
@@ -21,20 +23,31 @@ import { nextStep } from "../../lib/nextStep";
 const TABS = [
   { key: "overview", label: "Overview" },
   { key: "assignment", label: "Assignment" },
-  { key: "comments", label: "Comments" },
-  { key: "attachments", label: "Attachments" },
+  /* "Conversation" rather than "Comments": the tab holds the photos too now,
+     and "Photos" rather than "Attachments" because photos are the only thing
+     that can still be uploaded (migration 0036 took video off the bucket
+     allowlist). The KEYS are unchanged — they are the panel ids and the
+     deep-link targets, and renaming those would break both. */
+  { key: "comments", label: "Conversation" },
+  { key: "attachments", label: "Photos" },
   { key: "timeline", label: "Status Timeline" },
   { key: "workflow", label: "Workflow" },
 ];
 
 export default function WorkOrderDetail({ woId }) {
   const { user } = useAuth();
-  const { slaForPriority, roleCan, transitions, statuses } = useReferenceData();
+  const { roleCan, transitions, statuses } = useReferenceData();
   const router = useRouter();
   const [wo, setWo] = useState(undefined); // undefined = loading, null = not found
   const [error, setError] = useState(null);
   const [tab, setTab] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [changingPriority, setChangingPriority] = useState(false);
+  /* Reported up from CommentsPanel, which owns the two listeners the count is
+     derived from. Lifting them here instead would open the same subscriptions a
+     level higher and make the tab strip responsible for merging comments with
+     attachments. */
+  const [chatUnread, setChatUnread] = useState(0);
   const tabStripRef = useRef(null);
 
   /**
@@ -112,11 +125,10 @@ export default function WorkOrderDetail({ woId }) {
     );
   }
 
-  const createdMs = wo.created_at ? new Date(wo.created_at).getTime() : Date.now();
-  const slaRow = wo.priority ? slaForPriority(wo.priority) : null;
-  const remain = slaRow?.resolution_target_minutes
-    ? slaRow.resolution_target_minutes * 60000 - (Date.now() - createdMs)
-    : null;
+  /* The stored deadline, not one recomputed from the raise time — see
+     slaRemainMs(). On a P7 that has not reached `repairing` this is null, so the
+     header reads "—": the resolution window has not opened yet. */
+  const remain = slaRemainMs(wo);
   const breached = remain != null && remain < 0 && wo.status !== "closed";
   const showEdit = wo.status === "open" && canEditWhileOpen(wo, user);
   // Deliberately not limited to a status. Closing is what "finishing" a work
@@ -125,6 +137,9 @@ export default function WorkOrderDetail({ woId }) {
   // up at every stage. The database decides whether it is allowed; this only
   // decides whether to offer it.
   const showDelete = canDeleteWorkOrder(wo, user, roleCan);
+  // Administrator only, and only while the work order is live — the same two
+  // tests si_override_work_order_priority makes in its own body (0051).
+  const showPriority = canOverridePriority(wo, user);
 
   return (
     <div className="max-w-5xl">
@@ -147,11 +162,36 @@ export default function WorkOrderDetail({ woId }) {
               Edit
             </Button>
           )}
+          {showPriority && (
+            <Button variant="ghost" icon={ArrowUpDown} onClick={() => setChangingPriority(true)}>
+              Change priority
+            </Button>
+          )}
           {showDelete && (
             <Button variant="danger" icon={Trash2} onClick={() => setConfirmingDelete(true)}>
               Delete
             </Button>
           )}
+          {/* Who raised it and when, beside the SLA rather than only down in
+              Overview. Both are the first things anyone asks of a work order
+              they have just opened, and the SLA countdown next to them is
+              meaningless without the "when" it is counting from.
+
+              fmtDateTimeMY, not toLocaleString: this is pinned to
+              Asia/Kuala_Lumpur, so the same work order reads the same on a
+              laptop set to US English as on the phone that raised it. */}
+          <div className="flex items-center gap-2 rounded bg-[#F6F8FB] px-3.5 py-2.5">
+            <UserCircle2 size={15} className="flex-shrink-0 text-ink-soft" />
+            <div className="min-w-0">
+              <div className="text-[11px] text-ink-soft">Raised</div>
+              <div className="text-[13px] font-semibold text-ink">
+                {fmtDateTimeMY(wo.created_at)}
+              </div>
+              <div className="truncate text-[11px] text-ink-soft">
+                by {wo.requester_name || "—"}
+              </div>
+            </div>
+          </div>
           <div className="flex items-center gap-2 rounded px-3.5 py-2.5" style={{ background: breached ? "#FCE9E9" : "#F6F8FB" }}>
             <Timer size={15} className={breached ? "text-danger" : "text-ink-soft"} />
             <div>
@@ -197,6 +237,12 @@ export default function WorkOrderDetail({ woId }) {
           {TABS.map((t) => {
             const isActive = tab === t.key;
             const flagged = t.key === "workflow" && actionIsYours;
+            /* A number, not the workflow tab's dot. "Something is waiting for
+               you" needs no count; "three people have said things since you
+               last looked" is a different message, and the count is the
+               message. Capped at 9+ so a long-running job cannot widen the tab
+               and push the strip further off a phone screen. */
+            const badge = t.key === "comments" && chatUnread > 0 ? chatUnread : null;
             return (
               <button
                 key={t.key}
@@ -209,6 +255,10 @@ export default function WorkOrderDetail({ woId }) {
                    rest. That is the tablist pattern, and it also cuts five stops
                    out of every keyboard pass over this page. */
                 tabIndex={isActive ? 0 : -1}
+                /* The count is a colour and a numeral, so it has to be said in
+                   words for a screen reader — the same reason the workflow dot
+                   is aria-hidden and its meaning lives in the panel. */
+                aria-label={badge ? `${t.label}, ${badge} unread` : undefined}
                 onClick={() => setTab(t.key)}
                 className={`flex items-center gap-1.5 whitespace-nowrap px-4 py-2.5 text-[13.5px] font-semibold ${
                   isActive ? "text-ink" : "text-ink-soft"
@@ -216,6 +266,15 @@ export default function WorkOrderDetail({ woId }) {
                 style={{ borderBottom: isActive ? "2.5px solid #F59E0B" : "2.5px solid transparent" }}
               >
                 {t.label}
+                {badge && (
+                  <span
+                    className="ml-0.5 inline-flex h-[17px] min-w-[17px] flex-shrink-0 items-center justify-center rounded-full px-1 text-[10.5px] font-bold leading-none text-white"
+                    style={{ background: "#EF4444" }}
+                    aria-hidden="true"
+                  >
+                    {badge > 9 ? "9+" : badge}
+                  </span>
+                )}
                 {flagged && (
                   <span
                     className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent"
@@ -242,11 +301,24 @@ export default function WorkOrderDetail({ woId }) {
             aria-labelledby={`wo-tab-${t.key}`}
             hidden={tab !== t.key}
           >
+            {/* Conversation is mounted whichever tab is showing, and it is the
+                only one that is. The unread badge on its tab is derived from
+                its own two listeners, so unmounting it — which is what every
+                other panel does — would stop the count updating the instant you
+                looked at anything else, and the badge would never appear at
+                all. Mounted but `hidden`, so it costs two live subscriptions
+                for the life of the page, which is what a chat badge is.
+
+                It reads `active` rather than inferring it: being mounted no
+                longer means being on screen, and marking a thread read while
+                nobody is looking at it is the bug this would otherwise hide. */}
+            {t.key === "comments" && (
+              <CommentsPanel wo={wo} active={tab === "comments"} onUnread={setChatUnread} />
+            )}
             {tab === t.key && (
               <>
                 {t.key === "overview" && <OverviewTab wo={wo} />}
                 {t.key === "assignment" && <AssignPanel wo={wo} />}
-                {t.key === "comments" && <CommentsPanel wo={wo} />}
                 {t.key === "attachments" && <AttachmentsPanel wo={wo} />}
                 {t.key === "timeline" && <StatusTimeline wo={wo} />}
                 {t.key === "workflow" && <WorkflowPanel wo={wo} onGotoAssign={() => setTab("assignment")} />}
@@ -256,6 +328,10 @@ export default function WorkOrderDetail({ woId }) {
         ))}
       </Card>
 
+      {changingPriority && (
+        <PriorityDialog wo={wo} onClose={() => setChangingPriority(false)} />
+      )}
+
       {confirmingDelete && (
         <DeleteDialog
           wo={wo}
@@ -264,6 +340,210 @@ export default function WorkOrderDetail({ woId }) {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Re-grade a work order's priority. Administrator only (migration 0051).
+ *
+ * Three things about the shape of this dialog:
+ *
+ *  - **It shows what the derivation would say**, not just the current value.
+ *    Since 0036 the priority follows the production impact, so an Administrator
+ *    reaching for this control is disagreeing with a rule, and the rule's
+ *    answer is the thing worth putting in front of them. "Back to the derived
+ *    priority" is offered as an option of its own rather than hidden behind
+ *    clearing a field.
+ *  - **The reason is a required field, not a confirmation step.** It is stored,
+ *    shown on the Overview tab, written to the timeline and sent to the
+ *    technician and the requester — so it is part of the change rather than an
+ *    acknowledgement of it, and there is no second "are you sure". The
+ *    ten-character floor is the server's, restated here so the button is
+ *    disabled rather than the submit refused.
+ *  - **It names the SLA consequence before the change, not after.** The
+ *    deadlines are recomputed from the raise time, so a countdown on the screen
+ *    behind this dialog can move in either direction the moment it closes — and
+ *    an overdue badge clearing is the correct outcome, which is exactly the sort
+ *    of thing that reads as a bug when it is unannounced.
+ *
+ * No toast handoff: unlike WorkflowPanel's decline, this component does not
+ * navigate away, so the change arrives through the listener already open on this
+ * work order and the badge in the header updates itself.
+ */
+function PriorityDialog({ wo, onClose }) {
+  const { activePriorities, priorityLabel, slaForPriority, suggestPriority } = useReferenceData();
+  const [choice, setChoice] = useState(wo.priority_override || wo.priority || "");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  /* What the impact and the two risk flags would give it on their own. The same
+     function the raise form uses, so the answer here and the answer there
+     cannot disagree. Null when nothing can be derived — an old work order with
+     no impact recorded — in which case there is nothing to go back to and the
+     option is left out. */
+  const derived = suggestPriority(wo.impact, wo.safety_risk, wo.environmental_risk);
+
+  const DERIVED = "__derived__";
+  const selected = choice === DERIVED ? derived : choice;
+  const reasonOk = reason.trim().length >= 10;
+  // Re-submitting the priority it already has is refused by the server; saying
+  // so with a disabled button beats a round trip that comes back as an error.
+  const unchanged =
+    (choice === DERIVED && !wo.priority_override) ||
+    (choice !== DERIVED && choice === wo.priority_override) ||
+    (choice !== DERIVED && !wo.priority_override && choice === wo.priority);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!reasonOk || unchanged) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await overrideWorkOrderPriority(wo.id, choice === DERIVED ? null : choice, reason.trim());
+      onClose();
+    } catch (err) {
+      setError(describeError(err, "Couldn't change the priority."));
+      setBusy(false);
+    }
+  }
+
+  const targetSla = selected ? slaForPriority(selected) : null;
+
+  return (
+    <ModalOverlay onClose={onClose} label="Change priority" className="p-4">
+      <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h2 className="text-[15.5px] font-bold text-ink">Change priority</h2>
+          <button onClick={onClose} aria-label="Close" className="text-ink-soft hover:text-ink">
+            <X size={18} />
+          </button>
+        </div>
+
+        {error && <ErrorBanner message={error} />}
+
+        <p className="mb-3.5 text-[12.5px] leading-relaxed text-ink-soft">
+          <strong className="font-mono text-ink">{wo.wo_number || "This work order"}</strong> is{" "}
+          <strong className="text-ink">
+            {priorityLabel(wo.priority)} ({wo.priority})
+          </strong>
+          {derived && !wo.priority_override && (
+            <> — derived from its production impact.</>
+          )}
+          {wo.priority_override && (
+            <>
+              {" "}
+              — set by an Administrator. Its production impact alone would give it{" "}
+              <strong className="text-ink">{derived || "nothing"}</strong>.
+            </>
+          )}
+        </p>
+
+        <form onSubmit={submit}>
+          <fieldset className="mb-4">
+            <legend className="mb-1.5 text-[12.5px] font-semibold text-ink">New priority</legend>
+            <div className="flex flex-col gap-1">
+              {derived && (
+                <label className="flex items-start gap-2.5 rounded px-2 py-2 text-[13px] text-ink hover:bg-canvas">
+                  <input
+                    type="radio"
+                    name="priority"
+                    value={DERIVED}
+                    checked={choice === DERIVED}
+                    onChange={() => setChoice(DERIVED)}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0">
+                    <span className="font-semibold">Back to the derived priority</span>{" "}
+                    <span className="font-mono text-ink-soft">({derived})</span>
+                    <span className="block text-[11.5px] text-ink-soft">
+                      Follows the production impact again, including any later edit of it.
+                    </span>
+                  </span>
+                </label>
+              )}
+              {activePriorities.map((p) => (
+                <label
+                  key={p.id}
+                  className="flex items-center gap-2.5 rounded px-2 py-2 text-[13px] text-ink hover:bg-canvas"
+                >
+                  <input
+                    type="radio"
+                    name="priority"
+                    value={p.id}
+                    checked={choice === p.id}
+                    onChange={() => setChoice(p.id)}
+                  />
+                  <PriorityBadge p={p.id} size="sm" />
+                  <span className="min-w-0 break-words">{p.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
+          {/* Named before the change, not discovered after it. */}
+          {selected && selected !== wo.priority && (
+            <div className="mb-4 flex items-start gap-2 rounded border border-[#F59E0B55] bg-[#FEF3C7] px-3.5 py-3 text-[12.5px] leading-relaxed text-[#78350F]">
+              <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
+              <span>
+                Its SLA deadlines are recomputed from when it was raised, against{" "}
+                <strong className="font-mono">{selected}</strong>
+                {targetSla?.targets_are_sequential ? (
+                  <>
+                    {" "}
+                    — a long-term task, measured in stages: {targetSla.ack_target_label} to assign,
+                    then {targetSla.response_target_label}, then{" "}
+                    {targetSla.resolution_target_label}.
+                  </>
+                ) : (
+                  targetSla?.resolution_target_label && (
+                    <> — resolution {targetSla.resolution_target_label} from the raise time.</>
+                  )
+                )}{" "}
+                An overdue flag can clear, or appear.
+                {selected === "P7" && (
+                  <>
+                    {" "}
+                    Its production impact also changes to <strong>Long-term task</strong>.
+                  </>
+                )}
+              </span>
+            </div>
+          )}
+
+          <label className="mb-1.5 block text-[12.5px] font-semibold text-ink" htmlFor="priority-reason">
+            Reason <span className="text-danger">*</span>
+          </label>
+          <textarea
+            id="priority-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            maxLength={500}
+            placeholder="Why this priority — the technician and the requester both see this."
+            className="mb-1 w-full rounded border border-[#D8DEE4] bg-white px-3 py-2.5 text-[13.5px] text-ink focus:border-navy focus:outline-none"
+          />
+          <p className="mb-4 text-[11.5px] text-ink-soft">
+            {reasonOk
+              ? "Recorded on the work order and on its timeline."
+              : `At least 10 characters (${reason.trim().length} so far).`}
+          </p>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" type="button" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              icon={busy ? Loader2 : ArrowUpDown}
+              disabled={busy || !reasonOk || unchanged || !selected}
+            >
+              {busy ? "Changing…" : "Change priority"}
+            </Button>
+          </div>
+        </form>
+      </Card>
+    </ModalOverlay>
   );
 }
 
@@ -352,15 +632,17 @@ function DeleteDialog({ wo, onClose, onDeleted }) {
 }
 
 function OverviewTab({ wo }) {
-  const { departmentName, impactLabel, typeLabel, slaForPriority } = useReferenceData();
+  const { departmentName, plantName, impactLabel, typeLabel, slaForPriority } = useReferenceData();
   const sla = wo.priority ? slaForPriority(wo.priority) : null;
+  const stages = slaStages(wo, sla);
   // Area is omitted rather than shown as "—" when blank: every work order
   // raised before migration 0019 has none, and a column of dashes down an
   // otherwise complete overview reads as missing data rather than as a field
   // that did not exist yet.
   const rows = [
-    // Department before Equipment, matching the order the raise form now asks in.
+    // Department, plant, equipment — the order the raise form asks in.
     ["Department", departmentName(wo.department_id)],
+    ["Plant", plantName(wo.plant_id)],
     ["Equipment", wo.asset_name],
     ...(wo.area ? [["Area", wo.area]] : []),
     ["Type", typeLabel(wo.type)],
@@ -388,6 +670,13 @@ function OverviewTab({ wo }) {
     ["Safety risk", wo.safety_risk?.flag ? `Yes (${wo.safety_risk.severity})` : "No"],
     ["Environmental risk", wo.environmental_risk?.flag ? "Yes" : "No"],
     ["Permit / LOTO required", wo.permit_required ? "Yes" : "No"],
+    /* Shown only when there is one, like Area above. An Administrator's
+       re-grade (migration 0051) is the one thing on this row that contradicts
+       the derivation the Production impact line describes, so the reason has to
+       sit next to it rather than only in the timeline. */
+    ...(wo.priority_override
+      ? [["Priority set by an Administrator", `${wo.priority_override} — ${wo.priority_override_reason}`]]
+      : []),
   ];
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
@@ -403,18 +692,74 @@ function OverviewTab({ wo }) {
         <div className="text-[12.5px] font-semibold text-ink mb-2">Complaint</div>
         <p className="text-[13.5px] text-ink leading-relaxed mb-5">{wo.description}</p>
         <div className="bg-canvas rounded p-3.5">
-          <div className="text-[12px] font-bold text-ink mb-2.5">SLA targets ({wo.priority})</div>
-          {sla &&
-            [
-              ["Acknowledge", sla.ack_target_label],
-              ["Response", sla.response_target_label],
-              ["Resolution", sla.resolution_target_label],
-            ].map(([l, v]) => (
-              <div key={l} className="flex justify-between text-[12.5px] py-1">
-                <span className="text-ink-soft">{l}</span>
-                <span className="font-mono font-semibold text-ink">{v}</span>
-              </div>
-            ))}
+          <div className="mb-2.5 flex items-baseline justify-between gap-3">
+            <span className="text-[12px] font-bold text-ink">SLA targets ({wo.priority})</span>
+            <span className="text-[10.5px] text-ink-soft">target · actual</span>
+          </div>
+          {/* Target on one line, what it actually took beside it. An unfinished
+              stage prints nothing rather than a zero — see slaStages(), which
+              also decides whether each actual is measured from the raise time
+              or from the previous stage. Green means the stage came in under
+              its target, red over. Grey is one of two things: "···" for a stage
+              that has not finished, "n/r" for one that finished without its
+              start ever being recorded — "not yet", "not known" and "no" are
+              three different answers. A re-grade changes the targets and never
+              the actuals: verified against the RPC on the test project, every
+              stamp byte-identical after overriding to P1, P4, P7 and back. */}
+          {stages.map((st) => (
+            <div key={st.key} className="flex items-baseline justify-between gap-3 py-1 text-[12.5px]">
+              <span className="flex-shrink-0 text-ink-soft">{st.label}</span>
+              <span className="text-right">
+                <span className="font-mono font-semibold text-ink">{st.targetLabel ?? "—"}</span>
+                {st.finished ? (
+                  <span
+                    className="ml-2 font-mono font-semibold"
+                    style={{ color: st.met === false ? "#B42318" : "#0B6B48" }}
+                    title={`Actual — ${st.endedNote} after ${st.actualLabel}`}
+                  >
+                    {st.actualLabel}
+                  </span>
+                ) : st.reason === "unstamped" ? (
+                  /* Finished, but its start was never recorded — see the note in
+                     slaStages(). A third symbol rather than the same "···",
+                     because "not yet" and "cannot be known" are different
+                     answers and only one of them will ever change. */
+                  <span
+                    className="ml-2 font-mono text-ink-soft"
+                    title={`This stage finished (${st.endedNote}), but the moment it started was never recorded, so the time it took cannot be worked out.`}
+                  >
+                    n/r
+                  </span>
+                ) : (
+                  <span className="ml-2 font-mono text-ink-soft" title="This stage has not finished yet">
+                    &middot;&middot;&middot;
+                  </span>
+                )}
+              </span>
+            </div>
+          ))}
+          {/* "n/r" explained in words, on the page rather than in a tooltip: a
+              title attribute does not exist on a phone, and this is exactly the
+              row somebody stops to query. Only rendered when a stage is actually
+              in that state, so a normal work order carries no apology. */}
+          {stages.some((st) => st.reason === "unstamped") && (
+            <div className="mt-2 border-t border-border pt-2 text-[11.5px] leading-relaxed text-ink-soft">
+              <span className="font-mono">n/r</span> — that stage finished, but one end of it was
+              never timed on this work order, so how long it took cannot be worked out. Everything
+              recorded since is exact.
+            </div>
+          )}
+          {/* Without this the three numbers above read as three deadlines
+              counted from the same moment, which is what they are for P1-P4 and
+              is not what they are for P7: each window starts when the previous
+              stage is actually reached (migration 0050), so there is no
+              resolution deadline at all until work begins. */}
+          {sla?.targets_are_sequential && (
+            <div className="mt-2 border-t border-border pt-2 text-[11.5px] leading-relaxed text-ink-soft">
+              Measured in stages, not from when it was raised: each window starts when the one
+              before it is met.
+            </div>
+          )}
         </div>
         {wo.resolution_notes && (
           <div className="mt-4 pt-4 border-t border-border">

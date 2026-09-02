@@ -41,13 +41,31 @@ const ReferenceDataContext = createContext(null);
  * below.
  */
 const SOURCES = {
+  /**
+   * Which site the machine is on, and since migration 0049 the thing that
+   * decides which equipment a work order can be raised against.
+   *
+   * It keys its retirement on `plants.status`, the column 0001 created, exactly
+   * as equipment keys on `assets.status` — a second flag beside an existing one
+   * would be a second truth. 'PLT001' is retired that way, which is why
+   * `activePlants` has four rows and `plants` has five: every work order raised
+   * before 0049 points at PLT001 and still has to render its name.
+   */
+  plants: {
+    select: "id, name, code, status",
+    order: "id",
+    retire: { key: "id", flag: "status", active: "active", retired: "inactive" },
+  },
   departments: {
     select: "id, name, code, plant_id, is_active",
     order: "name",
     retire: { key: "id", flag: "is_active" },
   },
+  /* `department_id` is nullable as of 0049 and is null on all 134 imported
+     machines — the master lists carry a location, not a department. `plant_id`
+     is what the picker narrows on now. */
   assets: {
-    select: "id, asset_code, name, category, department_id, criticality, status",
+    select: "id, asset_code, name, category, department_id, plant_id, model, criticality, status",
     order: "name",
     retire: { key: "id", flag: "status", active: "active", retired: "decommissioned" },
   },
@@ -56,9 +74,14 @@ const SOURCES = {
     order: "rank",
     retire: { key: "id", flag: "is_active" },
   },
+  /* `targets_are_sequential` (0050) is what tells the UI whether these three
+     numbers are offsets from the raise time or stage durations that start when
+     the previous stage is reached. P7 is the only sequential one; printing its
+     targets as though they were offsets would promise a 7-day resolution from
+     the fault rather than from the day work starts. */
   sla: {
     select:
-      "id, priority_id, plant_id, ack_target_minutes, ack_target_label, response_target_minutes, response_target_label, resolution_target_minutes, resolution_target_label",
+      "id, priority_id, plant_id, ack_target_minutes, ack_target_label, response_target_minutes, response_target_label, resolution_target_minutes, resolution_target_label, targets_are_sequential",
     order: "priority_id",
   },
   // 0031 gave this table no `retire` spec, on the reasoning that nobody picks a
@@ -108,6 +131,234 @@ const SOURCES = {
   },
 };
 
+
+/**
+ * The whole context value, derived from the raw rows.
+ *
+ * Split out of the provider and exported for the reason exportWorkOrders.js,
+ * historyEvents.js and attachmentPhases.js are all shaped this way: it is pure
+ * — rows in, helpers out, no React and no Supabase — so it can be exercised
+ * without a session. The provider is then only the subscription half.
+ *
+ * Nothing about the returned shape changed when this moved.
+ */
+export function buildReferenceValue(data, error = null) {
+  const plants = data.plants ?? [];
+  const departments = data.departments ?? [];
+  const assets = data.assets ?? [];
+  const priorities = data.priorities ?? [];
+  const sla = data.sla ?? [];
+  const statuses = data.wo_statuses ?? [];
+  const impacts = data.impact_levels ?? [];
+  const types = data.wo_types ?? [];
+  const severities = data.safety_severities ?? [];
+  const rolePermissions = data.role_permissions ?? [];
+  const transitions = data.wo_status_transitions ?? [];
+
+  // Retired rows stay in the lists above so every label still resolves; these
+  // are what anything offering a *choice* renders from (migration 0031).
+  const active = (table, rows) => rows.filter((r) => !isRetired(table, r));
+  const activePriorities = active("priorities", priorities);
+  const activeImpacts = active("impact_levels", impacts);
+  const activeTypes = active("wo_types", types);
+  const activeSeverities = active("safety_severities", severities);
+  const activeDepartments = active("departments", departments);
+  const activeAssets = active("assets", assets);
+  const activeStatuses = active("wo_statuses", statuses);
+  const activePlants = active("plants", plants);
+
+  const byKey = (rows, key) => new Map(rows.map((r) => [r[key], r]));
+  const plantMap = byKey(plants, "id");
+  const departmentMap = byKey(departments, "id");
+  const assetMap = byKey(assets, "id");
+  const priorityMap = byKey(priorities, "id");
+  const statusMap = byKey(statuses, "code");
+  const impactMap = byKey(impacts, "code");
+  const typeMap = byKey(types, "code");
+  const severityMap = byKey(severities, "code");
+
+  // SLA is keyed by priority; a plant-specific row wins over the global default,
+  // matching the lookup order in si_sla_target_minutes().
+  const slaMap = new Map();
+  for (const row of sla) {
+    const existing = slaMap.get(row.priority_id);
+    if (!existing || (row.plant_id && !existing.plant_id)) slaMap.set(row.priority_id, row);
+  }
+
+  // Only the eight-of-eight case counts as ready. Partial data would let a
+  // component decide "there are no departments" while the query is still in
+  // flight, which reads as a configuration problem rather than a slow network.
+  //
+  // The enum-keyed lookups can never legitimately be empty — migration 0009
+  // seeds them and there is no delete policy — so an empty one means the fetch
+  // ran unauthenticated. Requiring rows there stops `ready` going true on the
+  // empty-array state described above. departments and assets are excluded:
+  // a site with no equipment registered yet is a real, valid state.
+  //
+  // role_permissions is excluded from both lists, and that exclusion is
+  // load-bearing rather than tidy-minded. `ready` gates every screen in the
+  // app; if it waited on a table that does not exist until migration 0018 has
+  // been applied, a project one migration behind would show no labels
+  // anywhere — a whole-app outage caused by a feature it isn't using yet. Its
+  // absence degrades to "no role holds the capability", which is the right
+  // answer for a database where the grants have not been created.
+  //
+  // `plants` joins NEVER_EMPTY rather than sitting with departments and
+  // assets, and the difference is real: a site with no equipment registered
+  // yet is a valid starting state, but a database with no plant row is not —
+  // 0001 created the table with one and there is no delete path in the app.
+  // An empty `plants` therefore means the same thing an empty `priorities`
+  // does, which is that the fetch ran unauthenticated.
+  const NEVER_EMPTY = ["plants", "priorities", "sla", "wo_statuses", "impact_levels", "wo_types", "safety_severities"];
+  const READY_SOURCES = Object.keys(SOURCES).filter((t) => t !== "role_permissions");
+  const ready =
+    READY_SOURCES.every((t) => Array.isArray(data[t])) &&
+    NEVER_EMPTY.every((t) => (data[t]?.length ?? 0) > 0);
+
+  return {
+    ready,
+    error,
+
+    // Every row, retired included. Settings edits these; every label helper
+    // below resolves against them, which is what keeps an existing work order
+    // showing "Low" and green after P4 has been retired.
+    plants,
+    departments,
+    assets,
+    priorities,
+    sla,
+    statuses,
+    impacts,
+    types,
+    severities,
+    rolePermissions,
+    transitions,
+
+    // Still offerable. Anything that asks somebody to choose a value for new
+    // work reads these instead (migration 0031).
+    activePlants,
+    activeDepartments,
+    activeAssets,
+    activePriorities,
+    activeImpacts,
+    activeTypes,
+    activeSeverities,
+    activeStatuses,
+
+    /**
+     * Does this role hold this capability? Absent rows read false, which is
+     * the same fail-closed direction si_can_delete_work_orders() takes for an
+     * unrecognised role claim.
+     */
+    roleCan: (role, capability) =>
+      rolePermissions.find((r) => r.role === role)?.[capability] === true,
+
+    plantById: (id) => plantMap.get(id) ?? null,
+    departmentById: (id) => departmentMap.get(id) ?? null,
+    assetById: (id) => assetMap.get(id) ?? null,
+    priorityById: (id) => priorityMap.get(id) ?? null,
+    statusByCode: (code) => statusMap.get(code) ?? null,
+    impactByCode: (code) => impactMap.get(code) ?? null,
+    typeByCode: (code) => typeMap.get(code) ?? null,
+    severityByCode: (code) => severityMap.get(code) ?? null,
+    slaForPriority: (priorityId) => slaMap.get(priorityId) ?? null,
+
+    /**
+     * Assets filtered to one department.
+     *
+     * No longer what the raise form's picker uses — 0049 made the plant the
+     * scope and left `assets.department_id` null on every imported machine,
+     * so this now answers only for equipment that was registered before then
+     * and still carries a department. Kept because the admin equipment screen
+     * groups by department.
+     */
+    assetsForDepartment: (departmentId) =>
+      departmentId
+        ? activeAssets.filter((a) => a.department_id === departmentId)
+        : activeAssets,
+
+    /**
+     * Equipment on one site — what the raise form's picker offers, since
+     * migration 0049.
+     *
+     * Retired equipment is left out, for the reason it always was: this
+     * answers "what can this work order be raised against", not "what
+     * exists". With no plant chosen it offers nothing rather than everything,
+     * which is the opposite of what assetsForDepartment does above and is
+     * deliberate — F1's 63 machines and F3's 33 are different machines with
+     * overlapping codes (both sites have an AC1 and a BP), so one flat list
+     * of all four sites is a picker you scroll rather than a question you
+     * answer. The plant is asked for one field above.
+     */
+    assetsForPlant: (plantId) =>
+      plantId ? activeAssets.filter((a) => a.plant_id === plantId) : [],
+
+    // Display helpers. Each degrades to the raw code so a missing row is a
+    // cosmetic problem, never a crash.
+    statusLabel: (code) => statusMap.get(code)?.label ?? code ?? "—",
+    statusColor: (code) => statusMap.get(code)?.color_hex ?? "#64748B",
+    priorityLabel: (id) => priorityMap.get(id)?.label ?? id ?? "—",
+    priorityColor: (id) => priorityMap.get(id)?.color_hex ?? "#64748B",
+    plantName: (id) => plantMap.get(id)?.name ?? id ?? "—",
+    departmentName: (id) => departmentMap.get(id)?.name ?? id ?? "—",
+    assetName: (id) => assetMap.get(id)?.name ?? id ?? "—",
+    impactLabel: (code) => impactMap.get(code)?.label ?? code ?? "—",
+    typeLabel: (code) => typeMap.get(code)?.label ?? code ?? "—",
+
+    /**
+     * Ordered status codes a work order can still be moved through — replaces
+     * the STATUS_FLOW array, and since migration 0039 excludes the retired
+     * rungs.
+     *
+     * `statuses` above is deliberately still EVERY row, retired included.
+     * That is what lets statusLabel/statusColor resolve a work order closed
+     * last month whose history says "On The Way", and it is why
+     * StatusTimeline draws this ladder PLUS whatever a given work order
+     * actually has history for, rather than this ladder alone.
+     */
+    statusFlow: activeStatuses.map((s) => s.code),
+
+    /**
+     * The priority a work order gets, from impact plus the two risk flags.
+     * The impact -> priority mapping and the safety escalation ceiling are
+     * rows (impact_levels.suggests_priority and
+     * safety_severities.escalates_to_priority) rather than literals.
+     *
+     * Named "suggest" from when it was one. It is no longer a suggestion:
+     * migration 0036 made priority read-only and derived, and
+     * `si_derive_priority` recomputes this same rule in a BEFORE
+     * INSERT/UPDATE trigger that overwrites whatever the client sends. This
+     * copy exists so the raise form can show the answer, and the SLA targets
+     * that follow from it, before anything is submitted — the two must stay
+     * in step, so change them together or the form will promise one priority
+     * and the database will store another.
+     */
+    suggestPriority: (impactCode, safety, env) => {
+      const rank = (id) => priorityMap.get(id)?.rank ?? null;
+      let best = impactCode ? rank(impactMap.get(impactCode)?.suggests_priority) : null;
+
+      if (safety?.flag) {
+        const ceiling = rank(severityMap.get(safety.severity)?.escalates_to_priority);
+        if (ceiling != null) best = best == null ? ceiling : Math.min(best, ceiling);
+      }
+      // An environmental flag caps at the same priority a Medium safety risk
+      // does, which is how the original constant behaved.
+      if (env?.flag) {
+        const ceiling = rank(severityMap.get("Medium")?.escalates_to_priority);
+        if (ceiling != null) best = best == null ? ceiling : Math.min(best, ceiling);
+      }
+      if (best == null) return null;
+      /* Resolved against the ACTIVE priorities only. impact_levels.suggests_priority
+         and safety_severities.escalates_to_priority are foreign keys onto
+         priorities, so they go on pointing at P1 after P1 has been retired —
+         and a suggestion the picker cannot offer would preselect a value the
+         form then rejects. No active priority at that rank means no
+         suggestion, which the form already handles. */
+      return activePriorities.find((p) => p.rank === best)?.id ?? null;
+    },
+  };
+}
+
 export function ReferenceDataProvider({ children }) {
   const { user } = useAuth();
   const [data, setData] = useState({});
@@ -144,188 +395,7 @@ export function ReferenceDataProvider({ children }) {
     return () => unsubs.forEach((u) => u());
   }, [user?.uid]);
 
-  const value = useMemo(() => {
-    const departments = data.departments ?? [];
-    const assets = data.assets ?? [];
-    const priorities = data.priorities ?? [];
-    const sla = data.sla ?? [];
-    const statuses = data.wo_statuses ?? [];
-    const impacts = data.impact_levels ?? [];
-    const types = data.wo_types ?? [];
-    const severities = data.safety_severities ?? [];
-    const rolePermissions = data.role_permissions ?? [];
-    const transitions = data.wo_status_transitions ?? [];
-
-    // Retired rows stay in the lists above so every label still resolves; these
-    // are what anything offering a *choice* renders from (migration 0031).
-    const active = (table, rows) => rows.filter((r) => !isRetired(table, r));
-    const activePriorities = active("priorities", priorities);
-    const activeImpacts = active("impact_levels", impacts);
-    const activeTypes = active("wo_types", types);
-    const activeSeverities = active("safety_severities", severities);
-    const activeDepartments = active("departments", departments);
-    const activeAssets = active("assets", assets);
-    const activeStatuses = active("wo_statuses", statuses);
-
-    const byKey = (rows, key) => new Map(rows.map((r) => [r[key], r]));
-    const departmentMap = byKey(departments, "id");
-    const assetMap = byKey(assets, "id");
-    const priorityMap = byKey(priorities, "id");
-    const statusMap = byKey(statuses, "code");
-    const impactMap = byKey(impacts, "code");
-    const typeMap = byKey(types, "code");
-    const severityMap = byKey(severities, "code");
-
-    // SLA is keyed by priority; a plant-specific row wins over the global default,
-    // matching the lookup order in si_sla_target_minutes().
-    const slaMap = new Map();
-    for (const row of sla) {
-      const existing = slaMap.get(row.priority_id);
-      if (!existing || (row.plant_id && !existing.plant_id)) slaMap.set(row.priority_id, row);
-    }
-
-    // Only the eight-of-eight case counts as ready. Partial data would let a
-    // component decide "there are no departments" while the query is still in
-    // flight, which reads as a configuration problem rather than a slow network.
-    //
-    // The enum-keyed lookups can never legitimately be empty — migration 0009
-    // seeds them and there is no delete policy — so an empty one means the fetch
-    // ran unauthenticated. Requiring rows there stops `ready` going true on the
-    // empty-array state described above. departments and assets are excluded:
-    // a site with no equipment registered yet is a real, valid state.
-    //
-    // role_permissions is excluded from both lists, and that exclusion is
-    // load-bearing rather than tidy-minded. `ready` gates every screen in the
-    // app; if it waited on a table that does not exist until migration 0018 has
-    // been applied, a project one migration behind would show no labels
-    // anywhere — a whole-app outage caused by a feature it isn't using yet. Its
-    // absence degrades to "no role holds the capability", which is the right
-    // answer for a database where the grants have not been created.
-    const NEVER_EMPTY = ["priorities", "sla", "wo_statuses", "impact_levels", "wo_types", "safety_severities"];
-    const READY_SOURCES = Object.keys(SOURCES).filter((t) => t !== "role_permissions");
-    const ready =
-      READY_SOURCES.every((t) => Array.isArray(data[t])) &&
-      NEVER_EMPTY.every((t) => (data[t]?.length ?? 0) > 0);
-
-    return {
-      ready,
-      error,
-
-      // Every row, retired included. Settings edits these; every label helper
-      // below resolves against them, which is what keeps an existing work order
-      // showing "Low" and green after P4 has been retired.
-      departments,
-      assets,
-      priorities,
-      sla,
-      statuses,
-      impacts,
-      types,
-      severities,
-      rolePermissions,
-      transitions,
-
-      // Still offerable. Anything that asks somebody to choose a value for new
-      // work reads these instead (migration 0031).
-      activeDepartments,
-      activeAssets,
-      activePriorities,
-      activeImpacts,
-      activeTypes,
-      activeSeverities,
-      activeStatuses,
-
-      /**
-       * Does this role hold this capability? Absent rows read false, which is
-       * the same fail-closed direction si_can_delete_work_orders() takes for an
-       * unrecognised role claim.
-       */
-      roleCan: (role, capability) =>
-        rolePermissions.find((r) => r.role === role)?.[capability] === true,
-
-      departmentById: (id) => departmentMap.get(id) ?? null,
-      assetById: (id) => assetMap.get(id) ?? null,
-      priorityById: (id) => priorityMap.get(id) ?? null,
-      statusByCode: (code) => statusMap.get(code) ?? null,
-      impactByCode: (code) => impactMap.get(code) ?? null,
-      typeByCode: (code) => typeMap.get(code) ?? null,
-      severityByCode: (code) => severityMap.get(code) ?? null,
-      slaForPriority: (priorityId) => slaMap.get(priorityId) ?? null,
-
-      /**
-       * Assets filtered to one department — what the raise form's picker needs.
-       * Retired equipment is left out for the same reason: this answers "what
-       * can this work order be raised against", not "what exists".
-       */
-      assetsForDepartment: (departmentId) =>
-        departmentId
-          ? activeAssets.filter((a) => a.department_id === departmentId)
-          : activeAssets,
-
-      // Display helpers. Each degrades to the raw code so a missing row is a
-      // cosmetic problem, never a crash.
-      statusLabel: (code) => statusMap.get(code)?.label ?? code ?? "—",
-      statusColor: (code) => statusMap.get(code)?.color_hex ?? "#64748B",
-      priorityLabel: (id) => priorityMap.get(id)?.label ?? id ?? "—",
-      priorityColor: (id) => priorityMap.get(id)?.color_hex ?? "#64748B",
-      departmentName: (id) => departmentMap.get(id)?.name ?? id ?? "—",
-      assetName: (id) => assetMap.get(id)?.name ?? id ?? "—",
-      impactLabel: (code) => impactMap.get(code)?.label ?? code ?? "—",
-      typeLabel: (code) => typeMap.get(code)?.label ?? code ?? "—",
-
-      /**
-       * Ordered status codes a work order can still be moved through — replaces
-       * the STATUS_FLOW array, and since migration 0039 excludes the retired
-       * rungs.
-       *
-       * `statuses` above is deliberately still EVERY row, retired included.
-       * That is what lets statusLabel/statusColor resolve a work order closed
-       * last month whose history says "On The Way", and it is why
-       * StatusTimeline draws this ladder PLUS whatever a given work order
-       * actually has history for, rather than this ladder alone.
-       */
-      statusFlow: activeStatuses.map((s) => s.code),
-
-      /**
-       * The priority a work order gets, from impact plus the two risk flags.
-       * The impact -> priority mapping and the safety escalation ceiling are
-       * rows (impact_levels.suggests_priority and
-       * safety_severities.escalates_to_priority) rather than literals.
-       *
-       * Named "suggest" from when it was one. It is no longer a suggestion:
-       * migration 0036 made priority read-only and derived, and
-       * `si_derive_priority` recomputes this same rule in a BEFORE
-       * INSERT/UPDATE trigger that overwrites whatever the client sends. This
-       * copy exists so the raise form can show the answer, and the SLA targets
-       * that follow from it, before anything is submitted — the two must stay
-       * in step, so change them together or the form will promise one priority
-       * and the database will store another.
-       */
-      suggestPriority: (impactCode, safety, env) => {
-        const rank = (id) => priorityMap.get(id)?.rank ?? null;
-        let best = impactCode ? rank(impactMap.get(impactCode)?.suggests_priority) : null;
-
-        if (safety?.flag) {
-          const ceiling = rank(severityMap.get(safety.severity)?.escalates_to_priority);
-          if (ceiling != null) best = best == null ? ceiling : Math.min(best, ceiling);
-        }
-        // An environmental flag caps at the same priority a Medium safety risk
-        // does, which is how the original constant behaved.
-        if (env?.flag) {
-          const ceiling = rank(severityMap.get("Medium")?.escalates_to_priority);
-          if (ceiling != null) best = best == null ? ceiling : Math.min(best, ceiling);
-        }
-        if (best == null) return null;
-        /* Resolved against the ACTIVE priorities only. impact_levels.suggests_priority
-           and safety_severities.escalates_to_priority are foreign keys onto
-           priorities, so they go on pointing at P1 after P1 has been retired —
-           and a suggestion the picker cannot offer would preselect a value the
-           form then rejects. No active priority at that rank means no
-           suggestion, which the form already handles. */
-        return activePriorities.find((p) => p.rank === best)?.id ?? null;
-      },
-    };
-  }, [data, error]);
+  const value = useMemo(() => buildReferenceValue(data, error), [data, error]);
 
   return <ReferenceDataContext.Provider value={value}>{children}</ReferenceDataContext.Provider>;
 }

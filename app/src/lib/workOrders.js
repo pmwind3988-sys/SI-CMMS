@@ -32,6 +32,7 @@ const WO_SELECT = "*";
    CREATE
 -------------------------------------------------------------------*/
 export async function createWorkOrder({
+  plantId,
   departmentId,
   assetId,
   assetName,
@@ -55,7 +56,13 @@ export async function createWorkOrder({
       // Blank is "not recorded", not an empty string — the detail view hides the
       // row on null and would otherwise print an empty label.
       area: area?.trim() || null,
-      plant_id: "PLT001",
+      /* Chosen on the form since migration 0049, and required there. This was
+         hardcoded to 'PLT001' from 0001 until then, which is why every work
+         order raised before today carries that plant and why 0049 retired the
+         row rather than deleting it. No fallback here on purpose: the column is
+         `not null` now, so a missing plant has to come back as an error rather
+         than quietly filing an F3 fault against a site that no longer exists. */
+      plant_id: plantId,
       type,
       priority,
       status: "open",
@@ -684,6 +691,34 @@ export async function acceptWorkOrder(woId) {
 export async function declineWorkOrder(woId, actor, reason) {
   const { error } = await supabase.rpc("si_decline_work_order", {
     p_wo_id: woId,
+    p_reason: reason,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Re-grade a work order's priority. Administrator only, reason required.
+ *
+ * Not a transition and not an `updateWorkOrderFields` — the priority is derived
+ * from the production impact and a trigger overwrites whatever the client sends
+ * (migration 0036), so there is no column an ordinary update could write. The
+ * RPC is the only door: `si_guard_priority_override` refuses a direct PATCH of
+ * the override columns from anybody, at any rank, which is what makes the reason
+ * and the audit row impossible to skip.
+ *
+ * Everything the server does with this is in 0051's header. The two parts worth
+ * knowing at the call site:
+ *
+ *  - `priority: null` clears the override and hands the work order back to the
+ *    derivation. A reason is still required — going back is a decision too.
+ *  - The SLA deadlines are recomputed from the RAISE time, not from now, so the
+ *    countdown on screen can move in either direction the moment this returns.
+ *    An overdue badge clearing is the correct outcome, not a bug.
+ */
+export async function overrideWorkOrderPriority(woId, priority, reason) {
+  const { error } = await supabase.rpc("si_override_work_order_priority", {
+    p_work_order_id: woId,
+    p_priority: priority || null,
     p_reason: reason,
   });
   if (error) throw error;

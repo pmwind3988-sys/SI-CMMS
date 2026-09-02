@@ -38,6 +38,7 @@ export function isTransition(row) {
  */
 const EVENT_LABELS = {
   photo_replaced: "Photo replaced",
+  priority_override: "Priority changed",
 };
 
 export function historyEventLabel(row) {

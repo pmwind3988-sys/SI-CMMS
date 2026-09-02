@@ -146,7 +146,9 @@ Submission failure (e.g., network drop on submit): the Submit button returns to 
 **Purpose:** The shared shell every role lands on after opening a work order — header + tab strip that routes to Screens 4–9.
 
 ### Desktop Layout
-Back link → header row (WO# in mono, priority badge, status badge, equipment name as page title, SLA countdown chip top-right, Red-tinted if breached) → horizontal tab strip (Overview, Assignment, Progress Log, Attachments, Status Timeline, Workflow) → active tab's content in a single white card below.
+Back link → header row (WO# in mono, priority badge, status badge, equipment name as page title, then two chips top-right: **Raised** — date, time and who raised it, in plant time — and the SLA countdown, red-tinted if breached) → horizontal tab strip (Overview, Assignment, **Conversation**, **Photos**, Status Timeline, Workflow) → active tab's content in a single white card below.
+
+The Conversation tab carries a **red count badge** when messages or photos have arrived from other people since this viewer last opened it; it clears on reading. The Workflow tab keeps its dot for "an action is waiting for you" — a dot needs no number, a count is itself the message.
 
 ### Mobile Layout
 Back arrow + condensed header (WO# and equipment name only, badges wrap to a second line if needed) → SLA chip moves inline under the header, full width → **tabs become a horizontal scroll strip** of pills rather than an underline strip (more thumb-friendly) → content below. Because this is the shell for Screens 4–9, on mobile each tab tap is really a navigation to that screen, not just a content swap — the back arrow always returns here, to this shell, from any of them.
@@ -155,7 +157,7 @@ Back arrow + condensed header (WO# and equipment name only, badges wrap to a sec
 | Button | Action |
 |---|---|
 | Back to Work Orders | Returns to Screen 1 |
-| Overview / Assignment / Progress Log / Attachments / Status Timeline / Workflow (tabs) | Switches active content |
+| Overview / Assignment / Conversation / Photos / Status Timeline / Workflow (tabs) | Switches active content. Conversation shows an unread count; Photos is the phase-grouped gallery |
 
 ### Input Fields
 None on the Overview tab itself — it is a read-only summary (Equipment, Department, Type, Production impact, Estimated downtime, Requested by, Requester phone, Safety risk, Environmental risk, Permit/LOTO required, Complaint text, SLA targets table). Fields with values are populated at creation (Screen 2) and never edited here directly.
@@ -220,7 +222,7 @@ If the assignment write fails (e.g., a stale work order was already reassigned b
 **Purpose:** The Technician's primary working view once a job is `Assigned` through `In Progress` — this is the screen a Technician actually lives in on the shop floor.
 
 ### Desktop Layout
-This is the Workflow tab of Screen 3 for a Technician viewer, plus the Overview/Attachments tabs alongside it — on desktop it's genuinely a multi-tab experience since there's room.
+This is the Workflow tab of Screen 3 for a Technician viewer, plus the Overview/Conversation/Photos tabs alongside it — on desktop it's genuinely a multi-tab experience since there's room.
 
 ### Mobile Layout
 **This is where mobile diverges most from desktop.** Rather than tabs, the Technician's phone shows a single vertical scroll: equipment summary card (photo placeholder, name, criticality) → complaint text → the current Workflow action block (Accept/Decline, or Attend, or Put on Hold/Mark Resolved, depending on status) pinned as a **sticky button at the bottom of the viewport** → progress log entries and an inline "add note" field below the fold → attachments grid at the very bottom. A Technician never has to hunt through tabs mid-job with greasy gloves on; everything relevant to *right now* is in one thumb-reachable stack.

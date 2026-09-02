@@ -334,76 +334,51 @@ export async function createDepartment({ name, plantId }) {
  * The caller is deleteReferenceRow("departments", id) in lib/referenceData.js.
  */
 
-/**
- * Register a piece of equipment, for the "+ Add new" row in the raise form's
- * equipment picker.
+/*
+ * createAsset() is gone.
  *
- * The counterpart of createDepartment() above, and an INSERT for the same
- * reason: migration 0032 opened assets_insert to any signed-in user, and an
- * upsert would let a Requester silently rewrite an existing machine's name by
- * guessing its id. A collision has to come back as a collision. (RLS would
- * refuse the update branch anyway — assets_update is still supervisor and
- * above — but that would surface as a policy error rather than "that already
- * exists".)
+ * It was the "+ Add equipment" row in the raise form's picker, opened up by
+ * migration 0032 on the reasoning that the person on the floor with a fault is
+ * the one who notices the machine is missing. 0049 closed it again: the
+ * equipment register is now the three 2026 master lists, `assets_insert` is
+ * si_is_admin(), and "Other (specify)" is what someone with an unlisted machine
+ * chooses instead — recorded on their work order, added to no list.
  *
- * `department_id` is `not null`, so a machine cannot be registered before the
- * department is known. The raise form asks for equipment first and fills the
- * department in from it, which is the right order for the 99% case and exactly
- * backwards for this one — hence the explicit message rather than a constraint
- * violation.
+ * Removed rather than left in place, the same way 0031 removed
+ * deleteDepartment(): an exported write that every non-admin caller would have
+ * refused reads as a capability the app still has.
  */
-export async function createAsset({ name, departmentId, plantId }) {
-  const clean = String(name || "").trim();
-  if (!clean) throw new Error("Give the machine a name.");
-  if (!departmentId) {
-    throw new Error(
-      `Choose the department below first, then add "${clean}" — a machine has to belong to one.`
-    );
-  }
 
-  const slug = clean.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 20);
-  if (!slug) throw new Error("That name has no letters or numbers in it.");
-
-  const { data, error } = await supabase
-    .from("assets")
-    .insert({
-      id: `AST-${slug}`,
-      asset_code: slug,
-      name: clean,
-      department_id: departmentId,
-      criticality: "medium",
-      plant_id: plantId || "PLT001",
-      status: "active",
-    })
-    .select("id, asset_code, name, category, department_id, criticality, status")
-    .single();
-
-  // asset_code carries no unique constraint, so 23505 can only be the id — which
-  // is derived from the name, so it means exactly one thing to the person typing.
-  if (error) {
-    if (error.code === "23505") {
-      throw new Error(`"${clean}" is already registered — pick it from the list instead.`);
-    }
-    throw error;
-  }
-  return data;
-}
-
+/**
+ * Add or correct a piece of equipment. Administrator only since migration 0049,
+ * and the only way equipment enters the register now.
+ *
+ * `plantId` is required and deliberately has no fallback. It used to default to
+ * 'PLT001', which 0049 retired — so the old default would now create a machine
+ * on a plant nobody can choose, and that machine would be invisible on the raise
+ * form with nothing on screen to explain why. The plant is what the equipment
+ * picker narrows on; a machine without one is unreachable.
+ *
+ * `departmentId` stays optional, and that is the other half of 0049: the master
+ * lists record a location, not a department, so all 134 imported machines carry
+ * none and the column lost its `not null`.
+ */
 export async function upsertAsset({ id, assetCode, name, departmentId, criticality, category, plantId, status }) {
   // Same trimming as upsertDepartment, for the same reason — and `name` here is
   // denormalised onto work_orders.asset_name, so a stray space is copied onto
   // every work order raised against the machine afterwards.
   const clean = String(name || "").trim();
   if (!clean) throw new Error("Give the machine a name.");
+  if (!plantId) throw new Error("Choose which plant the machine is on.");
   const { error } = await supabase.from("assets").upsert(
     {
       id,
       asset_code: String(assetCode || "").trim() || id,
       name: clean,
-      department_id: departmentId,
+      department_id: departmentId || null,
       criticality,
       category: category || null,
-      plant_id: plantId || "PLT001",
+      plant_id: plantId,
       // Carried through rather than pinned to 'active'. Since 0031 this column
       // is what retires a piece of equipment, so hardcoding it here would put
       // a decommissioned machine back on the raise form the next time an

@@ -118,7 +118,15 @@ function fileSize(bytes) {
  * component exists at all. The `!` overrides darken its backdrop and centre the
  * panel on a phone too, where it otherwise aligns to the bottom edge.
  */
-function AttachmentViewer({ items, index, onIndex, onClose, replaceable, onReplace, busy }) {
+/**
+ * Exported so the chat feed in CommentsPanel can open the same viewer rather
+ * than growing a second one. It is passed `replaceable={false}` there: 0043 put
+ * the replace control in the full-size viewer deliberately, and the state
+ * machine behind it — re-stamping wo_status, which reorders the phase groups
+ * the viewer indexes into — belongs with the grid that owns those groups.
+ * Swapping a photo stays a Photos-tab action; the chat shows and opens.
+ */
+export function AttachmentViewer({ items, index, onIndex, onClose, replaceable, onReplace, busy }) {
   const item = items[index];
   const [failed, setFailed] = useState(false);
   const [confirming, setConfirming] = useState(false);

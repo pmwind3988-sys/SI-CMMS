@@ -39,6 +39,54 @@ export function fmtDue(ms) {
   return sign < 0 ? `${out} overdue` : out;
 }
 
+/**
+ * Milliseconds left against the resolution SLA, from the deadline the DATABASE
+ * stored — not recomputed from the raise time.
+ *
+ * Every countdown in the app used to be `created_at + resolution_target_minutes`,
+ * computed fresh in three separate places, on the reasoning that an admin
+ * changing P2's target should change every countdown at once. Migration 0050
+ * made that wrong in a way that cannot be papered over:
+ *
+ *  - **A sequential priority has no resolution deadline until work starts.** P7
+ *    is assign-within-5-days, then start-within-3-days, then close-within-7-days,
+ *    so `sla_resolution_due_at` is deliberately NULL until `responded_at` is
+ *    stamped and is then measured from *that*, not from the fault. Computing it
+ *    would have shown every open P7 a 7-day countdown from the raise time — a
+ *    promise nothing in the database makes, on the one priority where the gap
+ *    between the two is measured in days rather than minutes.
+ *  - **An Administrator's re-grade moves the stored deadline** (migration 0051)
+ *    and a computed countdown would ignore it, so the badge and the breach sweep
+ *    would disagree about the same work order.
+ *
+ * Null means there is no deadline to report, which every caller already handles:
+ * the countdown reads "—" and the row counts as neither overdue nor at risk. A
+ * deadline that has not started cannot be missed.
+ *
+ * Trade-off, accepted: relabelling an SLA target in Admin -> Settings no longer
+ * retroactively moves the countdowns of work orders already raised. That is the
+ * FSD's rule rather than a regression — a deadline is a promise made when the
+ * work order was raised.
+ */
+export function slaRemainMs(wo) {
+  if (!wo?.sla_resolution_due_at) return null;
+  return new Date(wo.sla_resolution_due_at).getTime() - Date.now();
+}
+
+/**
+ * The whole resolution window in milliseconds, for the "at risk" test.
+ *
+ * `due - created_at`, which mirrors si_sla_warning_sweep()'s
+ * `(sla_resolution_due_at - created_at) * 0.25` exactly. Mirroring the sweep is
+ * the point: on a sequential priority the window spans the stages that came
+ * before it, so deriving it from `resolution_target_minutes` instead would put
+ * the client's warning threshold and the server's in different places.
+ */
+export function slaWindowMs(wo) {
+  if (!wo?.sla_resolution_due_at || !wo?.created_at) return null;
+  return new Date(wo.sla_resolution_due_at).getTime() - new Date(wo.created_at).getTime();
+}
+
 /* ------------------------------------------------------------------
    Client-side role predicates.
 
@@ -95,6 +143,30 @@ export function canEditWhileOpen(wo, currentUser) {
     isSupervisor(wo, currentUser) ||
     isManagerOrAdmin(currentUser)
   );
+}
+
+/**
+ * May this account re-grade this work order's priority?
+ *
+ * Administrator only — and a Superuser holds `admin`, so `hasRole` covers them
+ * without a second clause. Not a `role_permissions` toggle like work-order
+ * delete: the priority is what the SLA clock is computed from, so this sits
+ * with retiring reference data rather than with capabilities that get handed
+ * out (migration 0051).
+ *
+ * The status test is the same one si_override_work_order_priority enforces, and
+ * it is the reason this predicate takes the work order at all. Once a job is
+ * verified or closed its SLA outcome has been decided, and re-grading it would
+ * move a deadline that has already been met or missed.
+ *
+ * This decides what to SHOW. The RPC re-checks both halves in its own body,
+ * because RLS does not apply inside a SECURITY DEFINER function — so the two
+ * disagreeing means an error, never a silent success.
+ */
+export function canOverridePriority(wo, currentUser) {
+  if (!wo || !currentUser) return false;
+  if (wo.status === "verified" || wo.status === "closed") return false;
+  return hasRole(currentUser, ROLES.ADMIN);
 }
 
 /**
