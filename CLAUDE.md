@@ -892,6 +892,75 @@ same reason `exportWorkOrders.js`, `historyEvents.js` and `attachmentPhases.js` 
 way: it is what let the raise form and the priority dialog be exercised against the real
 context without a session.
 
+### A handover tells the technician it happened (migration 0052)
+
+**Only the first assignment ever notified the technician. Every reassignment notified nobody** —
+not pre-acceptance, not at `accepted`, not mid-repair.
+
+Two correct decisions meeting. `si_notify_work_order_update` opens with
+`if new.status = old.status then return null`, the same early return that makes 0051's re-grade
+keep quiet about phases it did not move. And a reassignment does not move the status: FSD
+Business Rule 6 preserves it at `accepted` or later so ownership changing does not restart the
+flow, and a pre-acceptance one re-enters `assigned` from `assigned`. Either way the function
+returned before reaching its own assignment branch, so the one transition whose entire purpose
+is to change who owns the work order was the one that announced nothing.
+
+Measured on test before the fix: handing a work order from one technician to another wrote
+**zero** notification rows for the new assignee at `assigned`, `accepted` and `repairing`. The
+`open → assigned` first assignment did notify — which is why it went unnoticed, since the path
+everybody exercises daily is the one path that worked.
+
+**The fix is where the test is, not what the test is.** The branch moves ABOVE the status guard
+and keys on `new.assigned_to_id is distinct from old.assigned_to_id`. Strictly more accurate in
+both directions: it fires for a handover, and it stops firing when the status becomes `assigned`
+with the *same* assignee — reachable, because the pre-acceptance `assigned → assigned` row does
+not require the assignee to change, so that used to re-notify somebody about a job they already
+held. Widening the guard instead would have let every branch below it run on an UPDATE that
+moved no status, and a priority re-grade would start emitting accept and decline notifications;
+the early return is load-bearing for everything after it, and only this one branch belongs in
+front of it.
+
+`is distinct from`, not `<>`: a first assignment moves the column from NULL and `null <> 'uuid'`
+is NULL, which is not true. A decline sets the assignee to NULL, which the `is not null` test
+skips — decline keeps its own branch. And nobody can be handed a work order by themselves, since
+the transition guard refuses self-assignment above the admin bypass, so there is no actor to
+exclude the way 0038's fan-outs do.
+
+**Two wordings, because a handover is not an assignment.** A first assignment has an Accept step
+waiting; a handover at `repairing` does not, so telling them to accept would send them looking
+for a button the workflow will never offer. The status label is read from `wo_statuses` rather
+than printing the raw enum, so it says "Repairing" and follows a relabelling.
+
+### The Assign button responds to being pressed, and says what it sent
+
+Three things were wrong with pressing **Assign**, and only the third was cosmetic.
+
+**`busy` was one boolean for the whole roster**, so a press disabled every button and put a
+spinner on none — the pressed one gave no response at all, and the only signal anything had
+happened was the row turning amber a round trip later when Realtime delivered the change back.
+It now holds the technician's id, so the pressed button reads "Assigning…" / "Reassigning…" and
+the others simply go quiet.
+
+**`Button`'s spinner never spun.** A dozen call sites across the app pass
+`icon={busy ? Loader2 : Check}`, and `Button` rendered `<Icon size={14} />` with no className —
+so every one of them showed a *motionless* spinner glyph while waiting. The only things that
+actually span were the three pages that hand-roll `<Loader2 className="animate-spin" />`. A
+frozen spinner is worse than none: it reads as a hung screen. `Button` now takes `loading`
+(spins, and disables itself so a second press cannot fire the same request), and it also spins
+any `Loader2` passed as `icon` — which fixes all dozen without touching them. Measured in the
+browser: `animationName` is `spin` on the loading button and `none` on the idle one.
+
+**And there was no confirmation.** `SentDialog` is a modal receipt naming the technician, because
+assignment is the moment responsibility for a fault transfers to a named person, and the amber
+row is both late and possibly off-screen on a phone. Its two wordings mirror 0052's two
+notifications: a pre-acceptance assignment says they can accept or decline and that a decline
+comes back here unassigned; a handover says the work order stays at its current phase and there
+is no acceptance step. `PRE_ACCEPTANCE` in `AssignPanel` mirrors `PRE_ACCEPTANCE_STATUSES` in
+`lib/workOrders` and exists only to word the dialog — **change them together.**
+
+The landed-on status is computed from the row already in hand rather than awaited from Realtime,
+so the dialog is right the moment it opens.
+
 ### Dates and times
 
 **`lib/datetime.js` pins `Asia/Kuala_Lumpur`. Everything older in the app does not.** Every

@@ -289,6 +289,7 @@ suggestion.
 |---|---|---|
 | Work order created | All Supervisors/HOD in the plant | Needs Assignment |
 | Technician assigned | The assigned Technician | Assigned |
+| Technician **re**assigned (handover) | The new Technician | Assigned — worded as a handover, naming the phase, and saying there is nothing to accept |
 | Technician accepts | The original Requester, and all Supervisors/HOD in the plant | Accepted |
 | Technician declines | All Supervisors/HOD in the plant (again) — deliberately **not** the Requester | Declined |
 | Technician starts work | The original Requester | Work started |
@@ -297,6 +298,7 @@ suggestion.
 | SLA resolution target passed (newly flagged only) | All Supervisors/HOD in the plant | SLA Breach |
 
 - Notifications are generated server-side only, never written directly by any client, so a notification's existence is always trustworthy evidence that its trigger actually occurred — a client cannot fabricate one.
+- **The assignment notification keys on the assignee changing, not on the status becoming Assigned.** Those are not the same event, and treating them as the same meant no reassignment ever notified anybody: a reassignment does not move the status (Business Rule 6 preserves it at Accepted or later, and a pre-acceptance one re-enters Assigned from Assigned), so the notification logic returned before reaching its own assignment branch. Only a first assignment, which moves Open → Assigned, ever fired. Corrected — and the corollary is that re-assigning to the technician who already holds the work order notifies nobody, because nothing changed.
 - A recipient may mark their own notification read, and may **delete** their own already-read notifications. No other write is permitted by anyone, including the sender-side trigger logic — a notification, once created, is never edited.
 - Deleting one destroys no audit trail. The status history is the record of what happened; a notification is only ever a copy of it addressed to somebody, which is why this is allowed where deleting a work order's history is refused outright (Section 14).
 - Telling the Requester their work order was declined is deliberately omitted. A decline is an internal routing problem the ops chain resolves in minutes, and telling the person who reported the fault that nobody has taken it invites a second work order for the same fault. They can still see the decline, and its reason, in full on the status history.
