@@ -961,6 +961,62 @@ is no acceptance step. `PRE_ACCEPTANCE` in `AssignPanel` mirrors `PRE_ACCEPTANCE
 The landed-on status is computed from the row already in hand rather than awaited from Realtime,
 so the dialog is right the moment it opens.
 
+### The work order detail page: what it says about itself
+
+Four changes, all on `WorkOrderDetail` and the panels under it.
+
+**Each SLA target is printed beside what that stage actually took.** `lib/slaStages.js` pairs
+them, and it is a module rather than three expressions in the component because **each actual
+has to be measured the same way its own target is.** P1-P4's targets are offsets from the raise
+time; P7's are stage durations starting when the previous stage was met (0050). Measuring a
+sequential stage from `created_at` compares a seven-day promise against a fifteen-day elapsed
+and reports a breach that never happened. Exercised in Node on the same instants both ways: the
+sequential reading is `6d` and met, the from-creation reading would have been `9d` and a
+breach. Green under target, red over, and an unfinished stage prints `···` rather than a zero —
+"not yet" is a different answer from "no". `fmtElapsed()` lives there rather than beside
+`fmtDue()` because `fmtDue` formats a *countdown* and appends "overdue" to a negative, which an
+elapsed time never wants.
+
+**The header carries who raised it and when**, beside the SLA chip. Both are the first things
+anyone asks of a work order they have just opened, and an SLA countdown is meaningless without
+the "when" it counts from. `fmtDateTimeMY`, so it reads the same in plant time on every device.
+
+**Comments and photos are one thread.** `CommentsPanel` merges `comments` and `attachments` by
+timestamp — different tables, no join, sorted ascending because a conversation is read downwards
+— and renders it as chat: own messages right in navy, everyone else's left in grey, with date
+dividers and the author's role badge. The picture of the fault and the sentence describing it
+were previously never on screen together, and on a phone the tab strip is a scrolling row where
+Attachments started off-screen entirely.
+
+The Photos tab **stays**, holding the phase-grouped gallery (0039) and the replace flow (0043).
+`AttachmentViewer` is exported so the chat opens the same viewer instead of growing a second
+one, and the chat passes `replaceable={false}` — **a boolean, not a predicate**: the viewer tests
+`replaceable &&`, so `() => false` is truthy and would put a live Replace control on every photo
+in the thread. Replacing stays a Photos-tab action because re-stamping `wo_status` reorders the
+phase groups the viewer indexes into, and that state machine belongs with the grid that owns
+them. Tabs relabelled Conversation and Photos; **the keys are unchanged**, since they are the
+panel ids.
+
+**The Conversation tab carries an unread count**, over both new comments and new photos, from
+either being enough. It lives in `localStorage` keyed on uid *and* work order — no read-receipt
+table, because that would be a row per person per work order per read in a database whose
+`notifications` table already has no retention, and an unread count is a per-person convenience
+rather than a fact about the work order. Keyed on the uid for the reason `draftRecovery.js` is:
+a shared workshop terminal has more than one person signing into it. Every access is wrapped,
+because Safari in private mode throws on the accessor itself.
+
+**Two things there are load-bearing.** `CommentsPanel` is now **mounted whichever tab is
+showing, and it is the only panel that is** — every other one is behind `tab === t.key`, and
+unmounting this one would stop the count updating the moment you looked at anything else, so the
+badge would never appear at all. It costs two live subscriptions for the life of the page, which
+is what a chat badge is. And because being mounted no longer means being on screen, it reads an
+`active` prop rather than inferring it — otherwise it marks a thread read while nobody is
+looking at it. Your own messages never count, and nothing counts while the tab is open.
+
+`Button` gained `loading`, which spins and disables. It also spins any `Loader2` passed as
+`icon`, which fixes the dozen existing call sites that were rendering a **motionless** spinner —
+see the note in that file.
+
 ### Dates and times
 
 **`lib/datetime.js` pins `Asia/Kuala_Lumpur`. Everything older in the app does not.** Every

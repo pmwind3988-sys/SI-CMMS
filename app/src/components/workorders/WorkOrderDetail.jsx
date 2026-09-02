@@ -2,12 +2,14 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle, ArrowUpDown } from "lucide-react";
+import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle, ArrowUpDown, UserCircle2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrder, deleteWorkOrder, overrideWorkOrderPriority } from "../../lib/workOrders";
 import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
+import { slaStages } from "../../lib/slaStages";
+import { fmtDateTimeMY } from "../../lib/datetime";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, ModalOverlay } from "../ui/Surfaces";
 import Button from "../ui/Button";
@@ -21,8 +23,13 @@ import { nextStep } from "../../lib/nextStep";
 const TABS = [
   { key: "overview", label: "Overview" },
   { key: "assignment", label: "Assignment" },
-  { key: "comments", label: "Comments" },
-  { key: "attachments", label: "Attachments" },
+  /* "Conversation" rather than "Comments": the tab holds the photos too now,
+     and "Photos" rather than "Attachments" because photos are the only thing
+     that can still be uploaded (migration 0036 took video off the bucket
+     allowlist). The KEYS are unchanged — they are the panel ids and the
+     deep-link targets, and renaming those would break both. */
+  { key: "comments", label: "Conversation" },
+  { key: "attachments", label: "Photos" },
   { key: "timeline", label: "Status Timeline" },
   { key: "workflow", label: "Workflow" },
 ];
@@ -36,6 +43,11 @@ export default function WorkOrderDetail({ woId }) {
   const [tab, setTab] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [changingPriority, setChangingPriority] = useState(false);
+  /* Reported up from CommentsPanel, which owns the two listeners the count is
+     derived from. Lifting them here instead would open the same subscriptions a
+     level higher and make the tab strip responsible for merging comments with
+     attachments. */
+  const [chatUnread, setChatUnread] = useState(0);
   const tabStripRef = useRef(null);
 
   /**
@@ -160,6 +172,26 @@ export default function WorkOrderDetail({ woId }) {
               Delete
             </Button>
           )}
+          {/* Who raised it and when, beside the SLA rather than only down in
+              Overview. Both are the first things anyone asks of a work order
+              they have just opened, and the SLA countdown next to them is
+              meaningless without the "when" it is counting from.
+
+              fmtDateTimeMY, not toLocaleString: this is pinned to
+              Asia/Kuala_Lumpur, so the same work order reads the same on a
+              laptop set to US English as on the phone that raised it. */}
+          <div className="flex items-center gap-2 rounded bg-[#F6F8FB] px-3.5 py-2.5">
+            <UserCircle2 size={15} className="flex-shrink-0 text-ink-soft" />
+            <div className="min-w-0">
+              <div className="text-[11px] text-ink-soft">Raised</div>
+              <div className="text-[13px] font-semibold text-ink">
+                {fmtDateTimeMY(wo.created_at)}
+              </div>
+              <div className="truncate text-[11px] text-ink-soft">
+                by {wo.requester_name || "—"}
+              </div>
+            </div>
+          </div>
           <div className="flex items-center gap-2 rounded px-3.5 py-2.5" style={{ background: breached ? "#FCE9E9" : "#F6F8FB" }}>
             <Timer size={15} className={breached ? "text-danger" : "text-ink-soft"} />
             <div>
@@ -205,6 +237,12 @@ export default function WorkOrderDetail({ woId }) {
           {TABS.map((t) => {
             const isActive = tab === t.key;
             const flagged = t.key === "workflow" && actionIsYours;
+            /* A number, not the workflow tab's dot. "Something is waiting for
+               you" needs no count; "three people have said things since you
+               last looked" is a different message, and the count is the
+               message. Capped at 9+ so a long-running job cannot widen the tab
+               and push the strip further off a phone screen. */
+            const badge = t.key === "comments" && chatUnread > 0 ? chatUnread : null;
             return (
               <button
                 key={t.key}
@@ -217,6 +255,10 @@ export default function WorkOrderDetail({ woId }) {
                    rest. That is the tablist pattern, and it also cuts five stops
                    out of every keyboard pass over this page. */
                 tabIndex={isActive ? 0 : -1}
+                /* The count is a colour and a numeral, so it has to be said in
+                   words for a screen reader — the same reason the workflow dot
+                   is aria-hidden and its meaning lives in the panel. */
+                aria-label={badge ? `${t.label}, ${badge} unread` : undefined}
                 onClick={() => setTab(t.key)}
                 className={`flex items-center gap-1.5 whitespace-nowrap px-4 py-2.5 text-[13.5px] font-semibold ${
                   isActive ? "text-ink" : "text-ink-soft"
@@ -224,6 +266,15 @@ export default function WorkOrderDetail({ woId }) {
                 style={{ borderBottom: isActive ? "2.5px solid #F59E0B" : "2.5px solid transparent" }}
               >
                 {t.label}
+                {badge && (
+                  <span
+                    className="ml-0.5 inline-flex h-[17px] min-w-[17px] flex-shrink-0 items-center justify-center rounded-full px-1 text-[10.5px] font-bold leading-none text-white"
+                    style={{ background: "#EF4444" }}
+                    aria-hidden="true"
+                  >
+                    {badge > 9 ? "9+" : badge}
+                  </span>
+                )}
                 {flagged && (
                   <span
                     className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent"
@@ -250,11 +301,24 @@ export default function WorkOrderDetail({ woId }) {
             aria-labelledby={`wo-tab-${t.key}`}
             hidden={tab !== t.key}
           >
+            {/* Conversation is mounted whichever tab is showing, and it is the
+                only one that is. The unread badge on its tab is derived from
+                its own two listeners, so unmounting it — which is what every
+                other panel does — would stop the count updating the instant you
+                looked at anything else, and the badge would never appear at
+                all. Mounted but `hidden`, so it costs two live subscriptions
+                for the life of the page, which is what a chat badge is.
+
+                It reads `active` rather than inferring it: being mounted no
+                longer means being on screen, and marking a thread read while
+                nobody is looking at it is the bug this would otherwise hide. */}
+            {t.key === "comments" && (
+              <CommentsPanel wo={wo} active={tab === "comments"} onUnread={setChatUnread} />
+            )}
             {tab === t.key && (
               <>
                 {t.key === "overview" && <OverviewTab wo={wo} />}
                 {t.key === "assignment" && <AssignPanel wo={wo} />}
-                {t.key === "comments" && <CommentsPanel wo={wo} />}
                 {t.key === "attachments" && <AttachmentsPanel wo={wo} />}
                 {t.key === "timeline" && <StatusTimeline wo={wo} />}
                 {t.key === "workflow" && <WorkflowPanel wo={wo} onGotoAssign={() => setTab("assignment")} />}
@@ -570,6 +634,7 @@ function DeleteDialog({ wo, onClose, onDeleted }) {
 function OverviewTab({ wo }) {
   const { departmentName, plantName, impactLabel, typeLabel, slaForPriority } = useReferenceData();
   const sla = wo.priority ? slaForPriority(wo.priority) : null;
+  const stages = slaStages(wo, sla);
   // Area is omitted rather than shown as "—" when blank: every work order
   // raised before migration 0019 has none, and a column of dashes down an
   // otherwise complete overview reads as missing data rather than as a field
@@ -627,18 +692,37 @@ function OverviewTab({ wo }) {
         <div className="text-[12.5px] font-semibold text-ink mb-2">Complaint</div>
         <p className="text-[13.5px] text-ink leading-relaxed mb-5">{wo.description}</p>
         <div className="bg-canvas rounded p-3.5">
-          <div className="text-[12px] font-bold text-ink mb-2.5">SLA targets ({wo.priority})</div>
-          {sla &&
-            [
-              ["Acknowledge", sla.ack_target_label],
-              ["Response", sla.response_target_label],
-              ["Resolution", sla.resolution_target_label],
-            ].map(([l, v]) => (
-              <div key={l} className="flex justify-between gap-3 text-[12.5px] py-1">
-                <span className="flex-shrink-0 text-ink-soft">{l}</span>
-                <span className="text-right font-mono font-semibold text-ink">{v}</span>
-              </div>
-            ))}
+          <div className="mb-2.5 flex items-baseline justify-between gap-3">
+            <span className="text-[12px] font-bold text-ink">SLA targets ({wo.priority})</span>
+            <span className="text-[10.5px] text-ink-soft">target · actual</span>
+          </div>
+          {/* Target on one line, what it actually took beside it. An unfinished
+              stage prints nothing rather than a zero — see slaStages(), which
+              also decides whether each actual is measured from the raise time
+              or from the previous stage. Green means the stage came in under
+              its target, red over; grey means it has not finished, and "not
+              yet" is a different answer from "no". */}
+          {stages.map((st) => (
+            <div key={st.key} className="flex items-baseline justify-between gap-3 py-1 text-[12.5px]">
+              <span className="flex-shrink-0 text-ink-soft">{st.label}</span>
+              <span className="text-right">
+                <span className="font-mono font-semibold text-ink">{st.targetLabel ?? "—"}</span>
+                {st.finished ? (
+                  <span
+                    className="ml-2 font-mono font-semibold"
+                    style={{ color: st.met === false ? "#B42318" : "#0B6B48" }}
+                    title={`Actual — ${st.endedNote} after ${st.actualLabel}`}
+                  >
+                    {st.actualLabel}
+                  </span>
+                ) : (
+                  <span className="ml-2 font-mono text-ink-soft" title="This stage has not finished yet">
+                    &middot;&middot;&middot;
+                  </span>
+                )}
+              </span>
+            </div>
+          ))}
           {/* Without this the three numbers above read as three deadlines
               counted from the same moment, which is what they are for P1-P4 and
               is not what they are for P7: each window starts when the previous

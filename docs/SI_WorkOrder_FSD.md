@@ -185,7 +185,12 @@ The consequence, and it is intended: a P7 has **no response deadline until it is
 
 Which model a priority uses is configuration, not code — a per-priority flag on the SLA targets. P7 is the only priority that carries it; P1-P4 behave exactly as they did before P7 existed.
 
-### 6.2 Changing an already-running deadline
+### 6.2 What each stage actually took
+Every target is displayed beside **the time that stage actually took**, once it has finished — days, hours and minutes, coloured green where it came in under target and red where it went over. An unfinished stage shows no figure rather than a zero, because "not yet" and "no" are different answers.
+
+Each actual is measured the same way its own target is: from the raise time for P1-P4, and from the previous stage for a sequential priority. Measuring a sequential stage from the raise time instead would compare a seven-day promise against a fifteen-day elapsed and report a breach that never happened.
+
+### 6.3 Changing an already-running deadline
 This was previously called out as an edge case needing an explicit product decision. That decision has been made, and it is narrow: **the only thing that recalculates a deadline is an Administrator re-grading the priority** (Section 7.5). Nothing else does — not an edit, not a transition, not a relabelling of the SLA targets.
 
 When it happens, the new priority's targets are applied **from the work order's creation time**, not from the moment of the re-grade. A work order raised on Monday and re-graded on Wednesday is measured from Monday: the fault is as old as it is, and restarting the clock would reward re-grading a job that is already late. For P7 the staged shape is preserved — the response deadline is computed from when it was actually acknowledged and the resolution deadline from when work actually started, so a stage not yet reached stays unset.
@@ -232,7 +237,7 @@ Production Impact or risk flags re-derives it. Once a work order leaves `Open`
 its core fields can no longer be edited, so by that route the priority is settled
 from that moment.
 
-Its SLA deadlines are **not** recomputed when this happens — see Section 6.2.
+Its SLA deadlines are **not** recomputed when this happens — see Section 6.3.
 This route is available to whoever may edit an Open work order, requires no
 reason, and writes no history row.
 
@@ -267,7 +272,7 @@ Five rules govern it:
    observation they made at the machine, and the Administrator is disagreeing
    with the grading rather than with the observation. The displaced value is
    recorded in the audit entry either way.
-5. **The SLA deadlines are recomputed** from the creation time — see Section 6.2.
+5. **The SLA deadlines are recomputed** from the creation time — see Section 6.3.
    The breach flag moves with them, in both directions.
 6. **Nothing else about the work order moves.** It keeps its assigned technician
    and it keeps its current status, at every stage from `Open` to `Completed` —
