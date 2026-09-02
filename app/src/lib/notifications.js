@@ -27,6 +27,9 @@ export const NOTIFICATION_META = {
      to the component's grey generic bell, which is how a notification type
      added server-side goes unnoticed. */
   accepted: { label: "Accepted", icon: "ThumbsUp", color: "#22C55E" },
+  /* 0051's Administrator re-grade. Violet, matching P7's badge, because the
+     re-grade that matters most is the one to or from long-term work. */
+  priority_changed: { label: "Priority changed", icon: "ArrowUpDown", color: "#7C3AED" },
   status_change: { label: "Status update", icon: "RefreshCw", color: "#F59E0B" },
   reopened: { label: "Reopened", icon: "RotateCcw", color: "#EF4444" },
   completed: { label: "Completed — verify", icon: "CheckCircle2", color: "#22C55E" },

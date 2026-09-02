@@ -518,9 +518,12 @@ Consequence to expect rather than treat as a bug: the export's "Est. Downtime" a
 
 ### Priority is derived, not chosen (migration 0036)
 
-**`work_orders.priority` follows the production impact, and no longer can be overridden.**
-It was a suggestion the requester could reject; the four priority buttons and the
-`priority_touched` flag they set are gone from the raise form.
+**`work_orders.priority` follows the production impact, and cannot be chosen.** It was a
+suggestion the requester could reject; the four priority buttons and the `priority_touched`
+flag they set are gone from the raise form. Migration 0051 later added one audited exception,
+for an Administrator re-grading a live work order — see "An Administrator may re-grade a
+priority" below. Nothing about the derivation changed: the override is a separate column that
+`si_force_derived_priority` coalesces over the derived value.
 
 The escalations are **kept**, and that was a deliberate choice against the narrower reading
 of "follows the impact": a safety flag still raises the priority to its severity's ceiling
@@ -570,7 +573,306 @@ Four details worth not undoing:
 
 `priority_touched` survives as a column and as the export's "Priority Overridden" column.
 It can only read "No" now, but an export is a record and churning a record's shape is worse
-than a constant column.
+than a constant column. 0051's re-grade is reported in three columns of its own rather than
+reusing this one — they are different events.
+
+### Four plants, and equipment that belongs to one (migration 0049)
+
+**The plant decides which equipment a work order can be raised against.** `plants` held one
+row until now — `PLT001`, "Main Plant", with a Bengaluru address inherited from the
+architecture doc — and nothing ever chose one: `createWorkOrder()` hardcoded `'PLT001'` and
+no screen showed the field. That is the "single plant" line this file's Known gaps carried
+since 0001, and it is closed.
+
+Four sites: `F1` (PMW Industries), `F2` (PMW Concrete Industries), `F3` (PMW Industries F3)
+and `FACILITY`. 134 machines loaded from the 2026 Machinery & Equipment Master Lists — F1 63,
+F2 38, F3 33 — plus one `Other (specify)` row per plant. Facility has no list of its own
+yet, so `Other` is all it offers.
+
+**The raise form asks Department → Plant → Equipment**, and the plant is what narrows the
+picker. Department is untouched and still 0019's rule: who triages, chosen by the person
+reporting, deciding nothing about access, and allowed to disagree with where the machine is.
+
+Six things here are load-bearing:
+
+- **`assets.department_id` lost its `not null`, and had to.** The master lists carry a
+  LOCATION column (`PMW-F1/F2/F3`) and no department, so keeping the constraint would have
+  meant inventing a department for 134 machines — guessing whether a 5-tonne overhead crane
+  belongs to Production or to Maintenance, 134 times, and writing the guesses into a column
+  the app then displays as fact. Equipment registered before 0049 keeps whatever department
+  it has. `work_orders.department_id` is still `not null`: that one is answered by a person.
+- **`handleAssetChange` sets the PLANT now, not the department.** It used to fill the
+  department in from `assets.department_id`, which is null on every imported machine — so
+  left alone it would have cleared a department the user had just chosen, on every machine in
+  the register.
+- **Changing the plant clears the equipment**, where changing the department deliberately
+  does not. Department and asset are *allowed* to disagree; plant and asset cannot — the
+  plant is where that machine is, so F3 plus an F1 lathe is a stale selection rather than a
+  real situation. It would also leave a machine on screen the picker no longer offers.
+- **With no plant chosen the equipment picker offers nothing**, which is the opposite of what
+  the department narrowing did (no department meant every machine). The registers overlap by
+  code — F1, F2 and F3 each have an `AC1`, F2 and F3 each have a `BP` — so one flat list
+  offers four different machines under the same label with no way to tell them apart. There
+  is no "show every plant" escape hatch for the same reason: choosing the plant *is* the
+  answer, and it sits one field above.
+- **Asset ids are `AST-{plant}-{nnn}`, not derived from the machine code**, because those
+  codes are not unique even within one sheet: F1 uses `L1` for both "Lathe Machine No 1" and
+  "Laser No 1", and `C1`/`C2`/`C3` for both the cutting machines and Cranes 1-3. The code is
+  kept verbatim in `asset_code`, which has never carried a unique index.
+- **`work_orders.plant_id` is `not null` now**, backfilled to `PLT001` first. Every work order
+  raised before today was stamped `'PLT001'` by `createWorkOrder`, so that is the honest
+  answer for those rows rather than a blank — there was one plant and that was it.
+
+**Every machine already registered is retired, not deleted.** `work_orders.asset_id` is a
+foreign key with no cascade and `asset_name` is denormalised onto the row, so a work order
+raised against "Batching Plant" has to go on reading "Batching Plant" forever. Measured on
+test before the migration: `AST-BATCHING-PLANT` carried 21 work orders and `AST-FLOODLIGHT`
+20 — Postgres would have refused to delete either. The retirement is written as "everything
+that is not one of the rows below" rather than as a list of ids, because the two projects hold
+different equipment and a hardcoded list would leave whatever it failed to name still on the
+picker. Same reasoning 0046 used for keying on a flag instead of on email addresses.
+
+**Registering equipment from the raise form stops here.** 0032 opened `assets_insert` to any
+signed-in user, arguing that the person on the floor with a fault is the one who notices the
+machine is missing. That was right when the register was empty; it is also what produced
+"Aircond", "Lampu", "Floodlight" and "Main office 1st floor" as plant equipment. `assets_insert`
+is now `si_is_admin()`, `createAsset()` is **removed** from `lib/admin.js` (the way 0031
+removed `deleteDepartment()` — an exported write every non-admin caller would refuse reads as
+a capability the app still has), and `upsertAsset()` requires a plant with no fallback: it used
+to default to `'PLT001'`, which is now retired, so the old default would create a machine
+nobody can choose and nothing on screen would explain why.
+
+**Departments keep their open insert.** 0019's argument still holds there and adding a
+department is not what drifted.
+
+**"Other (specify)" is what replaces self-registration, and it registers nothing.** Picking it
+reveals a required *Which equipment* field; what the user types is stored as that work order's
+`asset_name`, prefixed `Other — `, while `asset_id` points at the plant's `Other` row so the
+foreign key holds. The list, the detail page and the export all read `asset_name`, so the
+record names the machine everywhere; the register gains nothing. The export's Equipment column
+takes `asset_name` before resolving `asset_id` for exactly this reason — resolving the id
+would print "Other (specify)".
+
+`OTHER_PREFIX` is one constant in `RaiseWorkOrderForm` because it is written on submit and read
+back off `asset_name` when editing, and the name is **not** recoverable from `asset_id` — that
+points at the plant's shared `Other` row. Starting the field blank instead would make editing
+anything else about such a work order silently demand the machine name again, and then fail
+validation until it was retyped. The prefix is tested on the string rather than through
+`assetById()` because the initialiser runs before the reference data has arrived.
+
+**A retired plant cannot be chosen either.** 0031's central point is that a flag which only
+filters a dropdown decides nothing, so `plants` joins the tables `si_guard_retired_reference()`
+covers, keyed on `plants.status` — the column 0001 created — rather than on a second flag.
+`PLT001` is retired rather than deleted: `departments.plant_id`, `users.plant_ids` and every
+work order raised before today point at it. Measured as a technician straight at PostgREST:
+raising a work order against `PLT001` comes back *"That plant is no longer in use…"*.
+
+`plants` is in `ReferenceDataProvider` and in `NEVER_EMPTY`, unlike departments and assets. A
+site with no equipment registered yet is a valid starting state; a database with no plant row
+is not, so an empty `plants` means the same thing an empty `priorities` does — the fetch ran
+unauthenticated.
+
+### P7, and an SLA whose stages start when the last one finished (0048, 0050)
+
+**P7 is a long-term task**: planned work with no immediate production impact, measured in days.
+It arrives with a production impact of its own — `impact_levels.long_term` → `P7` — because
+since 0036 nobody picks a priority, and a priority with no impact deriving it would be a value
+the raise form could never reach. The impact → priority mapping stays exactly 1:1.
+
+**Why P7 and not P5.** Rank 1 is most severe, and a long-term task sits well below "cosmetic or
+routine" rather than one step below it. Leaving 5 and 6 unused keeps room for a priority
+between P4 and P7 without renumbering, which matters because `priorities.rank` is what
+`si_derive_priority()` compares with `least()` and what every escalation ceiling resolves
+through.
+
+**Two migrations, and the order is forced.** 0048 adds the two enum labels (`si_priority.'P7'`,
+`si_impact.'long_term'`) and nothing else; 0050 seeds the rows that name them. Postgres refuses
+to let a transaction *use* an enum value the same transaction added and the CLI wraps each file
+in a transaction — the same trap 0035/0036 documents.
+
+**Its three targets are sequential: assigned within 5 days, `repairing` within 3 days of that,
+closed within 7 days of that.** So the numbers stored are *stage durations*, not offsets from
+the raise time.
+
+**P1-P4 are untouched.** Their numbers were authored as totals from creation — a P1 is 5
+minutes to acknowledge and 4 hours to resolve, both from the fault — and making them
+sequential would have made every one of them quietly more generous than it has been since
+0006. Which model applies is therefore **data, not code**: `sla.targets_are_sequential`, one
+code path with the row deciding, the way the permitted transitions are 22 rows in
+`wo_status_transitions`. An `if priority = 'P7'` in two trigger bodies would be a second
+definition of the same rule, which is what this file already complains that
+`suggestPriority()` vs `si_derive_priority()` costs.
+
+**"Acknowledge" and "response" now have to mean something exact.** The FSD defined acknowledge
+(creation → leaving `Open`) and resolution (creation → `Closed`) and never defined **response**:
+`sla.response_target_minutes` was added by 0009 as a third number the detail page prints, and
+nothing ever measured it. Now:
+
+```
+acknowledged_at  <- first time the work order reaches 'assigned'
+responded_at     <- first time it reaches 'repairing' (work under way)
+```
+
+Both are `coalesce`d, so they record the FIRST arrival and never move. The trail is
+deliberately non-monotonic (0038): a decline sends `assigned` back to `open` and the next
+assignment must not restart the acknowledge clock, and `testing → repairing` on a second
+attempt must not restart the resolution one. `accepted` was the other candidate for response
+and is the weaker one — on a long-term task it would start the 7-day resolution window three
+days before anybody is at the machine.
+
+Both columns are backfilled from `work_order_history`, first occurrence of each status,
+**filtered to `event_type = 'transition'`** — 0043's photo-replaced rows carry the work order's
+current status in `to_status`, so a photo swapped while a job was assigned would otherwise read
+as the moment it was assigned. Same trap `lib/historyEvents.js` exists for.
+
+**A P7 has no resolution deadline until work starts, and that is correct.**
+`sla_resolution_due_at` stays NULL on a sequential priority until `responded_at` is stamped,
+and nothing had to change to make it safe: 0004's breach and warning sweeps both already guard
+on `sla_resolution_due_at is not null`, `si_dashboard_card_rows` already orders `nulls last`,
+and `si_stamp_work_order`'s `closed` branch already tests for null before setting
+`sla_breached`. A deadline that has not started cannot be missed, and inventing one from the
+raise time would be the from-creation model wearing the sequential model's numbers.
+
+`si_sla_targets(si_priority)` replaces `si_sla_target_minutes`'s two values with four. **It
+keeps EXECUTE for `authenticated`, and must**: `si_stamp_work_order` is SECURITY **INVOKER**,
+so a function it calls has its EXECUTE checked against the signed-in user — revoked, every
+status change in the app would fail with *"permission denied for function si_sla_targets"* for
+every role, exactly as `si_guard_protected_user` did before 0013. It discloses nothing
+`sla_select` does not already publish. The old function is left in place rather than dropped:
+nothing in this repository calls it, but it has been granted to PUBLIC since 0003 and dropping
+a function is not the way to find out what else reaches it.
+
+The sequential block in `si_stamp_work_order` sits **above** the `completed`/`closed` stamps,
+because the `closed` branch decides `sla_breached` by reading `sla_resolution_due_at` and has
+to read the value the same statement just computed.
+
+**Every SLA countdown in the client now reads the stored deadline** instead of recomputing
+`created_at + resolution_target_minutes`. That arithmetic was duplicated in three places — the
+list, the detail header and `RoleDashboard`'s overdue/at-risk buckets — and 0050 made it wrong
+in a way that could not be papered over: an open P7 would have shown a 7-day countdown from the
+raise time, which is a promise nothing in the database makes, on the one priority where the gap
+between the two is measured in days. `slaRemainMs(wo)` and `slaWindowMs(wo)` in `constants.js`
+are the one definition now. Null means no deadline has started, and every caller already
+handled null — `fmtDue(null)` is "—" and both dashboard buckets test for it. Exercised against
+the real source: a P7 with no deadline reads "—" and counts as neither overdue nor at risk; a
+started one reads "6d 23h"; a breached P1 reads "2h 0m overdue".
+
+`slaWindowMs` is `due - created_at`, which mirrors `si_sla_warning_sweep()`'s
+`(sla_resolution_due_at - created_at) * 0.25` exactly rather than deriving the window from
+`resolution_target_minutes` — on a sequential priority the window spans the stages before it,
+so the two would otherwise put the warning threshold in different places.
+
+The trade-off is accepted and is the FSD's rule rather than a regression: relabelling an SLA
+target in Admin → Settings no longer retroactively moves the countdown of a work order already
+raised. A deadline is a promise made when it was raised. An Administrator's re-grade is the one
+thing that moves one (0051), and it moves the stored column, so all three read it correctly.
+
+**The dashboard learns about P7 explicitly**, because its priority row is four hardcoded keys
+rather than a loop over the table. `si_compute_dashboard_stats` gains `p7_long_term` and
+`si_dashboard_card_rows` a branch; without them a P7 would be counted in `total_open` and in no
+band, so the four cards would visibly stop adding up — and long-term work, exactly the kind
+that sits unattended, would be the work with no figure watching it.
+
+**P7's colour is off-palette on purpose.** Every in-palette candidate collides: slate `#64748B`
+is what `priorityColor()` returns when a lookup *fails*, so a P7 badge would be
+indistinguishable from a broken one; both navies are P4's own family; green reads as completed.
+A priority badge has one job, which is to be told apart at a glance in a list, so P7 is violet
+— and it is a seed value in an editable table, so Admin → Settings can recolour it.
+
+### An Administrator may re-grade a priority (migration 0051)
+
+Since 0036 the priority was unchangeable by anybody. That is right for the requester, the
+supervisor and the manager, and wrong for the Administrator: a breakdown that turns out to be a
+rebuild is correctly *reported* and incorrectly *prioritised*, and no edit to its production
+impact describes that honestly. **Administrator only, reason required, live work orders only.**
+
+Not a `role_permissions` toggle like work-order delete (0018) — the priority is what the SLA
+clock is computed from, so this sits with 0031's retire-reference-data rather than with
+capabilities that get handed out.
+
+**An override column, not a writable `priority`.** The obvious version — let an Administrator
+write `priority` and have the derive trigger leave it alone — cannot work, because the trigger
+has no way to tell a deliberate value from the same value arriving in
+`updateWorkOrderFields()`'s arbitrary `fields` object, which is exactly why 0036 fires on every
+UPDATE rather than `update of impact, …`. So `si_force_derived_priority` reads
+`coalesce(new.priority_override, si_derive_priority(...))`, which makes the override **sticky**
+for free — and it has to be, or a later edit of the impact would silently undo it.
+
+The other tempting shortcut was to skip the column and have the Administrator set the
+*impact*, letting the existing derivation carry the priority. It is unsound in one direction:
+the safety and environmental escalations are `least()` caps, so a work order flagged for a high
+safety risk derives P1 whatever its impact says, and an Administrator asking for P7 on it would
+silently get P1 with no error. Setting the impact reaches only the priorities the flags allow;
+an override has to reach all of them. Measured: `si_derive_priority('long_term', {flag:true,
+severity:'High'}, …)` returns **P1**.
+
+**Overriding to P7 moves the impact with it — and only to P7.** P7 is not a severity, it is a
+kind of work, so "Full production stoppage · P7" is a contradiction rather than a re-graded
+job. Overrides between P1 and P4 leave the impact exactly as the requester chose it: those four
+*are* severities, the requester's answer is an observation they made at the machine, and the
+Administrator is disagreeing with the grading rather than with the observation. Rewriting it
+would destroy the input the derivation is computed from and leave nothing on the row showing it
+had ever been different. The displaced value is in the audit row either way.
+
+**The SLA is recomputed from `created_at`, not from now.** A work order raised on Monday and
+re-graded on Wednesday gets its new marks counted from Monday — the fault is as old as it is,
+and restarting the clock would reward re-grading a job that is already late. Sequential
+priorities keep their staged shape: response due from `acknowledged_at`, resolution due from
+`responded_at`, so a stage not yet reached stays NULL. `sla_breached` is recomputed in both
+directions and `sla_warning_sent` is reset only when the new deadline is still ahead — re-arming
+it on an already-breached job would send a warning after the breach. This is a deliberate
+exception to the FSD's "once set, does not clear itself": that rule protects a breach from being
+erased by the passage of time, and what clears it here is a named Administrator with a recorded
+reason.
+
+**Three enforcement points, because `work_orders` cannot lose its UPDATE policy.** 0043's answer
+for `attachments` — no UPDATE policy at all — is unavailable here, since every transition and
+every edit needs one. Instead:
+
+- `si_guard_priority_override` (BEFORE INSERT OR UPDATE) refuses **any** change to the four
+  override columns unless the RPC's door is open, so a direct PATCH from an Administrator's own
+  token is refused and the reason and the audit row cannot be skipped by anyone at any rank.
+  Measured: *"Priority can only be changed by an Administrator, with a reason."*
+- `si_override_work_order_priority` (SECURITY DEFINER) is that door, re-checking `si_is_admin()`
+  and the status in its own body because RLS does not apply inside it.
+- The door is `current_setting('si.allow_priority_override')`, read by `si_priority_override()`
+  — a copy of `si_protected_override()`'s shape from 0013/0016. `set local` means it dies with
+  the transaction, so a pooled connection cannot carry it into the next statement.
+
+The guard is named `a000_` so it fires ahead of 0036's `a00_derive_work_order_priority`, which
+reads the column it protects. Every digit sorts below `_` in ASCII — the same fact that stops a
+migration being numbered between two existing ones.
+
+**`p_priority => null` clears the override** and hands the work order back to the derivation. A
+reason is still required: going back is a decision too, and the audit row is the only place it
+is recorded.
+
+**Logged three ways, like 0043's photo replacement.** The four columns carry the standing
+decision; one `work_order_history` row with `event_type = 'priority_override'` puts it on the
+timeline the rest of the work order is read from; and `si_notify` tells the assigned technician
+and the requester, excluding whoever made the change and deduplicated because on a small site
+they can be the same person. Deliberately **not** the whole ops chain the way 0038 fans accept
+and decline out — `notifications` still has no retention and no per-account mute, and a
+re-grade is not a routing problem anybody else has to act on.
+
+`lib/historyEvents.js` gains the label, and `NOTIFICATION_META` plus `NotificationBell`'s
+`ICONS` gain `priority_changed` / `ArrowUpDown`. A type added server-side and not there renders
+as a grey generic bell, which is how a new notification type goes unnoticed.
+
+**`priority_touched` is left alone.** It records *the requester overriding a suggestion*, can
+only read false since 0036, and the export's "Priority Overridden" column reads "No" forever.
+The re-grade is three new export columns instead. They are different events and folding them
+together would make one heading mean two things.
+
+`canOverridePriority(wo, currentUser)` in `constants.js` decides what to *show* and restates
+both halves — Administrator, and not `verified`/`closed`. The RPC re-checks both, so the two
+disagreeing means an error rather than a silent success.
+
+`buildReferenceValue(data, error)` is now exported from `lib/referenceData.js` and the provider
+is only the subscription half. Pure — rows in, helpers out, no React and no Supabase — for the
+same reason `exportWorkOrders.js`, `historyEvents.js` and `attachmentPhases.js` are shaped that
+way: it is what let the raise form and the priority dialog be exercised against the real
+context without a session.
 
 ### Dates and times
 
@@ -602,7 +904,7 @@ column that still sorts correctly and therefore never looks wrong.
 ### Exporting work orders
 
 `lib/exportWorkOrders.js` builds a four-sheet workbook — **Work Orders** (one row per work
-order, 50 columns), **Status History**, **Comments**, **Export Info** — via
+order, 57 columns), **Status History**, **Comments**, **Export Info** — via
 `write-excel-file`. Everything above `downloadWorkOrderExport()` is pure: plain data in, plain
 arrays out, no Supabase and no React, which is what makes it testable in Node, the only place
 this repo can run a test. Reference-data lookups arrive as a `labels` argument.
@@ -823,38 +1125,34 @@ Note the vocabulary collision, which is deliberate: `repairing` is also a work o
 joins them, and the type answers "what kind of job" where the status answers "how far has
 it got".
 
-**Any signed-in user may register a department (0019) or a piece of equipment (0032)**, because
-the raise form offers "+ Add new" in both pickers — the person on the floor with a fault to
-report is the one who notices the machine or the bay is missing. Insert only; the other verbs
-stay where they were (departments: update Manager+, delete Admin; assets: update Supervisor+,
-delete Admin). **Renaming is the dangerous half**: `id` is what `work_orders` reference, and
-`name` is denormalised onto `work_orders.asset_name`, so a rename rewrites how existing records
-read. Removing is 0031's business.
+**Any signed-in user may register a department (0019)**, because the raise form offers
+"+ Add new" in that picker — the person on the floor with a fault to report is the one who
+notices the bay is missing. Insert only; the other verbs stay where they were (update Manager+,
+delete Admin). **Renaming is the dangerous half**: `id` is what `work_orders` reference, so a
+rename rewrites how existing records read. Removing is 0031's business.
 
-Both write paths are `.insert()`, never `.upsert()`. PostgREST turns an upsert into
+**Equipment is no longer one of them.** 0032 opened `assets_insert` the same way and 0049 closed
+it again — the register is the three 2026 master lists now, `assets_insert` is `si_is_admin()`,
+and "Other (specify)" is what somebody with an unlisted machine chooses instead. `createAsset()`
+is gone; `upsertAsset()` in Admin → Settings → Equipment is the only way in, and it requires a
+plant. See "Four plants" below.
+
+`createDepartment` is `.insert()`, never `.upsert()`. PostgREST turns an upsert into
 `insert … on conflict do update`, which needs the UPDATE policy too — so RLS already refuses
 it — but stating it as an insert is what makes a collision come back as *"that already
-exists"* rather than as a policy error. `createAsset()` also refuses before it starts if no
-department is chosen: `assets.department_id` is `not null`.
+exists"* rather than as a policy error.
 
-**Equipment is offered from the chosen department first**, with "Show equipment from every
-department (n more)" underneath it. That is a display narrowing and nothing more: 0019's point
-was about what may be *submitted*, the policy still accepts any asset, `handleAssetChange`
-still moves the department to the machine's own, and the toggle resets when the department
-changes so choosing one always narrows again. What it fixes is that every machine on site in
-one flat list is a picker you scroll rather than a question you answer — and the department
-has just been asked for, one field above. `includingCurrent()` applies here too, so an asset
-already selected can never drop out of its own picker while editing a work order whose pair
-was deliberately left disagreeing.
+**Equipment is offered from the chosen PLANT, not from the chosen department** — migration
+0049 replaced one narrowing with the other, and the two are not the same shape. See "Four
+plants, and equipment that belongs to one" below for why an unanswered plant offers nothing
+where an unanswered department offered everything. `includingCurrent()` still applies, so an
+asset already selected can never drop out of its own picker while editing a work order raised
+against a machine since retired.
 
-That last one used to be awkward and no longer is. The raise form asked for equipment
-*first* and filled the department in from it — right for every other case and exactly
-backwards for registering a machine, since the person adding one had to go back up for the
-field they had just skipped. **The two are now swapped: department first, equipment
-second.** `handleAssetChange` is unchanged and still overwrites the department from the
-machine's own, which is the right way round — the asset is the more specific answer and
-knows its own owner, and the field stays editable afterwards for when the registered owner
-is not who should handle this particular fault.
+The form asks **Department → Plant → Equipment**. It asked for equipment *first* and filled the
+department in from the machine until 0036 swapped the first two; 0049 put the plant between
+them, because a list you have to scope is unusable until the thing that scopes it has been
+answered.
 
 ### Retiring reference data (migration 0031)
 
@@ -1268,6 +1566,17 @@ shape 0033 used. Verified from the browser's own anon key: `rpc('si_derive_prior
 call that returns 200, so the probe distinguishes "revoked" from "everything fails". 0035 adds
 none.
 
+**Not yet re-run after 0048-0051.** Those add five functions, and two are deliberate
+`authenticated` grants that the advisor will report under `Signed-In Users Can Execute SECURITY
+DEFINER Function` — `si_override_work_order_priority`, an RPC the browser calls which re-checks
+`si_is_admin()` and the work order's status in its own body, and `si_sla_targets`, which
+**cannot** be revoked because `si_stamp_work_order` is SECURITY INVOKER and calls it (see 0050).
+`si_reference_is_retired` keeps the grant it already had. The other two —
+`si_guard_priority_override` and `si_priority_override` — are revoked from `public, anon,
+authenticated`. Everything in 0049-0051 pins `search_path` in the `create` header and re-issues
+its grants immediately after each `create or replace`, which the dashboard functions in 0050
+also do because a later replace resets what an earlier grant set.
+
 **Advisor run 2026-08-30 after 0043, on PRODUCTION: 0 errors, and the baseline plus exactly one
 row — `si_replace_attachment`, under `Signed-In Users Can Execute SECURITY DEFINER Function`.**
 That is the row this migration was always going to add and it must not be "fixed": the browser
@@ -1384,8 +1693,18 @@ has happened on this project, and is what 0013 exists to fix.
   audited; the edit path isn't).
 - `verified` is a history state, not a resting state — `completed → closed` happens in one
   move with `verified_by`/`verified_at` stamped.
-- Single plant: `plant_id` is threaded everywhere but everything seeds to `PLT001` and no UI
-  exposes plant selection.
+- **Facility has no equipment list of its own.** F1, F2 and F3 came from the 2026 master
+  lists; Facility ships with only "Other (specify)", so every Facility work order names its
+  equipment as free text until a list is supplied. Deliberate — a guessed list would be worse
+  than none — but it means the Facility rows in an export cannot be grouped by machine.
+- **The imported machines carry no department and no criticality of their own.** All 134 are
+  `department_id` null and `criticality` 'medium', because the master lists record neither.
+  Criticality is what the raise form's machine-facts strip prints, so it currently says
+  "medium" about every imported machine — honest as a default, not as a fact. An Administrator
+  can set both in Admin → Settings → Equipment.
+- **YEAR OF PURCHASED was dropped on import.** The only column for it is `install_date
+  timestamptz`, and turning "2013" into a timestamp invents a day and a month nobody recorded.
+  `model` was kept where the sheet had one.
 - `@capacitor/cli` pulls a `tar` version with a critical advisory; fixing it needs a Capacitor
   6 → 8 major upgrade. It is the only advisory in the tree — `write-excel-file` brings one
   transitive dependency (`fflate`) and neither is flagged.

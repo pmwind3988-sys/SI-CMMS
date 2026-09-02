@@ -128,7 +128,7 @@ No step in this sequence may be skipped by any role, including HOD. See Section 
 
 ## 4. Business Rules
 
-1. **Priority is a system decision, and only a system decision.** It is derived from Production Impact plus any Safety/Environmental Risk flags, and nobody — Requester, Supervisor or HOD — may set it directly. Whoever raises the work order answers the questions; the system answers the priority. Derivation is enforced where the record is written, not only in the form, so a priority arriving from anywhere else is replaced rather than accepted.
+1. **Priority is a system decision.** It is derived from Production Impact plus any Safety/Environmental Risk flags, and nobody — Requester, Supervisor or HOD — may set it directly when raising a work order. Whoever raises it answers the questions; the system answers the priority. Derivation is enforced where the record is written, not only in the form, so a priority arriving from anywhere else is replaced rather than accepted. An Administrator may subsequently re-grade a live work order with a recorded reason, which is Section 7.5 — a deliberate, audited exception and the only one.
 2. **Safety risk always escalates priority to at least P2, and to P1 if severity is High**, regardless of what Production Impact alone would suggest. A cosmetic issue with a High safety risk is still at least P1.
 3. **Environmental risk always escalates priority to at least P2.**
 4. **Only the technician a work order is currently assigned to may act on it.** A second technician viewing the same work order sees a read-only description of what's happening, never an action button that isn't theirs to press.
@@ -140,6 +140,9 @@ No step in this sequence may be skipped by any role, including HOD. See Section 
 8. **A decline always returns a work order to Open, unassigned** — it does not stay attached to the declining technician in any way, and does not silently reassign to anyone; a Supervisor must actively re-triage it.
 9. **Marking a work order Completed requires resolution notes.** A Technician cannot close the loop with no record of what was actually done. This is enforced at the data layer, not only in the UI.
 10. **Reopening a completed work order requires a reason.** Same principle as (9) — a Requester cannot silently bounce a work order back without leaving a record of what's still wrong.
+11. **Equipment belongs to a plant, and the plant is what a work order is raised against.** The site operates four plants — F1, F2, F3 and Facility — and each keeps its own machinery register, taken from that plant's Machinery & Equipment Master List. Whoever raises a work order chooses the plant and then the machine, and only that plant's machines are offered: the registers overlap by code (three of the four have an AC1, two have a BP), so one combined list would offer four different machines under the same label.
+12. **The equipment register is controlled, and "Other (specify)" is the escape hatch.** Machines are added by an Administrator only. Anyone raising a work order against something unlisted chooses **Other (specify)** and names it; that name is recorded on **that work order** — it appears in the list, on the detail page and in the export — and is added to no register. This replaced open self-registration, which had filled the register with one-off entries.
+13. **Department is not the same question as plant, and the two are allowed to disagree.** Department says who should handle the job and is answered by the person reporting it. Plant says where the machine physically is. A machine's register entry carries a plant and need not carry a department at all.
 
 ---
 
@@ -161,18 +164,32 @@ The module has two distinct approval gates. Neither is a generic "manager sign-o
 
 ## 6. SLA Rules
 
-Every work order carries two SLA timestamps, computed once at creation from its priority and never recalculated afterward. A deadline is a promise made when the work order was raised, so editing an Open work order's Production Impact re-derives its priority but leaves both SLA timestamps as they were. Changing an already-running deadline is an edge case requiring an explicit product decision, not something to handle silently.
+Every work order carries three SLA targets. For P1-P4 the deadlines are computed once at creation from the priority and are not recalculated by an edit: a deadline is a promise made when the work order was raised, so editing an Open work order's Production Impact re-derives its priority but leaves its deadlines as they were.
 
-| Priority | Acknowledge target | Resolution target |
-|---|---|---|
-| P1 | 5 minutes | 4 hours |
-| P2 | 15 minutes | 8 hours |
-| P3 | 30 minutes | 24 hours |
-| P4 | 2 hours | 5 business days |
+| Priority | Acknowledge target | Response target | Resolution target | Measured from |
+|---|---|---|---|---|
+| P1 | 5 minutes | 15 minutes | 4 hours | creation |
+| P2 | 15 minutes | 1 hour | 8 hours | creation |
+| P3 | 30 minutes | 4 hours | 24 hours | creation |
+| P4 | 2 hours | 24 hours | 5 business days | creation |
+| P7 | 5 days | 3 days | 7 days | **the previous stage** |
 
 - **"Acknowledge"** is measured from creation to the Supervisor/HOD assigning a technician (i.e., leaving `Open`).
-- **"Resolution"** is measured from creation to the work order reaching `Closed`.
-- A background sweep runs on a fixed interval and flags any work order whose resolution target has passed and which is not yet `Closed`, setting a breach flag. This flag, once set, does not clear itself even if the work order later closes — a breach is a permanent fact about that work order's history, not a live-only indicator.
+- **"Response"** is measured to the work order reaching `Repairing` — work actually under way. `Accepted` is deliberately not the marker: on a long-term task it would start the resolution window days before anybody is at the machine.
+- **"Resolution"** is measured to the work order reaching `Closed`.
+
+### 6.1 P7 is measured in stages
+P7 is a long-term task, and its three windows run in sequence rather than in parallel: it must be **acknowledged within 5 days of being raised**, then reach `Repairing` **within 3 days of being acknowledged**, then close **within 7 days of work starting**. Each window opens only when the one before it is met.
+
+The consequence, and it is intended: a P7 has **no response deadline until it is assigned, and no resolution deadline until work starts**. A deadline that has not begun cannot be breached, and inventing one from the creation time would be the P1-P4 model wearing P7's numbers.
+
+Which model a priority uses is configuration, not code — a per-priority flag on the SLA targets. P7 is the only priority that carries it; P1-P4 behave exactly as they did before P7 existed.
+
+### 6.2 Changing an already-running deadline
+This was previously called out as an edge case needing an explicit product decision. That decision has been made, and it is narrow: **the only thing that recalculates a deadline is an Administrator re-grading the priority** (Section 7.5). Nothing else does — not an edit, not a transition, not a relabelling of the SLA targets.
+
+When it happens, the new priority's targets are applied **from the work order's creation time**, not from the moment of the re-grade. A work order raised on Monday and re-graded on Wednesday is measured from Monday: the fault is as old as it is, and restarting the clock would reward re-grading a job that is already late. For P7 the staged shape is preserved — the response deadline is computed from when it was actually acknowledged and the resolution deadline from when work actually started, so a stage not yet reached stays unset.
+- A background sweep runs on a fixed interval and flags any work order whose resolution target has passed and which is not yet `Closed`, setting a breach flag. This flag, once set, does not clear itself with the passage of time or when the work order later closes — a breach is a permanent fact about that work order's history, not a live-only indicator. The single exception is an Administrator re-grading the priority (Section 7.5), which recomputes the flag in both directions: what clears it there is a named person with a recorded reason, which is the opposite of it clearing itself.
 - A newly-flagged breach triggers exactly one additional notification round to Supervisor/HOD; it does not re-notify on every subsequent sweep for the same already-flagged work order.
 - SLA breach status is informational only — it does not block any workflow action. A Technician can still complete a breached work order normally; the breach is a record, not a lock.
 
@@ -181,18 +198,22 @@ Every work order carries two SLA timestamps, computed once at creation from its 
 ## 7. Priority Rules
 
 ### 7.1 Inputs
-- **Production Impact** (required): Full stoppage, Reduced capacity, Auxiliary equipment only, No impact. Each has a default suggested priority (P1, P2, P3, P4 respectively).
+- **Production Impact** (required): Full stoppage, Reduced capacity, Auxiliary equipment only, No impact, Long-term task. Each maps to exactly one priority — P1, P2, P3, P4, P7 respectively.
+  - **Long-term task** is planned work: an improvement, an upgrade, a rebuild scheduled into a shutdown. Nothing is stopped and nothing is degraded, which is what separates it from "No impact" — a cosmetic fault is still a fault waiting to be fixed, where a long-term task is work waiting to be scheduled. It is the only route to P7 on the raise form.
 - **Safety Risk** (optional flag + severity): if flagged, escalates the suggestion — High severity forces at least P1, Medium/Low forces at least P2.
 - **Environmental Risk** (optional flag): if flagged, escalates the suggestion to at least P2.
 
 ### 7.2 Resolution Logic
 The system takes the **most severe** (numerically lowest) priority implied by any of the three inputs above. Impact alone never overrides a risk-driven escalation; risk flags only ever pull priority toward more urgent, never less.
 
-### 7.3 No Override
-The derived priority is the priority. Nobody may select a different one — the
-four priority buttons that stood here until revision 1.3 are gone from the raise
-form, and the rule is enforced where the work order is written rather than only
-in the form, so it holds for anything reaching the data layer by any route.
+### 7.3 No Override At Creation
+The derived priority is the priority. **Nobody may select a different one when
+raising a work order** — the four priority buttons that stood here until revision
+1.3 are gone from the raise form, and the rule is enforced where the work order
+is written rather than only in the form, so it holds for anything reaching the
+data layer by any route. The one way a priority can subsequently differ from its
+derivation is an Administrator re-grading it, which is Section 7.5 and is a
+different operation with its own audit rules.
 
 The reason is that an overridable priority is not a system decision, and Section
 4 rule 1 claims it is. In practice an override also defeated the escalations:
@@ -204,18 +225,55 @@ reports auto-suggested. That field is retained rather than removed because an
 export is a record of what happened, and work orders raised before this revision
 may legitimately carry a manual value.
 
-### 7.4 Changing It After Creation
-Priority follows its inputs, so it is not frozen at creation — but it can only be
-changed by changing the answers it is derived from. Editing an Open work order's
-Production Impact or risk flags re-derives it; nothing else can move it, and
-there is no supported flow for setting it directly at any point in a work order's
-life. Once a work order leaves `Open` its core fields can no longer be edited, so
-in practice the priority is settled from that moment.
+### 7.4 Changing It By Changing Its Inputs
+Priority follows its inputs, so it is not frozen at creation — it can be changed
+by changing the answers it is derived from. Editing an Open work order's
+Production Impact or risk flags re-derives it. Once a work order leaves `Open`
+its core fields can no longer be edited, so by that route the priority is settled
+from that moment.
 
-Its SLA deadlines are **not** recomputed when this happens — see Section 6. If
-changing an already-running deadline becomes a requirement, it should be treated
-as a new feature with its own approval and audit rules, not as a side effect of
-an edit.
+Its SLA deadlines are **not** recomputed when this happens — see Section 6.2.
+This route is available to whoever may edit an Open work order, requires no
+reason, and writes no history row.
+
+### 7.5 Re-grading It — Administrator only
+Some jobs are graded wrongly, and not because the requester answered wrongly: a
+breakdown that turns out to be a rebuild is correctly reported and incorrectly
+prioritised, and no edit to its production impact describes that honestly.
+
+**An Administrator may set the priority directly.** Nobody else can — not a
+Manager, not a Supervisor, not the person who raised it. This is not a grantable
+capability like deleting a work order; it is reserved by role, because the
+priority is what the SLA clock is computed from.
+
+Five rules govern it:
+
+1. **A reason is required**, minimum 10 characters. It is stored on the work
+   order, shown on its Overview, written to its Status Timeline and sent to the
+   assigned technician and the requester. It is part of the change, not a
+   confirmation of it — there is no separate "are you sure" step.
+2. **Only while the work order is live.** Refused once it is `Verified` or
+   `Closed`: at that point it is a finished record whose SLA outcome has been
+   decided.
+3. **It sticks.** The re-graded priority outranks the derivation from then on,
+   including through any later edit of the production impact. An Administrator
+   can hand the work order back to the derivation, which is itself a re-grade and
+   needs its own reason.
+4. **Re-grading to P7 also sets the production impact to Long-term task**,
+   because P7 is not a severity but a kind of work, and "Full production
+   stoppage · P7" is a contradiction rather than a re-graded job. Re-grades
+   between P1 and P4 leave the production impact exactly as the requester
+   answered it: those four *are* severities, the requester's answer is an
+   observation they made at the machine, and the Administrator is disagreeing
+   with the grading rather than with the observation. The displaced value is
+   recorded in the audit entry either way.
+5. **The SLA deadlines are recomputed** from the creation time — see Section 6.2.
+   The breach flag moves with them, in both directions.
+
+The record keeps "auto-suggested vs manually set" (Section 7.3) separate from
+this. They are different events, and an Administrator's re-grade is reported in
+its own fields rather than folded into a flag that means a requester overrode a
+suggestion.
 
 ---
 
@@ -292,7 +350,9 @@ And one internal loop:
 | Field | Rule |
 |---|---|
 | Department | Required |
-| Equipment | Required |
+| Plant | Required |
+| Equipment | Required. Offered from the chosen Plant only |
+| Which equipment | Required, minimum 3 characters — only when Equipment is "Other (specify)" |
 | Complaint | Required, minimum 10 characters |
 | Production impact | Required |
 | Requester name | Required |

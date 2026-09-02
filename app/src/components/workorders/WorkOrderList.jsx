@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Search, Download, AlertTriangle, Loader2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrderList, fetchWorkOrdersForExport } from "../../lib/workOrders";
-import { fmtDue } from "../../lib/constants";
+import { fmtDue, slaRemainMs } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import {
   DATE_PRESETS,
@@ -196,6 +196,7 @@ export default function WorkOrderList() {
           statusLabel: reference.statusLabel,
           priorityLabel: reference.priorityLabel,
           departmentName: reference.departmentName,
+          plantName: reference.plantName,
           impactLabel: reference.impactLabel,
           typeLabel: reference.typeLabel,
           severityByCode: reference.severityByCode,
@@ -431,15 +432,10 @@ export default function WorkOrderList() {
   );
 }
 
-// Resolution target comes from the sla table now, in minutes, so an admin
-// changing P2's target changes every countdown in the app.
-function slaRemain(w, slaForPriority) {
-  if (!w.created_at || !w.priority) return null;
-  const sla = slaForPriority(w.priority);
-  if (!sla?.resolution_target_minutes) return null;
-  const createdMs = new Date(w.created_at).getTime();
-  return sla.resolution_target_minutes * 60000 - (Date.now() - createdMs);
-}
+/* Reads the deadline the database stored rather than recomputing one — see
+   slaRemainMs() in lib/constants.js for why that stopped being equivalent at
+   migration 0050. A P7 whose resolution clock has not started reads "—" here,
+   which is what it is. */
 
 function RaisedCell({ ts }) {
   return (
@@ -461,8 +457,8 @@ function RaisedCell({ ts }) {
  * focus, activate, and open one.
  */
 function WorkOrderRow({ w, first, href }) {
-  const { slaForPriority, departmentName } = useReferenceData();
-  const remain = slaRemain(w, slaForPriority);
+  const { departmentName } = useReferenceData();
+  const remain = slaRemainMs(w);
   return (
     <Link
       href={href}
@@ -501,8 +497,8 @@ function WorkOrderRow({ w, first, href }) {
 
 /** The phone-width row. Same reasoning as WorkOrderRow — it is a link. */
 function WorkOrderCard({ w, href }) {
-  const { slaForPriority, departmentName } = useReferenceData();
-  const remain = slaRemain(w, slaForPriority);
+  const { departmentName } = useReferenceData();
+  const remain = slaRemainMs(w);
   return (
     <Link
       href={href}

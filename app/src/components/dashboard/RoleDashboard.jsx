@@ -32,7 +32,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { useReferenceData } from "../../lib/referenceData";
 import { listenWorkOrderList } from "../../lib/workOrders";
-import { fmtDue } from "../../lib/constants";
+import { fmtDue, slaRemainMs, slaWindowMs } from "../../lib/constants";
 import { ROLES, ROLE_LABELS } from "../../lib/roles";
 import RoleSwitcher from "./RoleSwitcher";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
@@ -108,7 +108,7 @@ const IN_PROGRESS = ["accepted", "repairing", "testing"];
  */
 export default function RoleDashboard({ viewRole }) {
   const { user } = useAuth();
-  const { slaForPriority, ready } = useReferenceData();
+  const { ready } = useReferenceData();
   const router = useRouter();
   const [workOrders, setWorkOrders] = useState(null);
   const [error, setError] = useState(null);
@@ -135,23 +135,26 @@ export default function RoleDashboard({ viewRole }) {
     const rows = (workOrders ?? []).filter((w) => attention.scope(w, user?.uid));
     const open = rows.filter((w) => w.status !== "closed");
 
-    const remainMs = (w) => {
-      const sla = slaForPriority(w.priority);
-      if (!sla?.resolution_target_minutes || !w.created_at) return null;
-      return sla.resolution_target_minutes * 60000 - (Date.now() - new Date(w.created_at).getTime());
-    };
+    /* The stored deadline, shared with the list and the detail page — see
+       slaRemainMs(). A P7 whose resolution clock has not started counts as
+       neither overdue nor at risk, which is correct: nothing has been promised
+       about it yet. */
+    const remainMs = slaRemainMs;
 
     const overdue = open.filter((w) => {
       const r = remainMs(w);
       return r != null && r < 0;
     });
 
-    // "At risk" mirrors si_sla_warning_sweep(): under a quarter of the window left.
+    // "At risk" mirrors si_sla_warning_sweep(): under a quarter of the window
+    // left, where the window is `due - created_at` exactly as the sweep computes
+    // it — which is what keeps the two thresholds in the same place on a
+    // sequential priority, whose window spans the stages before it.
     const atRisk = open.filter((w) => {
       const r = remainMs(w);
       if (r == null || r < 0) return false;
-      const sla = slaForPriority(w.priority);
-      return r < sla.resolution_target_minutes * 60000 * 0.25;
+      const windowMs = slaWindowMs(w);
+      return windowMs != null && r < windowMs * 0.25;
     });
 
     const startOfToday = new Date();
@@ -172,7 +175,7 @@ export default function RoleDashboard({ viewRole }) {
       recent: [...rows].slice(0, 8),
       remainMs,
     };
-  }, [workOrders, slaForPriority, attention, user?.uid]);
+  }, [workOrders, attention, user?.uid]);
 
   const loading = workOrders === null || !ready;
 

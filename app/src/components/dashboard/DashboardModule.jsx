@@ -13,6 +13,7 @@ import {
   Wrench,
   Users,
   RefreshCw,
+  CalendarClock,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenDashboardCards, listenDashboardCharts, listenDashboardCardRows, refreshDashboardStatsNow } from "../../lib/dashboard";
@@ -81,6 +82,18 @@ const CARDS = [
     color: "#0F3D91",
     title: "Open P4 — Low",
     blurb: "Open work orders at low priority.",
+  },
+  /* Migration 0050. Without this card a P7 would be counted in Total Open and
+     in none of the priority bands, so the four bands would visibly stop adding
+     up to the total — and long-term work, which is exactly the kind that sits
+     unattended, would be the work with no figure watching it. */
+  {
+    key: "p7_long_term",
+    label: "P7 Long-term",
+    icon: CalendarClock,
+    color: "#7C3AED",
+    title: "Open P7 — Long-term",
+    blurb: "Planned long-term tasks. Measured in days, in stages, not from when they were raised.",
   },
   {
     key: "completed_today",
