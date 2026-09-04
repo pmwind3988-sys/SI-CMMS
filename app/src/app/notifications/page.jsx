@@ -36,19 +36,13 @@ import {
   notificationSource,
 } from "../../lib/notifications";
 import NotificationTags from "../../components/NotificationTags";
+import NotificationTime from "../../components/NotificationTime";
 import { describeError } from "../../lib/errors";
 import { Card, EmptyState, ErrorBanner, ModalOverlay, Toast } from "../../components/ui/Surfaces";
 import { usePaged, useAutoPageSize, PagerFooter } from "../../components/ui/Paged";
 import Button from "../../components/ui/Button";
 
 const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp, ArrowUpDown, PackageSearch, ShieldCheck };
-
-// Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
-// Firebase Timestamp object — so test parseability, not for a .toDate method.
-function fmtFull(ts) {
-  if (!ts || Number.isNaN(Date.parse(ts))) return "";
-  return new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
 
 function NotificationsInner() {
   const { user } = useAuth();
@@ -214,7 +208,7 @@ function NotificationsInner() {
                       timestamp — notification titles run to a full clause. */}
                   <div className="flex flex-wrap items-baseline justify-between gap-x-2">
                     <span className="text-[13.5px] font-semibold text-ink">{n.title}</span>
-                    <span className="text-[11px] text-ink-soft font-mono whitespace-nowrap">{fmtFull(n.created_at)}</span>
+                    <NotificationTime ts={n.created_at} unread={isUnread} />
                   </div>
                   <div className="text-[12.5px] text-ink-soft mt-0.5">{n.body}</div>
                   <NotificationTags notification={n} className="mt-1.5" />

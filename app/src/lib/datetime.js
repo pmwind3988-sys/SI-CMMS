@@ -141,6 +141,32 @@ export function isoDateMY(value) {
 }
 
 /**
+ * How long ago an instant was, in words: `just now`, `14m ago`, `3h ago`,
+ * `2d ago`, and a plain Kuala Lumpur date once it is a week old.
+ *
+ * A week is where relative stops being the more useful of the two. "23d ago"
+ * is arithmetic the reader has to do; `12/08/2026` is a date they can match
+ * against a shift or a shutdown.
+ *
+ * The absolute fallback comes from fmtDateMY, so the cutover is between two
+ * readings of the SAME timezone. Falling back to toLocaleString here — which
+ * is what the notification screens did — means a row that reads "6d ago" on a
+ * phone in KL and a date in Los Angeles time the following morning.
+ */
+export function fmtRelative(value, now = new Date()) {
+  const d = toDate(value);
+  if (!d) return "";
+  const mins = Math.floor((now.getTime() - d.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return fmtDateMY(d);
+}
+
+/**
  * A duration in minutes, as hours and minutes.
  *
  * Distinct from fmtDue() in constants.js, which formats an SLA countdown and

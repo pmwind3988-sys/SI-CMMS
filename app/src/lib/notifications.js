@@ -91,7 +91,15 @@ export function listenNotifications(currentUser, cb, onError, max = 30) {
         .from("notifications")
         .select("*")
         .eq("recipient_id", currentUser.uid)
+        /* Newest first, then by id — and the tie-break is not decoration.
+           si_notify() fans one event out to several recipients inside a single
+           transaction, so those rows carry an IDENTICAL created_at. Postgres
+           gives ties no defined order, and liveQuery re-runs the whole query on
+           every relevant change rather than patching a local cache, so without
+           a second key the same batch can come back in a different order each
+           time and the list visibly reshuffles under the reader. */
         .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
         .limit(max),
     cb,
     onError,

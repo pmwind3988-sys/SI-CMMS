@@ -24,6 +24,7 @@ import {
 import { useAuth } from "../context/AuthContext";
 import { useOutsideTap } from "../lib/useOutsideTap";
 import NotificationTags from "./NotificationTags";
+import NotificationTime from "./NotificationTime";
 import { listenNotifications, markNotificationRead, markAllNotificationsRead, pathForNotification, NOTIFICATION_META } from "../lib/notifications";
 import {
   appIsInBackground,
@@ -39,19 +40,6 @@ import {
 } from "../lib/osNotifications";
 
 const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp, ArrowUpDown, PackageSearch, ShieldCheck };
-
-// Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
-// Firebase Timestamp object — so test parseability, not for a .toDate method.
-function fmtRelative(ts) {
-  if (!ts || Number.isNaN(Date.parse(ts))) return "";
-  const diffMs = Date.now() - new Date(ts).getTime();
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
 
 export default function NotificationBell() {
   const { user } = useAuth();
@@ -386,7 +374,7 @@ export default function NotificationBell() {
                     <div className="text-[12.5px] font-medium text-ink">{n.title}</div>
                     <div className="text-[11.5px] text-ink-soft mt-0.5">{n.body}</div>
                     <NotificationTags notification={n} className="mt-1" />
-                    <div className="text-[10.5px] text-ink-soft mt-1 font-mono">{fmtRelative(n.created_at)}</div>
+                    <div className="mt-1"><NotificationTime ts={n.created_at} unread={isUnread} compact /></div>
                   </div>
                   {isUnread && <div className="w-1.5 h-1.5 rounded-full bg-danger mt-1.5 flex-shrink-0" />}
                 </button>

@@ -1050,6 +1050,24 @@ doing and lands on the requester's list; `verified_closed` is the reverse. Getti
 backwards would make the two categories mean "mine" and "other people's", which is the same
 list twice.
 
+**The timestamp is the field people were actually looking for, and it was the hardest to
+read**: 10.5px muted grey mono, quieter than the body text, in two formats that disagreed
+about the timezone — "5m ago" in the bell, an absolute device-local time on the page.
+`NotificationTime` gives both readings in one chip, because they answer different questions
+and neither replaces the other: "14m ago" says whether this is still happening, "04/09/2026
+2:30 PM" is what you quote to somebody or line up against a shift. Past a week `fmtRelative`
+returns a date itself, so the second reading drops to the time alone rather than printing the
+date twice. **Both are Kuala Lumpur time** — measured on a machine set to UTC, one
+notification read "05/09/2026 6:30 AM" where the old code read "4 Sept, 10:30 pm", a
+different day.
+
+**`listenNotifications` orders by `created_at` then by `id`, and the tie-break is not
+decoration.** `si_notify()` fans one event out to several recipients inside a single
+transaction, so those rows carry an identical `created_at`; Postgres gives ties no defined
+order, and `liveQuery` re-runs the whole query on every relevant change rather than patching
+a local cache. Without the second key the same batch comes back in a different order each
+time and the list visibly reshuffles under the reader.
+
 `NotificationTags` is one component used by the bell and the full page, because the point is
 that the categories read identically in the two places somebody meets them. The notifications
 page filters by **category, not by type**: twelve type chips wrapped to three rows on a phone
@@ -2073,8 +2091,9 @@ has happened on this project, and is what 0013 exists to fix.
   6 → 8 major upgrade. It is the only advisory in the tree — `write-excel-file` brings one
   transitive dependency (`fflate`) and neither is flagged.
 - **Dates outside `lib/datetime.js` still render in the device's locale and timezone**, with no
-  year: `notifications/page.jsx`, `DashboardModule`, `NotificationBell`, `CommentsPanel` and
-  `StatusTimeline` all call `toLocaleString(undefined, …)`. The export, the work order list's
+  year: `DashboardModule`, `CommentsPanel` and `StatusTimeline` all call
+  `toLocaleString(undefined, …)`. The two notification screens no longer do — see
+  `NotificationTime`. The export, the work order list's
   Raised column and the date filter are pinned to `Asia/Kuala_Lumpur`; those five are not, so
   the same timestamp can read differently on two screens of the same app. Mechanical to fix —
   swap the call for `fmtDateTimeMY` — and deliberately left alone here to keep this change to
