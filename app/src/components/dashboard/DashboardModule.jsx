@@ -16,16 +16,18 @@ import {
   CalendarClock,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import { listenDashboardCards, listenDashboardCharts, listenDashboardCardRows, refreshDashboardStatsNow } from "../../lib/dashboard";
+import { listenDashboardCards, listenDashboardChartsRange, listenDashboardCardRows, refreshDashboardStatsNow } from "../../lib/dashboard";
+import { resolveChartPeriod, periodSubtitle, periodScope, DEFAULT_PERIOD } from "../../lib/chartPeriods";
 import { ELEVATED_ROLES, hasAnyRole } from "../../lib/roles";
 import { describeError } from "../../lib/errors";
 import StatCard from "./StatCard";
 import CardDetail, { rowFromRpc } from "./CardDetail";
-import MonthlyWorkOrdersChart from "./MonthlyWorkOrdersChart";
+import WorkOrderTrendChart from "./WorkOrderTrendChart";
 import DepartmentBreakdownChart from "./DepartmentBreakdownChart";
 import MachineBreakdownChart from "./MachineBreakdownChart";
 import TechnicianPerformanceChart from "./TechnicianPerformanceChart";
 import RoleSwitcher from "./RoleSwitcher";
+import ChartPeriodControl from "./ChartPeriodControl";
 import { ErrorBanner } from "../ui/Surfaces";
 
 function fmtMinutes(mins) {
@@ -147,15 +149,26 @@ export default function DashboardModule() {
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [drill, setDrill] = useState(null); // a CARDS entry
+  const [periodKey, setPeriodKey] = useState(DEFAULT_PERIOD);
+  const [custom, setCustom] = useState(null);
+
+  /* Resolved once per choice rather than on every render: it reads the clock,
+     and a period recomputed mid-render would re-run the subscription below
+     every time anything else on this page changed. */
+  const period = useMemo(() => resolveChartPeriod(periodKey, custom), [periodKey, custom]);
 
   useEffect(() => {
-    const unsub1 = listenDashboardCards(setCards, () => setError("Couldn't load dashboard metrics."));
-    const unsub2 = listenDashboardCharts(setCharts, () => setError("Couldn't load dashboard charts."));
-    return () => {
-      unsub1();
-      unsub2();
-    };
+    return listenDashboardCards(setCards, () => setError("Couldn't load dashboard metrics."));
   }, []);
+
+  /* Keyed on the resolved edges, not on the preset name, so a custom range
+     that changes by a day re-runs and one that does not, does not. */
+  useEffect(() => {
+    setCharts(null);
+    return listenDashboardChartsRange(period, setCharts, () =>
+      setError("Couldn't load dashboard charts for that period.")
+    );
+  }, [period?.from, period?.to, period?.bucket]);
 
   const canRefresh = hasAnyRole(user, ELEVATED_ROLES);
 
@@ -230,11 +243,40 @@ export default function DashboardModule() {
            children because recharts' ResponsiveContainer measures its parent:
            without it a grid track can only shrink to its content's min width and
            the chart keeps a width the phone does not have. ---- */}
+      {/* The period control sits on the charts' own heading rather than at the
+          top of the page: it governs these four cards and nothing above them,
+          and the cards are current-state counters that take no period. */}
+      <div className="mb-2 flex items-end justify-between gap-3">
+        <h2 className="text-[13.5px] font-bold text-ink">Trends and breakdowns</h2>
+        <ChartPeriodControl
+          period={period}
+          periodKey={periodKey}
+          custom={custom}
+          onChange={(key, range) => {
+            setPeriodKey(key);
+            setCustom(range);
+          }}
+        />
+      </div>
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-        <MonthlyWorkOrdersChart data={charts?.monthly_work_orders} />
-        <DepartmentBreakdownChart data={charts?.department_breakdown} />
-        <MachineBreakdownChart data={charts?.machine_breakdown} />
-        <TechnicianPerformanceChart data={charts?.technician_performance} />
+        <WorkOrderTrendChart
+          data={charts?.work_orders_trend}
+          period={period}
+          subtitle={periodSubtitle(period, "Raised")}
+        />
+        <DepartmentBreakdownChart
+          data={charts?.department_breakdown}
+          subtitle={periodScope(period, "Raised")}
+        />
+        <MachineBreakdownChart
+          data={charts?.machine_breakdown}
+          subtitle={periodScope(period, "Top 10 by work orders raised")}
+        />
+        <TechnicianPerformanceChart
+          data={charts?.technician_performance}
+          subtitle={periodScope(period, "Top 10 by work orders finished")}
+        />
       </div>
 
       {drill && <CardDrill card={drill} snapshotAt={snapshotAt} onClose={() => setDrill(null)} />}

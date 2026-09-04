@@ -5,7 +5,7 @@ import ChartLegend from "./ChartLegend";
 
 const COLORS = ["#0F3D91", "#F59E0B", "#22C55E", "#EF4444", "#1E4FA0", "#FBBF24", "#64748B"];
 
-export default function DepartmentBreakdownChart({ data }) {
+export default function DepartmentBreakdownChart({ data, subtitle }) {
   const rows = data || [];
   /* Built from the same `COLORS[i % COLORS.length]` the <Cell>s below use, off
      the same array in the same order, so the key cannot drift from the pie.
@@ -15,12 +15,13 @@ export default function DepartmentBreakdownChart({ data }) {
       color: COLORS[i % COLORS.length],
       label: r.department,
       note: `${r.count} work order${r.count === 1 ? "" : "s"}`,
-    })),
+    })),
+
   ];
   return (
     <div className="bg-white border border-border rounded-xl shadow-card p-3 sm:p-4">
       <div className="text-[13.5px] font-bold text-ink mb-1">Department Breakdown</div>
-      <div className="text-[11.5px] text-ink-soft mb-2">Work orders by department</div>
+      <div className="text-[11.5px] text-ink-soft mb-2">{subtitle}</div>
       {/* Replaces recharts' own <Legend>, which was always on and took roughly a
           third of this card's height away from the pie on a phone. */}
       <ChartLegend items={legend} />

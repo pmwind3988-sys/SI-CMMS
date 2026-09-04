@@ -32,8 +32,41 @@ export function listenDashboardCards(cb, onError) {
   return statRow("dashboard_cards", cb, onError);
 }
 
-export function listenDashboardCharts(cb, onError) {
-  return statRow("dashboard_charts", cb, onError);
+/**
+ * The four chart series for one chosen period, live.
+ *
+ * There is no precomputed row behind this any more, and migration 0055 deleted
+ * the one there was. A snapshot can hold exactly one period, and the whole
+ * point of the control above the charts is that the period is the reader's to
+ * pick — so this is computed per call, by si_dashboard_charts_range, which is
+ * SECURITY INVOKER and therefore returns whatever RLS returns to this caller.
+ *
+ * The bucketing, the timezone and the empty-bucket filling all live in that
+ * function rather than here. Reshaping the rows in JavaScript is how a chart
+ * starts disagreeing with the database it was drawn from — the same argument
+ * listenDashboardCardRows makes for keeping its predicates in SQL.
+ *
+ * Live, on work_orders, so a fault raised while somebody is looking at the
+ * chart appears in it. That is one aggregate per relevant change rather than
+ * per fifteen minutes; the query is a single indexed scan of one period, and
+ * this module is mounted on two pages that only Managers and Admins reach.
+ */
+export function listenDashboardChartsRange(period, cb, onError) {
+  if (!period) {
+    cb(null);
+    return () => {};
+  }
+  return liveQuery({
+    table: "work_orders",
+    run: () =>
+      supabase.rpc("si_dashboard_charts_range", {
+        p_from: period.from,
+        p_to: period.to,
+        p_bucket: period.bucket,
+      }),
+    cb,
+    onError,
+  });
 }
 
 /**

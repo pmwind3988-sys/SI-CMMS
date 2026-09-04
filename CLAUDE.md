@@ -931,6 +931,212 @@ waiting; a handover at `repairing` does not, so telling them to accept would sen
 for a button the workflow will never offer. The status label is read from `wo_statuses` rather
 than printing the raw enum, so it says "Repairing" and follows a relabelling.
 
+### Raising a work order reaches everyone who can assign one (migration 0054)
+
+**Only the department''s Supervisors were told a work order had been raised.** Managers and
+Administrators got nothing — 0003''s own comment says so deliberately, on the grounds that they
+"see everything through the Dashboard instead of a per-work-order notice". That argument was
+already retired for accept and decline by 0038, and it is weakest here: raising is the moment a
+fault first needs an owner, and the Dashboard is where volume is read, not where one unassigned
+job is noticed.
+
+**Who gets it is now the transition matrix''s assignment row, not one role out of it** —
+`('open','assigned', ''{supervisor,manager,admin}'')`. The client predicate and the policy agreeing
+is the standing rule on this schema; the fan-out agreeing with them is the same idea one step
+further out.
+
+**Supervisors still come from `si_department_supervisors(department_id)`, and that is not a
+leftover of 0019.** 0019 stopped the department deciding *access*; this is routing. The
+department is who triages, chosen by the person reporting. Managers and Administrators are
+system-wide because they always were.
+
+The loop is 0038''s, restated rather than shared, with the same two load-bearing properties:
+deduplicated by id keeping the **highest** role held (since 0020 a Supervisor+Manager is in two
+source sets, and the naive version writes one person two identical rows for one event), and the
+actor excluded — plus the **requester**, separately, because `createWorkOrder` can record a
+requester who is not the caller. Without it an Administrator raising a fault is informed by the
+system that a fault has been raised, on top of the ''submitted'' receipt they already have.
+
+**`array_remove(..., null)` on that exclusion list is load-bearing.** `t.id <> all (v_seen)` is
+NULL, not true, the moment `v_seen` holds a NULL — so one null element silences the entire
+fan-out rather than excluding nobody. `auth.uid()` is null on any insert from a script or a
+migration rather than a signed-in browser, which is exactly where it would have gone unnoticed.
+Measured: with no JWT set, all three recipients still receive it.
+
+**And the body says what the job is.** It read `WO-… — Lathe Machine No 1 (P1)`: a machine and a
+letter. It now carries priority *with its label*, department, plant, who raised it and the first
+140 characters of what they said. The label is spelled out because P7 is planned long-term work
+(0050) and a bare code reads as an escalation to anyone who has not memorised the table; the
+plant because there are four since 0049 and the equipment registers overlap by code. Every
+lookup is left-joined and coalesced, so a relabelled table or a missing name costs one clause,
+never the notification.
+
+Nothing changed on the client: `needs_assignment` has been in `NOTIFICATION_META` with its
+`UserPlus` icon since 0002. Exercised on test inside a rolled-back transaction — baseline,
+whitespace-only description, an Administrator who also supervises (one row, stamped `admin`), an
+Administrator raising it themselves, a Supervisor raising on someone''s behalf, and an insert
+with no signed-in user.
+### A notification says which phase it is about, and whose (migration 0056)
+
+**Three moments were missing and one column was doing two jobs.**
+
+`type` had to answer both "what kind of event" and "at what point in the flow", and it
+cannot: `status_change` covers accept, start-work and resume-after-a-part, so a client
+grouping by type produces a bucket called "Status update" holding three different moments,
+and no client could say *which* status without re-reading the work order the row points at.
+So the row carries the phase — **`notifications.wo_status`, stamped inside `si_notify()`
+rather than at the eleven call sites**, the argument `compressImage` makes for living inside
+`addAttachment()`. Nullable and deliberately **not backfilled**: every notification already
+written happened at a phase nobody recorded, and inferring one now from the work order's
+*current* status stamps today's answer onto last month's event. The client renders no phase
+chip when it is null.
+
+**Dropping the seven-argument `si_notify` first is the load-bearing line.** `create or
+replace function` matches on the argument list, so adding an eighth parameter creates an
+*overload* and leaves the old function exactly where it was — and Postgres then resolves every
+existing seven-argument call to it in preference to defaulting the new one. All eleven callers
+would carry on writing rows with no phase, the migration would push cleanly, the column would
+exist, and the feature simply would not happen. Dropping it is safe because a plpgsql body is
+not linked to the functions it calls until it runs.
+
+**Verified and closed** (`completed → closed`) was the last transition in the flow and told
+nobody anything. The technician in particular: they are told when a job is handed to them
+(0052) and when it is reopened because it was not fixed (0038), and nothing at all when the
+person who raised it confirms it is right — the one of the three worth hearing. It goes to the
+assigned technician and to everyone who can assign; the requester performed it, and the actor
+exclusion covers a Manager closing on their behalf.
+
+**Waiting for a spare part** (`repairing → waiting_spare_part`) is the one phase where a work
+order stops for a reason nobody can fix by working harder, and it announced itself to nobody.
+The requester is told because their machine is still down and the reason is not "we forgot";
+the assigners because ordering the part is their problem rather than the technician's. The
+reason is required by the transition matrix for that move, so it is always there to carry.
+**The resume goes to the requester only** — telling somebody their job is paused and never
+telling them it restarted is worse than never having told them, and a resume asks nothing of
+the ops chain, on a table that still has no retention.
+
+**What a technician receives is now a rule rather than an accident.** Every
+technician-addressed notification in this schema is gated on `assigned_to_id`, so a technician
+hears about the work orders they hold and no others: handed to them, reopened, SLA at risk or
+breached, priority re-graded, and now verified and closed. An account that *also* holds
+supervisor, manager or admin receives the ops-chain rows too — by that role, through
+`si_notify_assigners`, stamped with it. That is 0020's union rule and not a leak. Measured
+across a full walk of the flow on test: two rows for the technician (assigned,
+verified_closed), zero about anybody else's work.
+
+`si_notify_assigners()` (added in 0054) now serves all four fan-outs. 0038 wrote that loop
+twice and this migration would have made it five copies; its three silent-when-wrong
+properties — dedupe by id keeping the highest role held, exclude the actor, and **strip NULLs
+from the exclusion array**, because `id <> all (array)` is NULL rather than true the moment
+the array holds one — live in one place now.
+
+**0057 finished the job on the requester's own receipt.** 0054 put the requester into the
+needs-assignment fan-out and left "Work order submitted" as 0003 wrote it — number, machine,
+"has been received" — so the one row that exists purely as a record that a person reported a
+fault was the one row not saying who. It matters beyond tidiness because **the requester is
+not always the person who submitted it**: `createWorkOrder` records `requester_id`, which a
+Supervisor, Manager or Administrator raising on somebody's behalf sets to that person, so the
+receipt lands on a named requester who otherwise sees a work order appear under their name
+with nothing saying where it came from. The clause is `coalesce`d through
+`nullif(btrim(...))`, so a blank or missing `requester_name` — a denormalised copy (0001)
+that nothing constrains — costs the clause and never the sentence.
+
+On the client, `NOTIFICATION_META` gains `waiting_part` and `verified_closed` (with
+`PackageSearch` / `ShieldCheck` in both `ICONS` maps — a type added server-side and missing
+here renders as a grey generic bell), and every type gains a **`source`**: who *caused* the
+event, in four categories. Not who received it — every row on your own list has you as the
+recipient, so grouping by `recipient_role` sorts nothing. `completed` is the technician's
+doing and lands on the requester's list; `verified_closed` is the reverse. Getting that
+backwards would make the two categories mean "mine" and "other people's", which is the same
+list twice.
+
+`NotificationTags` is one component used by the bell and the full page, because the point is
+that the categories read identically in the two places somebody meets them. The notifications
+page filters by **category, not by type**: twelve type chips wrapped to three rows on a phone
+and asked the reader to know the difference between "Status update" and "Accepted" before they
+could use it. The phase label comes from `statusLabel()` in reference data rather than the raw
+enum, so a relabelled status follows here too — the same reason 0052's handover notification
+looks its label up.
+
+### Dashboard charts answer for a period you choose (migration 0055)
+
+**All four charts answered exactly one question each and nobody could ask a different one.**
+The trend was the last 12 months by month; the department, machine and technician breakdowns
+were **all time**, with nothing on screen saying so — so "which machine is giving us trouble"
+could only be answered about the entire history of the plant, and a machine rebuilt last year
+outranks one failing weekly, forever.
+
+One control, one period, all four charts. **The bucket is derived, never chosen**, because a
+day plotted per month is one dot and a year plotted per hour is nine thousand:
+
+```
+a day -> per hour    a week -> per day    a month -> per week    longer -> per month
+```
+
+The fixed presets state their own bucket rather than deriving it — "This month" on the 2nd is
+two days long and still means weeks. Only a custom range derives, and its thresholds are
+deliberately generous (≤2d hour, ≤16d day, ≤45d week, else month) so that picking 1–31 August
+by hand lands where the "This month" preset lands.
+
+`si_dashboard_charts_range(from, to, bucket)` is **SECURITY INVOKER**, where
+`si_compute_dashboard_stats` is DEFINER. That one writes a single `stats` row every signed-in
+account can read, so it cannot be caller-scoped; this is computed per call, so RLS is free to
+be the boundary — and the two pages that mount the module are Manager and Admin, both
+system-wide, so the numbers are identical to the precomputed ones they replace. It stays
+granted to `authenticated` and will appear in the advisor's signed-in-callable list; it is not
+SECURITY DEFINER, so it discloses nothing `work_orders_select` does not already publish to
+that same caller.
+
+Four things there are load-bearing:
+
+- **Everything is bucketed in `Asia/Kuala_Lumpur`.** `date_trunc('day', created_at)` on a
+  timestamptz truncates in the *server's* zone, which is UTC — a fault raised at 07:00 in the
+  plant files under the previous day, and a per-hour chart of a shift comes out eight hours
+  off the shift it describes. Same argument `lib/datetime.js` makes for the range boundaries
+  it computes; this is the aggregation half of it.
+- **Empty buckets are filled**, from `generate_series` rather than from the rows. A line chart
+  that omits a quiet Tuesday draws a straight line from Monday to Wednesday, which reads as
+  steady work rather than as none — the gap is the finding, and dropping it is the one way a
+  chart can lie without containing a single wrong number. The three breakdowns are
+  deliberately *not* filled: a top-ten ranking is not a timeline.
+- **The four do not all count on the same timestamp.** Trend, department and machine count
+  `created_at` — raised in the period; technician counts `closed_at` — finished in it. A
+  league table counting raises credits people for jobs they have not started and drops the
+  week-old job they closed yesterday. `avg_repair_minutes` is taken over those same closures,
+  so the average and the count describe one set of work orders. Each card's subtitle says
+  which, which is what stops the two being read as one number.
+- **`to` is exclusive**, compared with `<`, matching `dateRangePreset()` exactly. An inclusive
+  end drops whatever arrived in its last second and every row whose timestamp carries
+  milliseconds — which every `now()` default does.
+
+**`si_compute_dashboard_stats` lost its chart half, and `stats.dashboard_charts` is deleted.**
+A payload written every fifteen minutes and read by nobody is the shape of bug this schema has
+already shipped twice (0026, 0031). **The cards are untouched on purpose**: they are
+current-state counters — Total Open, Overdue, Active Technicians — and "how many are open"
+does not take a period. Scoping them would produce "open work orders raised in March", a
+different and much less useful figure than the one the card has always shown.
+
+`dateRangeLastMonths(n)` is new in `lib/datetime.js` — a rolling window, which no preset there
+can express, with the current month counted as the last of the n. `n - 1` steps back, not `n`:
+off by one it plots thirteen buckets under a heading that says twelve, which nobody reads as a
+bug — they read it as the chart.
+
+`lib/chartPeriods.js` is pure (presets in, `{from, to, bucket}` out; no React, no Supabase) for
+the reason `exportWorkOrders.js` and `slaStages.js` are — it is what let every boundary be
+exercised in Node against fixed instants, the year rollover included.
+
+**The control is deliberately quiet**: a line of muted text with a chevron, where a caption
+would sit, rather than a segmented bar across the page. The dashboard's loudest elements should
+be the eleven figures and the charts themselves, and an always-expanded control costs a phone a
+whole row of vertical space before the first chart begins. **Quiet is not hidden, and the
+difference is load-bearing** — it always states the applied period in words, because a chart
+whose scope can be changed but does not say what its scope *is* is worse than one that cannot
+be changed at all.
+
+`MonthlyWorkOrdersChart` is now `WorkOrderTrendChart`, and the rename is the change: a
+component called "Monthly" would be describing one of its four modes. Its x-axis reads `label`
+rather than `month` — the server names the bucket, and it is "14:00" as readily as "Aug 26".
+
 ### The Assign button responds to being pressed, and says what it sent
 
 Three things were wrong with pressing **Assign**, and only the third was cosmetic.
@@ -1713,7 +1919,18 @@ shape 0033 used. Verified from the browser's own anon key: `rpc('si_derive_prior
 call that returns 200, so the probe distinguishes "revoked" from "everything fails". 0035 adds
 none.
 
-**Not yet re-run after 0048-0051.** Those add five functions, and two are deliberate
+**Not yet re-run after 0048-0056.** 0054-0056 add two more functions and change three.
+`si_notify_assigners` and `si_dashboard_charts_range` are new; `si_notify` is dropped and
+recreated with an eighth argument; `si_after_work_order_insert`, `si_notify_work_order_update`
+and `si_compute_dashboard_stats` are replaced in place and re-issue their revokes, which they
+have to — a later `create or replace` resets what an earlier statement set. Only
+`si_dashboard_charts_range` is granted to `authenticated`, and it will be reported under
+`Signed-In Users Can Execute SECURITY DEFINER Function` — wrongly, as it happens, since it is
+SECURITY **INVOKER**; check the reported security type before acting on that row. Everything
+else added here is a trigger body or a fan-out helper with no caller in the app and is revoked
+from `public, anon, authenticated`.
+
+**Not yet re-run after 0048-0051 either.** Those add five functions, and two are deliberate
 `authenticated` grants that the advisor will report under `Signed-In Users Can Execute SECURITY
 DEFINER Function` — `si_override_work_order_priority`, an RPC the browser calls which re-checks
 `si_is_admin()` and the work order's status in its own body, and `si_sla_targets`, which
@@ -1874,7 +2091,12 @@ has happened on this project, and is what 0013 exists to fix.
   considered and declined: it would rewrite files that are part of a work order's record.
 - **Clearing notifications is manual, and 0038 made there be more of them to clear.** Every
   Manager and every Administrator now gets a row per accept and per decline, plant-wide —
-  roughly two per work order each, on top of what they already received. That was chosen
+  roughly two per work order each, on top of what they already received. 0054 and 0056 add
+  three more each: everyone who can assign a technician is now told when a work order is
+  raised, when one is held up waiting for a spare part, and when one is verified and closed.
+  That is deliberate — those are the moments somebody has to act on or account for — but it
+  roughly doubles again what an Administrator on a busy site accumulates, and **Clear read**
+  is still the only thing that ever shrinks the table. That was chosen
   deliberately over the narrower fan-out, but there is still no server-side retention, no
   cron sweep and no per-account mute, so the only thing that ever shrinks `notifications` is
   somebody pressing **Clear read**. A retention sweep is the obvious next step and is not

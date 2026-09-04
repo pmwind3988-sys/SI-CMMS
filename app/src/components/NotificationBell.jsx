@@ -18,9 +18,12 @@ import {
   Share,
   ThumbsUp,
   ArrowUpDown,
+  PackageSearch,
+  ShieldCheck,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useOutsideTap } from "../lib/useOutsideTap";
+import NotificationTags from "./NotificationTags";
 import { listenNotifications, markNotificationRead, markAllNotificationsRead, pathForNotification, NOTIFICATION_META } from "../lib/notifications";
 import {
   appIsInBackground,
@@ -35,7 +38,7 @@ import {
   requestOsNotificationPermission,
 } from "../lib/osNotifications";
 
-const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp, ArrowUpDown };
+const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp, ArrowUpDown, PackageSearch, ShieldCheck };
 
 // Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
 // Firebase Timestamp object — so test parseability, not for a .toDate method.
@@ -382,6 +385,7 @@ export default function NotificationBell() {
                   <div className="min-w-0">
                     <div className="text-[12.5px] font-medium text-ink">{n.title}</div>
                     <div className="text-[11.5px] text-ink-soft mt-0.5">{n.body}</div>
+                    <NotificationTags notification={n} className="mt-1" />
                     <div className="text-[10.5px] text-ink-soft mt-1 font-mono">{fmtRelative(n.created_at)}</div>
                   </div>
                   {isUnread && <div className="w-1.5 h-1.5 rounded-full bg-danger mt-1.5 flex-shrink-0" />}

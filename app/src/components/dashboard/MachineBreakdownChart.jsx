@@ -10,10 +10,11 @@ import ChartLegend from "./ChartLegend";
 const LEGEND = [
   { color: "#EF4444", label: "Top 3", note: "the three machines with the most work orders" },
   { color: "#F59E0B", label: "The rest of the top ten", note: "ranked by work order count" },
-  { label: "Horizontal axis", note: "how many work orders that machine has had" },
+  { label: "Horizontal axis", note: "how many work orders that machine has had" },
+
 ];
 
-export default function MachineBreakdownChart({ data }) {
+export default function MachineBreakdownChart({ data, subtitle }) {
   const rows = data || [];
   // A 120px label gutter left barely 170px of plot inside a phone-width card,
   // so every bar looked the same length. Recharts wants a pixel number here,
@@ -22,7 +23,7 @@ export default function MachineBreakdownChart({ data }) {
   return (
     <div className="bg-white border border-border rounded-xl shadow-card p-3 sm:p-4">
       <div className="text-[13.5px] font-bold text-ink mb-1">Machine Breakdown</div>
-      <div className="text-[11.5px] text-ink-soft mb-2">Top 10 equipment by work order count</div>
+      <div className="text-[11.5px] text-ink-soft mb-2">{subtitle}</div>
       <ChartLegend items={LEGEND} />
       <div style={{ height: 280 }}>
         <ResponsiveContainer width="100%" height="100%">

@@ -15,6 +15,9 @@ import {
   AlertOctagon,
   CheckCheck,
   ThumbsUp,
+  ArrowUpDown,
+  PackageSearch,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -28,13 +31,17 @@ import {
   clearReadNotifications,
   pathForNotification,
   NOTIFICATION_META,
+  NOTIFICATION_SOURCES,
+  SOURCE_ORDER,
+  notificationSource,
 } from "../../lib/notifications";
+import NotificationTags from "../../components/NotificationTags";
 import { describeError } from "../../lib/errors";
 import { Card, EmptyState, ErrorBanner, ModalOverlay, Toast } from "../../components/ui/Surfaces";
 import { usePaged, useAutoPageSize, PagerFooter } from "../../components/ui/Paged";
 import Button from "../../components/ui/Button";
 
-const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp };
+const ICONS = { FileCheck2, UserPlus, UserCheck, Ban, RefreshCw, RotateCcw, CheckCircle2, Clock, AlertOctagon, ThumbsUp, ArrowUpDown, PackageSearch, ShieldCheck };
 
 // Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
 // Firebase Timestamp object — so test parseability, not for a .toDate method.
@@ -62,7 +69,12 @@ function NotificationsInner() {
 
   const unread = (items || []).filter((n) => n.status !== "read");
   const read = (items || []).filter((n) => n.status === "read");
-  const filtered = (items || []).filter((n) => filter === "All" || n.type === filter);
+  /* Filtered by CATEGORY, not by type. Twelve type chips wrapped to three rows
+     on a phone and asked the reader to know the difference between "Status
+     update" and "Accepted" before they could use it; four categories answer the
+     question people actually arrive with — is this about work I reported, work
+     somebody is doing, or something waiting on me to decide. */
+  const filtered = (items || []).filter((n) => filter === "All" || notificationSource(n) === filter);
 
   /* "Mark all read" and "Clear read" deliberately keep acting on `unread` and
      `read` - every loaded row, not the page on screen. A button whose meaning
@@ -71,7 +83,7 @@ function NotificationsInner() {
   const pageSize = useAutoPageSize(listRef, { min: 3, ready: !!items, signature: filtered.length });
 
   const pager = usePaged(filtered, { pageSize, resetKey: filter });
-  const typesPresent = Array.from(new Set((items || []).map((n) => n.type)));
+  const sourcesPresent = SOURCE_ORDER.filter((k) => (items || []).some((n) => notificationSource(n) === k));
 
   function flash(msg) {
     setToast(msg);
@@ -135,8 +147,8 @@ function NotificationsInner() {
 
       {error && <ErrorBanner message={error} />}
 
-      {typesPresent.length > 1 && (
-        <div className="flex gap-2 mb-4 flex-wrap" role="radiogroup" aria-label="Filter notifications by type">
+      {sourcesPresent.length > 1 && (
+        <div className="flex gap-2 mb-4 flex-wrap" role="radiogroup" aria-label="Filter notifications by what they are about">
           <button
             type="button"
             role="radio"
@@ -147,19 +159,25 @@ function NotificationsInner() {
           >
             All
           </button>
-          {typesPresent.map((t) => (
-            <button
-              key={t}
-              type="button"
-              role="radio"
-              aria-checked={filter === t}
-              onClick={() => setFilter(t)}
-              className="min-h-[40px] text-[12px] font-semibold px-3.5 py-1.5 rounded-full border"
-              style={{ borderColor: filter === t ? "#0F3D91" : "#E5E9F0", background: filter === t ? "#0F3D9112" : "#fff", color: filter === t ? "#0F3D91" : "#5A6880" }}
-            >
-              {NOTIFICATION_META[t]?.label || t}
-            </button>
-          ))}
+          {sourcesPresent.map((k) => {
+            const src = NOTIFICATION_SOURCES[k];
+            const n = (items || []).filter((x) => notificationSource(x) === k).length;
+            const on = filter === k;
+            return (
+              <button
+                key={k}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => setFilter(k)}
+                className="min-h-[40px] text-[12px] font-semibold px-3.5 py-1.5 rounded-full border"
+                style={{ borderColor: on ? src.color : "#E5E9F0", background: on ? `${src.color}12` : "#fff", color: on ? src.color : "#5A6880" }}
+              >
+                {src.short}
+                <span className="ml-1.5 font-normal opacity-70">{n}</span>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -199,6 +217,7 @@ function NotificationsInner() {
                     <span className="text-[11px] text-ink-soft font-mono whitespace-nowrap">{fmtFull(n.created_at)}</span>
                   </div>
                   <div className="text-[12.5px] text-ink-soft mt-0.5">{n.body}</div>
+                  <NotificationTags notification={n} className="mt-1.5" />
                   {n.entity_label && <div className="text-[11px] text-ink-soft font-mono mt-1">{n.entity_label}</div>}
                 </div>
                 {isUnread && <div className="w-2 h-2 rounded-full bg-danger mt-1.5 flex-shrink-0" />}

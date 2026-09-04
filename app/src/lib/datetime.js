@@ -253,6 +253,28 @@ export function dateRangePreset(key, now = new Date()) {
 }
 
 /**
+ * The last `n` whole months as Kuala Lumpur calendar months, the current one
+ * INCLUDED and counted as the last of the n. On 4 September, `n = 12` runs
+ * 1 Oct 2025 → 1 Oct 2026 and produces exactly twelve labelled months.
+ *
+ * Counting the current month is what makes the label true: `n - 1` steps back,
+ * not `n`. Off by one it plots thirteen buckets under a heading that says
+ * twelve — which nobody reads as a bug, they read it as the chart.
+ *
+ * Not expressible through dateRangePreset: every preset there is a named
+ * calendar period, and this one is a rolling window. It lives here rather than
+ * in the dashboard because the month boundary has to be a KL midnight for the
+ * same reason every other boundary in this file does.
+ */
+export function dateRangeLastMonths(n, now = new Date()) {
+  const p = klParts(now);
+  const total = p.month - 1 - (n - 1);
+  const from = klWallToInstant(p.year + Math.floor(total / 12), ((total % 12) + 12) % 12 + 1, 1);
+  const to = klWallToInstant(p.month === 12 ? p.year + 1 : p.year, p.month === 12 ? 1 : p.month + 1, 1);
+  return isoRange(from, to);
+}
+
+/**
  * A range from two `<input type="date">` values, both treated as Kuala Lumpur
  * calendar days and both INCLUSIVE to the user — so `to` is pushed to the
  * following midnight to stay exclusive internally. Picking the same day twice

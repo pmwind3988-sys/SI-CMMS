@@ -25,7 +25,7 @@ function CustomTooltip({ active, payload }) {
   );
 }
 
-export default function TechnicianPerformanceChart({ data }) {
+export default function TechnicianPerformanceChart({ data, subtitle }) {
   const rows = data || [];
   // See MachineBreakdownChart — the label gutter has to shrink on a phone or
   // there's no plot area left.
@@ -33,7 +33,7 @@ export default function TechnicianPerformanceChart({ data }) {
   return (
     <div className="bg-white border border-border rounded-xl shadow-card p-3 sm:p-4">
       <div className="text-[13.5px] font-bold text-ink mb-1">Technician Performance</div>
-      <div className="text-[11.5px] text-ink-soft mb-2">Completed work orders, top 10 technicians</div>
+      <div className="text-[11.5px] text-ink-soft mb-2">{subtitle}</div>
       <ChartLegend items={LEGEND} />
       <div style={{ height: 280 }}>
         <ResponsiveContainer width="100%" height="100%">
