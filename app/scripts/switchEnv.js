@@ -236,6 +236,21 @@ function switchTo(name) {
   console.log(`\n  .env.local  ->  ${label}`);
   console.log(`  linking the Supabase CLI to ${env.SI_PROJECT_REF} ...\n`);
 
+  // Say when the password is missing. It is optional — `supabase link` and
+  // `db push` prompt for it — so the absence is not an error and must not stop
+  // the switch. But it IS invisible, and it stayed invisible on the production
+  // file until 2026-09-04: the switch printed a clean success, the CLI quietly
+  // asked for a password every time, and anything reading this file for a
+  // direct connection got `undefined` and failed with "password authentication
+  // failed for user postgres" — which reads as a rotated credential rather
+  // than as a key that was never there.
+  if (!env.SUPABASE_DB_PASSWORD) {
+    console.log(
+      `  note: no SUPABASE_DB_PASSWORD in .env.${name}.local, so the CLI will ask for\n` +
+        `        it. Add it to that file to make db:push and db:types unattended.\n`
+    );
+  }
+
   // The database password goes through the environment, never `--password`. The
   // CLI reads SUPABASE_DB_PASSWORD either way, and an argument would end up
   // concatenated into a command line.
