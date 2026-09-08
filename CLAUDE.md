@@ -892,6 +892,48 @@ same reason `exportWorkOrders.js`, `historyEvents.js` and `attachmentPhases.js` 
 way: it is what let the raise form and the priority dialog be exercised against the real
 context without a session.
 
+### Closing a work order says what was verified (migration 0058)
+
+**`completed -> closed` was the one move in the flow that recorded a decision and no
+reason.** It required `verified_by` and nothing else, so the trail read "Confirmed fixed by
+requester" — a sentence `lib/workOrders.js` wrote, not anything the person who pressed the
+button knew. `work_orders.verification_notes` is now required by that transition, for the
+requester's own **Confirm fixed — Close** and for the Manager/Administrator **Force verify &
+close** alike.
+
+The override needs it *more* than the requester's close does, which is the case it was asked
+for: the job was done, the technician never accepted the work order, and somebody closes it
+knowing something the record cannot show.
+
+**Nothing already `closed` is touched.** The column is nullable with no backfill and no
+default, and the check fires only on the transition itself, so a finished record keeps its
+null note — the argument 0056 makes for not backfilling `notifications.wo_status`. Both the
+detail page and the export render it conditionally for that reason; an unconditional block
+would print an empty heading on every work order in the archive, and the export's new
+**Verification Notes** column is blank for everything closed before this, the shape the two
+estimated-downtime columns already have.
+
+**Three enforcement points, and the second is the one that is easy to miss.**
+`wo_status_transitions.requires` gains the column, which covers the requester and the manager
+through the guard's existing required-fields loop. But `si_guard_work_order_transition` returns
+early for `admin` **above** that loop, so the check is restated above the bypass — the same
+placement 0020 used for the self-assignment lock and 0015 for the self-role-change lock. Without
+it, Administrators and the Superuser would be the only accounts exempt from a rule written for
+them. And `si_transition_work_order`'s column whitelist has to name the column: that list is
+explicit by design (0020), so an unnamed column is dropped from the payload and the guard then
+refuses every close.
+
+Measured on test inside a rolled-back transaction, 13 assertions: blank, whitespace-only and
+absent notes all refused for requester, manager and Administrator with one sentence
+(*"Closing a work order needs a note saying what was verified."*); a real note closes and
+stores; `testing -> completed` and `completed -> repairing` unchanged; and the six work orders
+already closed on test still carry a null note.
+
+`WorkflowPanel`'s two buttons now reveal a textarea and gate on `!notes.trim()`, the shape
+**Mark Completed** already uses — display only, since the guard is the boundary. The note is
+sent as a field *and* carried into the history remark: the column is what the work order says
+about itself, the remark is what the timeline says about the moment it closed.
+
 ### A handover tells the technician it happened (migration 0052)
 
 **Only the first assignment ever notified the technician. Every reassignment notified nobody** —

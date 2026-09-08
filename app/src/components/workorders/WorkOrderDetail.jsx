@@ -767,6 +767,16 @@ function OverviewTab({ wo }) {
             <div className="text-[13px] text-ink leading-relaxed">{wo.resolution_notes}</div>
           </div>
         )}
+        {/* Conditional, like the Area and estimated-downtime rows above: the
+            note is required from migration 0058 onwards and null on everything
+            closed before it, so an unconditional block would print an empty
+            heading on every work order in the archive. */}
+        {wo.verification_notes && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <div className="text-[12px] font-bold text-good-text mb-1.5">Verification notes</div>
+            <div className="text-[13px] text-ink leading-relaxed">{wo.verification_notes}</div>
+          </div>
+        )}
       </div>
     </div>
   );

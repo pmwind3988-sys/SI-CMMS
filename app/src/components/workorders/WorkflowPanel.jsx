@@ -113,6 +113,8 @@ function WorkflowActions({ wo, onGotoAssign }) {
   const [showComplete, setShowComplete] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
   const [showReopen, setShowReopen] = useState(false);
+  const [verifyNotes, setVerifyNotes] = useState("");
+  const [showVerify, setShowVerify] = useState(false);
 
   const assignee = isAssigneeOf(wo, user);
   const requester = raisedBy(wo, user);
@@ -355,9 +357,39 @@ function WorkflowActions({ wo, onGotoAssign }) {
           <InfoBox>The technician marked this completed. Please verify the fix before it's closed.</InfoBox>
           <ErrorLine />
           <div className="flex flex-wrap gap-2 mb-3">
-            <Button variant="success" icon={ThumbsUp} disabled={busy} onClick={() => run(verifyAndClose)}>Confirm fixed — Close</Button>
+            <Button variant="success" icon={ThumbsUp} aria-expanded={showVerify} onClick={() => setShowVerify((s) => !s)}>Confirm fixed — Close</Button>
             <Button variant="danger" icon={RotateCcw} onClick={() => setShowReopen((s) => !s)}>Not fixed</Button>
           </div>
+          {/* Closing is the last move in the flow and used to be the only one
+              that recorded a decision with no reason — the trail said
+              "Confirmed fixed by requester", which is a sentence this file
+              wrote rather than anything the person knew. Migration 0058 makes
+              the note required, so the button that used to close outright now
+              reveals the box first, the same shape Mark Completed uses.
+              The gate here only hides what the guard would refuse. */}
+          {showVerify && (
+            <div className="mb-3">
+              <textarea
+                value={verifyNotes}
+                onChange={(e) => setVerifyNotes(e.target.value)}
+                rows={3}
+                placeholder="What did you check, and anything worth recording? (required)"
+                className={`${inputClass} resize-y mb-2`}
+              />
+              <Button
+                variant="success"
+                icon={ThumbsUp}
+                loading={busy}
+                disabled={!verifyNotes.trim()}
+                onClick={async () => {
+                  const ok = await run(verifyAndClose, verifyNotes);
+                  if (ok) setShowVerify(false);
+                }}
+              >
+                {busy ? "Closing…" : "Verify & close"}
+              </Button>
+            </div>
+          )}
           {showReopen && (
             <div className="flex flex-col gap-2 sm:flex-row">
               <input value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} placeholder="What's still wrong?" className={`${inputClass} flex-1`} />
@@ -380,7 +412,36 @@ function WorkflowActions({ wo, onGotoAssign }) {
         <div>
           <InfoBox>Awaiting verification by {wo.requester_name || "the requester"}. As {hasRole(user, ROLES.ADMIN) ? "Admin" : "Manager"} you can override and close directly if they are unresponsive.</InfoBox>
           <ErrorLine />
-          <Button variant="ghost" icon={ThumbsUp} disabled={busy} onClick={() => run(forceVerifyAndClose)}>Force verify & close</Button>
+          <Button variant="ghost" icon={ThumbsUp} aria-expanded={showVerify} onClick={() => setShowVerify((s) => !s)}>Force verify & close</Button>
+          {/* The override needs the note more than the requester's own close
+              does, not less: this is the path taken when the job was done and
+              the record cannot show it — the technician never accepted the work
+              order, say. The guard requires it of Administrators too, checked
+              above the admin bypass, so hiding the box would only produce a
+              refusal. */}
+          {showVerify && (
+            <div className="mt-3">
+              <textarea
+                value={verifyNotes}
+                onChange={(e) => setVerifyNotes(e.target.value)}
+                rows={3}
+                placeholder="Why are you closing this, and what confirms it was done? (required)"
+                className={`${inputClass} resize-y mb-2`}
+              />
+              <Button
+                variant="success"
+                icon={ThumbsUp}
+                loading={busy}
+                disabled={!verifyNotes.trim()}
+                onClick={async () => {
+                  const ok = await run(forceVerifyAndClose, verifyNotes);
+                  if (ok) setShowVerify(false);
+                }}
+              >
+                {busy ? "Closing…" : "Close it"}
+              </Button>
+            </div>
+          )}
         </div>
       );
     return <InfoBox>Waiting for {wo.requester_name || "the requester"} to verify the fix.</InfoBox>;

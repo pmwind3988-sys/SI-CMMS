@@ -283,6 +283,11 @@ function workOrderColumns(labels, ctx) {
     { header: "Spare Part Reason", width: 34, cell: (w) => wrapCell(w.spare_part_reason) },
     { header: "Test Failure Reason", width: 34, cell: (w) => wrapCell(w.test_fail_reason) },
     { header: "Resolution Notes", width: 50, cell: (w) => wrapCell(w.resolution_notes) },
+    /* Required from migration 0058 onwards, so blank for everything closed
+       before it — the same shape the two estimated-downtime columns have since
+       that field stopped being collected. A record's columns are worth more
+       stable than tidy. */
+    { header: "Verification Notes", width: 50, cell: (w) => wrapCell(w.verification_notes) },
     { header: "Reopen Reason", width: 34, cell: (w) => wrapCell(w.reopen_reason) },
     // verified_by is a uuid, and the name is not on the work order. The trail
     // has it: whoever performed the `verified` step.

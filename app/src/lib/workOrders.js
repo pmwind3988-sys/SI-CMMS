@@ -772,22 +772,33 @@ export async function markCompleted(woId, actor, resolutionNotes) {
   });
 }
 
-/** matrix: completed -> closed, requires verified_by. The trigger stamps
-    closed_at, verified_at and the final sla_breached verdict. The status goes
-    straight to closed; viaStatus records the verification step in the trail. */
-export async function verifyAndClose(woId, actor) {
+/** matrix: completed -> closed, requires verified_by AND verification_notes
+    (migration 0058). The trigger stamps closed_at, verified_at and the final
+    sla_breached verdict. The status goes straight to closed; viaStatus records
+    the verification step in the trail.
+
+    The note is sent as a field AND carried into the history remark, which are
+    two different readings rather than a duplicate: the column is what the
+    detail page and the export show about the work order, and the remark is what
+    the timeline shows at the moment it closed. `notes` is trimmed here so the
+    trail never carries trailing whitespace the guard would have accepted. */
+export async function verifyAndClose(woId, actor, notes) {
+  const note = (notes || "").trim();
   await transition(woId, "closed", {
-    fields: { verified_by: actor.uid },
-    remarks: "Confirmed fixed by requester",
+    fields: { verified_by: actor.uid, verification_notes: note },
+    remarks: `Confirmed fixed by requester: ${note}`,
     viaStatus: "verified",
   });
 }
 
-/** matrix: completed -> closed for manager/admin — requester unresponsive */
-export async function forceVerifyAndClose(woId, actor) {
+/** matrix: completed -> closed for manager/admin — requester unresponsive.
+    Same required note: an override is the case it was asked for, since it is
+    where somebody closes a job knowing something the record does not. */
+export async function forceVerifyAndClose(woId, actor, notes) {
+  const note = (notes || "").trim();
   await transition(woId, "closed", {
-    fields: { verified_by: actor.uid },
-    remarks: "Force-verified — requester unresponsive",
+    fields: { verified_by: actor.uid, verification_notes: note },
+    remarks: `Force-verified — requester unresponsive: ${note}`,
     viaStatus: "verified",
   });
 }
