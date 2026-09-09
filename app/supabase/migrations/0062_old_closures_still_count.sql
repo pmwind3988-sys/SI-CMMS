@@ -1,0 +1,55 @@
+-- ---------------------------------------------------------------------------
+-- 0062  A work order counts once it is signed off — and a closure from before
+--       there was anybody to sign it off still counts
+--
+-- The rule 0059 established and 0061 kept: nothing reaches the dashboard until
+-- a Head of Department has verified it. Every server-side figure already obeys
+-- it and this migration changes none of them — `si_compute_dashboard_stats`
+-- (`completed_today`, the average resolution), `si_dashboard_card_rows` (both
+-- of those cards' drill-downs) and all four charts in
+-- `si_dashboard_charts_range` are keyed on `verified_at`, and `total_open` and
+-- every priority band are keyed on `si_open_statuses()`, which holds neither
+-- `completed` nor `closed`. Audited one by one rather than assumed.
+--
+-- So a work order completed today is in NO figure: not open, not counted,
+-- nowhere. That is the intent — the number is a claim that somebody checked the
+-- work — and it is why the HOD dashboard's own card is the one place that
+-- deliberately counts unverified work.
+--
+-- WHAT WAS WRONG IS THE OTHER HALF: a closure from before any of this existed
+-- has to go on counting, and three of them on the test project did not.
+--
+-- Every closure performed through the app before 0061 carries a `verified_at`,
+-- because the stamp trigger set it on every closure from 0001 until 0061 took
+-- that line out. That is what makes the historical dashboard whole, and 0061's
+-- header says so. What it does not cover is a work order closed by a route that
+-- never fired the trigger — a seed script, an early migration, a direct write.
+-- Those rows have no `closed_at` and no `verified_at`, and under the rule above
+-- they silently stopped being counted anywhere: absent from the trend, absent
+-- from the department and machine breakdowns, absent from the average.
+--
+-- `closed_at is null` is what identifies them, and it is exact rather than a
+-- date cutoff. Any closure the trigger performed has `closed_at` set, whenever
+-- it happened; so a closed row with neither timestamp cannot have gone through
+-- the trigger, and a work order auto-closed since 0061 always has `closed_at`
+-- and is therefore never touched here. A timestamp literal would have had to
+-- separate "closed before this feature" from "closed by 0061's own backfill
+-- eleven minutes ago", and both projects would have needed a different one.
+--
+-- `verified_by` is left NULL deliberately. It is exactly what the old stamp
+-- produced — that line set `verified_at` and never a verifier — so these rows
+-- come out the same shape as every other closure of their era: counted, with no
+-- name against the check, because there was no check. Inventing a verifier
+-- would put somebody's name on work they never looked at, which is the one
+-- thing the sign-off column exists to be able to answer.
+--
+-- `verified_at` falls back through the timestamps the row does have, so the
+-- work order lands in the period it actually belongs to rather than today —
+-- backdating a closure into this morning's figures would be a visible lie about
+-- a quiet week.
+-- ---------------------------------------------------------------------------
+update work_orders
+   set verified_at = coalesce(resolved_at, updated_at, created_at)
+ where status = 'closed'
+   and verified_at is null
+   and closed_at is null;

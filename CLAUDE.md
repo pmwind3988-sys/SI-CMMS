@@ -1372,6 +1372,36 @@ reach it — the same reason a Supervisor scopes to everything. `WorkOrderList`'
 `EMPTY_MESSAGES` are read by role with no fallback, so the missing key rendered an empty
 `<h1>` and an empty empty-state.
 
+**A work order counts once it is signed off, and not before (0059, 0062).** Every
+server-side figure is keyed on `verified_at`: `completed_today` and the average resolution
+in `si_compute_dashboard_stats`, both of those cards' drill-downs in
+`si_dashboard_card_rows`, and all four charts in `si_dashboard_charts_range`. `total_open`
+and every priority band are keyed on `si_open_statuses()`, which holds neither `completed`
+nor `closed`. So a work order that has just been closed is in **no** figure at all — not
+open, not counted — which is the intent, because the number is a claim that somebody
+checked the work. The one place unsigned work is deliberately counted is the HOD's own
+queue card.
+
+`RoleDashboard`'s **Closed today** card had to move with them and is the only client-side
+figure of the set. It counted `status = 'closed'` and `closed_at`, which was the same thing
+as a sign-off until 0061 made closure automatic and a technician could finish six work
+orders nobody had checked. It counts `verified_at` now. **The label still says "Closed
+today" and the wording never says verified** — same rule the panel and the timeline follow:
+a requester learns when their work finished, not that a step they cannot see exists.
+
+**0062 is the other half of that rule.** A closure from before any of this existed has to
+go on counting, and every closure performed through the app does, because the stamp trigger
+set `verified_at` on all of them until 0061 removed that line. What it missed was work
+orders closed by a route that never fired the trigger — a seed script, an early migration, a
+direct write. Three of them on the test project had no `closed_at` and no `verified_at`, and
+had silently stopped being counted anywhere: absent from the trend, from the department and
+machine breakdowns, and from the average. 0062 stamps them, and `closed_at is null` is what
+identifies them — exact, where a date cutoff is not: any closure the trigger performed has
+`closed_at` set whenever it happened, so a closed row with neither timestamp never went
+through it, and anything auto-closed since 0061 always has one and is never touched.
+`verified_by` stays NULL, which is exactly the shape the old stamp produced: counted, with
+no name against a check that never happened. Measured on test — the charts went from 8 to
+11 and the two genuinely-awaiting rows stayed out of both readings.
 **Merge hazard worth knowing about**: the branch adding `work_orders.verification_notes`
 requires a note on `completed → closed` inside `si_guard_work_order_transition`. That rule
 was written when a person performed the close; here nobody does, so the guard refuses every

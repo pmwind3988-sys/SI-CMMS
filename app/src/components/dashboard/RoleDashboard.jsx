@@ -260,8 +260,21 @@ export default function RoleDashboard({ viewRole }) {
       byStatus,
       overdue,
       atRisk,
+      /* Counted on the SIGN-OFF, not on the closure (migrations 0059, 0061).
+         Every server-side figure on this screen is keyed on verified_at, and a
+         card sitting beside them counting closures would be the only number
+         here that disagreed with the rest — visibly, from the day 0061 made
+         closure automatic, because a technician can now close six work orders
+         in a morning that nobody has checked. Closed-and-unsigned is counted in
+         exactly one place on purpose: the HOD's own queue card above.
+
+         The label stays "Closed today" and the wording never says verified.
+         That is the same rule the panel and the timeline follow — the sign-off
+         is an internal check on the maintenance chain, so a requester reading
+         this card learns when their work finished and not that a step they
+         cannot see exists. */
       closedToday: rows.filter(
-        (w) => w.status === "closed" && w.closed_at && new Date(w.closed_at) >= startOfToday
+        (w) => w.verified_at && new Date(w.verified_at) >= startOfToday
       ),
       recent,
       remainMs,
@@ -312,8 +325,8 @@ export default function RoleDashboard({ viewRole }) {
       label: "Closed today",
       color: "#22C55E",
       rows: stats.closedToday,
-      title: "Closed since midnight",
-      blurb: "Verified and closed today, in your scope.",
+      title: "Closed and counted today",
+      blurb: "Work finished today that is counted in the figures above, in your scope.",
     },
   ];
 
