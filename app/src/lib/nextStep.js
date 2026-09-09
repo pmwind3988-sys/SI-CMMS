@@ -87,7 +87,7 @@ export function nextStep(wo, user, transitions, statusOrder) {
    * same rule canSeeVerification() applies on the panel and the timeline,
    * restated here rather than imported, because this module is pure and its
    * two callers are a component and a test. */
-  if (wo.status === "completed") {
+  if (wo.status === "completed" || wo.status === "closed") {
     const seesVerification = hasAnyRole(user, [ROLES.HOD]) || Boolean(user?.isSuperuser);
     if (!seesVerification || wo.verified_at) {
       return { text: "Nothing further — this work order is finished.", isYours: false };

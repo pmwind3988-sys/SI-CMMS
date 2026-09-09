@@ -1,0 +1,42 @@
+-- ---------------------------------------------------------------------------
+-- 0060  The ladder stops where the flow stops
+--
+-- 0059 made Completed the end of the flow: `completed -> closed` came off
+-- wo_status_transitions, verification became a stamp rather than a status, and
+-- nothing reaches `verified` or `closed` any more. It did not retire the two
+-- rungs, and the timeline ladder is built from the ACTIVE rows of wo_statuses
+-- (StatusTimeline, via referenceData's `statusFlow`) — so every completed work
+-- order went on drawing "Verified — Pending" and "Closed — Pending" under
+-- itself, for the technician who finished it, for the requester who raised it,
+-- and for everyone else.
+--
+-- Two steps that can never happen, presented to the person who just finished
+-- the job as two things still outstanding. Worse for the technician than for
+-- anybody: the panel above the ladder tells them the work order is finished
+-- while the ladder tells them two steps are missing, and the one they cannot
+-- act on is the one that sounds like it is waiting for them.
+--
+-- This is 0039 section 1.2 again, for the same reason and by the same
+-- mechanism: 1.1 there edited the matrix and 1.2 retired the rungs the edit
+-- had just made unreachable. 0059 did the first half only.
+--
+-- DISPLAY ONLY, and it must never become the enforcement — the boundary is
+-- wo_status_transitions, which already has no row into either status.
+--
+-- The rows STAY. Work orders closed under the previous workflow are real and
+-- still open on that screen, and three things keep reading them: statusLabel
+-- and statusColor resolve against EVERY row, so a closed work order keeps its
+-- "Closed" badge and its green; StatusTimeline splices any retired rung a
+-- work order actually reached back in at its own sort_order, so those work
+-- orders still draw the full, truthful ladder ending in a green Closed; and
+-- the status filter on the work order list is built from every row too, so
+-- "Closed" is still something you can search for. Deleting the rows is what
+-- would break all three — 0031's argument about P4, one table over.
+--
+-- si_guard_reference_retire is on wo_statuses (0039) and returns early when
+-- auth.uid() is null, which is what lets a migration do this where an
+-- Administrator cannot. `status` is not one of the columns
+-- si_guard_retired_reference checks on work_orders, so nothing about the
+-- rework path or an old closed record is affected by the flag.
+-- ---------------------------------------------------------------------------
+update wo_statuses set is_active = false where code in ('verified', 'closed');

@@ -1311,12 +1311,72 @@ them.
 ### Status flow
 
 ```
-open → assigned → accepted → on_the_way → on_site → repairing
-     → waiting_spare_part ⇄ repairing → testing → completed → verified → closed
+open → assigned → accepted → repairing ⇄ waiting_spare_part
+     → testing → completed → closed        (closed is automatic)
 ```
 
-Plus `assigned → open` (decline), `testing → repairing`, `completed → repairing`. No status
-may be skipped.
+Plus `assigned → open` (decline), `testing → repairing`, and rework from either end of the
+finish — `completed → repairing` and `closed → repairing`, both `{hod,manager,admin}`. No
+status may be skipped. `on_the_way` and `on_site` are retired (0039), and `verified` is
+retired too (0060) — it has never been a resting state.
+
+**`completed → closed` happens by itself (migration 0061).** Marking a repair completed
+closes the work order in the same transaction: `si_auto_close_completed` (AFTER UPDATE)
+performs the second UPDATE and writes the `completed → closed` history row itself, so both
+rungs appear on the timeline and nobody is asked for anything. Three things make that safe
+rather than merely working:
+
+- **`closed` no longer means verified, and one line is the whole of it.**
+  `si_stamp_work_order` had stamped `verified_at := coalesce(new.verified_at, now())` on
+  every closure since 0001, when closing *was* verifying. Left in place, auto-closing stamps
+  it on every work order the instant the repair finishes, the HOD sign-off queue is
+  permanently empty, `si_verify_work_order` refuses every call with *"already been
+  verified"*, and the dashboard counts everything as signed off — with nothing raising
+  anywhere. Measured with the line put back: `verified_at` set, status closed, queue empty.
+  Rows closed *before* 0061 keep the `verified_at` that line gave them, which is what stops
+  0059's dashboards having a hole at today's date.
+- **The matrix row is back because the guard needs one.** `si_auto_close_completed` is
+  SECURITY DEFINER, and that changes the database role, not the JWT —
+  `a_guard_work_order_transition` still reads `auth.uid()` and still looks the pair up, the
+  point 0037's header makes about decline. Its roles are the roles that can *reach*
+  `completed`, since whoever closes it is by definition whoever just completed it.
+- **Closure is silent, and that is the trigger ordering.** `after_work_order_update` sorts
+  before `c_auto_close_on_completion`, so the completion notifications (the requester's, and
+  the HODs' "needs verifying") are written against the status that earned them. The closing
+  UPDATE then re-enters the notify trigger with `completed → closed`, where 0059 deleted the
+  fan-out and 0056's `verified_closed` message with it, so no branch matches.
+
+**An HOD signs the closed record off, and it is a stamp rather than a status.**
+`verified_by`/`verified_at` via `si_verify_work_order`: HOD-only including Administrators,
+one per work order, invisible to everyone else, and what makes a work order count in the
+dashboard. The queue is *closed and not yet verified* — `RoleDashboard`'s `ATTENTION[hod]`
+keys on that pair, and `unverified` is the extra clause nothing else sets, because signing
+off deliberately moves no status.
+
+**0061 also gave `work_orders_update` an `si_is_hod()` branch, and that was a live bug.**
+0059 handed `completed → repairing` to `{hod,manager,admin}` and amended
+`work_orders_select` and `work_orders_delete` — not the UPDATE policy. So *"Not done
+properly"*, the move that exists precisely so an HOD who can see a repair was not done has
+an alternative to signing it off anyway, was refused by RLS for every HOD. **Refused
+silently**, which is why it survived the migration that introduced it: RLS does not raise on
+an UPDATE it filters out, it matches zero rows. Sign-off itself kept working and hid the
+hole, because `si_verify_work_order` is SECURITY DEFINER and never consulted that policy.
+
+**The HOD had to be added to the list scoping too, and for the same shape of reason.**
+`scopedWorkOrderQuery` in `lib/workOrders.js` treats supervisor/manager/admin as system-wide
+and self-scopes everyone else; an HOD-only account matched no clause and fell through to
+`limit(0)`, so the work order list was empty and the sign-off card read 0 while the policy
+was returning all 45 rows. It cannot be self-scoped: an HOD's queue is work somebody else
+raised and somebody else was assigned, so `requester_id` and `assigned_to_id` can never
+reach it — the same reason a Supervisor scopes to everything. `WorkOrderList`'s `TITLES` and
+`EMPTY_MESSAGES` are read by role with no fallback, so the missing key rendered an empty
+`<h1>` and an empty empty-state.
+
+**Merge hazard worth knowing about**: the branch adding `work_orders.verification_notes`
+requires a note on `completed → closed` inside `si_guard_work_order_transition`. That rule
+was written when a person performed the close; here nobody does, so the guard refuses every
+completion — measured on the test project, which was carrying that branch's guard
+out-of-band. It has to come out when the two branches meet.
 
 The permitted moves are **data, not code** — 22 rows in `wo_status_transitions` recording
 which roles may perform each move, which fields it requires, and whether it demands a

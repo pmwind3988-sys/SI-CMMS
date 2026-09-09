@@ -358,13 +358,17 @@ function WorkflowActions({ wo, onGotoAssign }) {
     return <InfoBox>{wo.assigned_to_name || "Technician"} is testing the fix.</InfoBox>;
   }
 
-  /* COMPLETED IS THE END OF THE FLOW (migration 0059).
+  /* THE REPAIR IS FINISHED (migrations 0059, 0061).
 
-     There is no requester verification and no Manager force-close, because
-     there is nothing left to close: `completed -> closed` is off the matrix and
-     nothing reaches `closed` any more. What replaces it is an HOD sign-off that
-     does not move the status at all, which is why this branch is the last one
-     with actions in it rather than a waiting room.
+     `completed` and `closed` are one state as far as this panel is concerned.
+     Marking a repair completed closes the work order in the same transaction
+     (0061), so `closed` is where a finished job rests and `completed` is only
+     reachable on a record stranded by 0059 — both are answered here.
+
+     There is no requester verification and no Manager force-close: closure
+     asks nobody for anything. What replaces them is an HOD sign-off that does
+     not move the status at all, which is why this branch is the last one with
+     actions in it rather than a waiting room.
 
      THE ORDER OF THESE TESTS IS THE FEATURE. An HOD sees the sign-off state
      first, whoever raised the work order; everyone else — the requester
@@ -373,7 +377,7 @@ function WorkflowActions({ wo, onGotoAssign }) {
      enforced here by what is rendered rather than by what is fetched: the
      column is on the row for anyone who can read the row at all. Hiding it is
      display, not a boundary. The boundary is si_verify_work_order. */
-  if (wo.status === "completed") {
+  if (wo.status === "completed" || wo.status === "closed") {
     const verified = Boolean(wo.verified_at);
 
     if (canSeeVerification(user)) {
@@ -491,9 +495,10 @@ function WorkflowActions({ wo, onGotoAssign }) {
     );
   }
 
-  /* `closed` only, and only on work orders finished before migration 0059 —
-     nothing reaches it any more. Kept because those rows are real and still
-     open on this screen; see the migration header on why the status was not
-     deleted along with the transition into it. */
-  return <InfoBox>This work order was closed under the previous workflow. Verified and archived — cost and history have been finalized.</InfoBox>;
+  /* Unreachable on today’s flow — every status in wo_statuses is answered
+     above, `closed` included since migration 0061. Kept as a fallback rather
+     than deleted because a status added to the enum later would otherwise
+     render an empty panel, which reads as a broken screen rather than as an
+     unhandled state. */
+  return <InfoBox>This work order is finished. Cost and history have been finalized.</InfoBox>;
 }

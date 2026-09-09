@@ -235,10 +235,27 @@ function scopedWorkOrderQuery(currentUser, range) {
   if (range?.from) query = query.gte("created_at", range.from);
   if (range?.to) query = query.lt("created_at", range.to);
 
-  // Supervisor, Manager and Admin are all system-wide as of 0019, so holding any
-  // of them means "everything" and no narrower filter can apply on top.
+  /* Supervisor, Manager and Admin are all system-wide as of 0019, so holding any
+     of them means "everything" and no narrower filter can apply on top.
+
+     HOD joined them with migration 0059, and this is not a widening of that
+     migration but the other half of it: work_orders_select reads
+     si_is_admin() or si_is_manager() or si_is_hod() or si_is_supervisor() or ...,
+     so the policy has always returned an HOD every row. Left out of this list an
+     HOD-only account matched no clause below and fell through to `limit(0)` --
+     measured on the test project: the policy returns 45 work orders and the list
+     asked for none of them, so the work order list was empty and the HOD
+     dashboard's "waiting for you to verify" card read 0 with two completed jobs
+     sitting unsigned.
+
+     It has to be system-wide rather than self-scoped for a structural reason:
+     an HOD's queue is work somebody else raised and somebody else was assigned,
+     so `requester_id` and `assigned_to_id` can never reach it. Same case as a
+     Supervisor's unassigned queue -- a row nobody owns is precisely the row that
+     belongs on their desk. */
   const systemWide =
     hasRole(currentUser, ROLES.SUPERVISOR) ||
+    hasRole(currentUser, ROLES.HOD) ||
     hasRole(currentUser, ROLES.MANAGER) ||
     hasRole(currentUser, ROLES.ADMIN);
 
@@ -773,12 +790,12 @@ export async function markCompleted(woId, actor, resolutionNotes) {
 }
 
 /**
- * Sign off a completed work order as its Head of Department.
+ * Sign off a finished work order as its Head of Department.
  *
  * NOT a transition, which is why it does not go through transition() like
  * everything else in this file. Verification stamps `verified_by`/`verified_at`
- * and leaves the status at `completed` — see migration 0059 for why it has to
- * be a stamp rather than a rung: the verified/unverified distinction is meant
+ * and leaves the status where it is — `closed` since 0061 — see migration 0059
+ * for why it has to be a stamp rather than a rung: the verified/unverified distinction is meant
  * to be visible to HODs alone, and a status is visible to everyone who can see
  * the row.
  *
@@ -794,7 +811,9 @@ export async function verifyWorkOrder(woId, actor, remarks = null) {
   if (error) throw error;
 }
 
-/** matrix: completed -> repairing, requires reopen_reason. Roles {hod, manager,
+/** matrix: closed -> repairing since 0061 (completed -> repairing is kept for a
+    record stranded by 0059), requires reopen_reason. transition() reads the
+    from-status off the row, so this needed no change. Roles {hod, manager,
     admin} since 0059 — the requester is off it, because "completed is the end"
     has to mean the same thing from both directions. */
 export async function reopenWorkOrder(woId, actor, reason) {

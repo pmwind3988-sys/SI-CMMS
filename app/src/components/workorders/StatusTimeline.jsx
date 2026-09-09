@@ -111,14 +111,28 @@ export default function StatusTimeline({ wo }) {
         const revisits = events.slice(1);
         const done = i <= flowIndex;
         const isCurrent = s === wo.status;
+        /* The amber ring means "the work order is sitting here, and there is
+           more to come". On the LAST rung there is nothing to come, so it reads
+           green and ticked like every rung behind it.
+
+           Since migration 0059 that rung is Completed, which is the end of the
+           flow — a technician who has just finished a job should see a finished
+           job, not an amber marker that reads as one more step outstanding. It
+           is written as "the last rung" rather than as `=== "completed"`
+           because the ladder is data: a work order closed under the previous
+           workflow ends on Closed and is just as finished, and reordering
+           wo_statuses in Settings must not strand this test on a rung that is
+           no longer the end. */
+        const isEnd = isCurrent && i === STATUS_FLOW.length - 1;
+        const inProgress = isCurrent && !isEnd;
         return (
           <div key={s} className="flex gap-3.5">
             <div className="flex flex-col items-center">
               <div
                 className="rounded-full flex items-center justify-center"
-                style={{ background: done ? (isCurrent ? "#F59E0B" : "#22C55E") : "#E7EAEE", border: isCurrent ? "2px solid #F59E0B" : "none", width: 22, height: 22 }}
+                style={{ background: done ? (inProgress ? "#F59E0B" : "#22C55E") : "#E7EAEE", border: inProgress ? "2px solid #F59E0B" : "none", width: 22, height: 22 }}
               >
-                {done && !isCurrent && <CheckCircle2 size={13} className="text-white" />}
+                {done && !inProgress && <CheckCircle2 size={13} className="text-white" />}
               </div>
               {i < STATUS_FLOW.length - 1 && <div className="w-0.5 flex-1 min-h-[28px]" style={{ background: i < flowIndex ? "#22C55E" : "#E7EAEE" }} />}
             </div>

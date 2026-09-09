@@ -32,6 +32,10 @@ const TITLES = {
   // Not "My Department" since migration 0019 — a Supervisor now gets the same
   // system-wide list a Manager does.
   [ROLES.SUPERVISOR]: "Work Orders",
+  // An HOD reads the same system-wide list (migration 0059). Missing here it
+  // rendered as an empty <h1>, because these two maps are read by role with no
+  // fallback -- the quiet way a new role goes half-added.
+  [ROLES.HOD]: "Work Orders",
   [ROLES.MANAGER]: "Work Orders",
   [ROLES.ADMIN]: "Work Orders — All",
 };
@@ -43,6 +47,7 @@ const EMPTY_MESSAGES = {
   // whole plant, and an empty state that names a scope the policy no longer
   // applies sends someone looking for a filter that is not there.
   [ROLES.SUPERVISOR]: "No work orders match these filters.",
+  [ROLES.HOD]: "No work orders match these filters.",
   [ROLES.MANAGER]: "No work orders match these filters.",
   [ROLES.ADMIN]: "No work orders match these filters.",
 };
@@ -244,7 +249,7 @@ export default function WorkOrderList() {
         </div>
         {/* A technician-only account does not raise work orders; anyone holding
             any other role does. */}
-        {hasAnyRole(user, [ROLES.REQUESTER, ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN]) && (
+        {hasAnyRole(user, [ROLES.REQUESTER, ROLES.SUPERVISOR, ROLES.HOD, ROLES.MANAGER, ROLES.ADMIN]) && (
           <Button variant="amber" icon={Plus} onClick={() => router.push("/work-orders/new")}>
             Raise Work Order
           </Button>

@@ -101,7 +101,12 @@ const ATTENTION = {
      It is the one place on this screen that reads verified_at, and only an HOD
      ever sees this view. */
   [ROLES.HOD]: {
-    status: "completed",
+    // `closed`, not `completed`, since migration 0061: completing a work order
+    // closes it in the same transaction, so there is never a completed one to
+    // wait for. Keyed on the status the record actually rests at, with
+    // `unverified` doing the narrowing -- closed no longer implies verified,
+    // which is the whole of what 0061 changed in the database.
+    status: "closed",
     scope: () => true,
     unverified: true,
     heading: "Waiting for you to verify",
