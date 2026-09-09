@@ -65,7 +65,8 @@ const CORS = {
 const MIN_PASSWORD_LENGTH = 8;
 
 /**
- * The role hierarchy from migration 0015, restated. It has to be restated:
+ * The role hierarchy from migration 0015 — last moved by 0059, which inserted
+ * hod at 4 and pushed the three tiers above it up one — restated. It has to be restated:
  * everything below runs on the service-role key, which bypasses Row Level
  * Security, so the users_update / users_insert policies never see these writes.
  * Keep the two in step — if the ranks here and si_role_rank() ever disagree, the
@@ -75,10 +76,11 @@ const ROLE_RANK: Record<string, number> = {
   requester: 1,
   technician: 2,
   supervisor: 3,
-  manager: 4,
-  admin: 5,
+  hod: 4,
+  manager: 5,
+  admin: 6,
 };
-const SUPERUSER_RANK = 6;
+const SUPERUSER_RANK = 7;
 
 /** The rank of a role name. */
 const rankOfRole = (role: string | null | undefined) => ROLE_RANK[role ?? ""] ?? 0;
@@ -481,7 +483,7 @@ Deno.serve(async (req: Request) => {
     const employeeIdRaw = payload.employee_id ? String(payload.employee_id).trim() : "";
     const employeeId = employeeIdRaw || null;
 
-    const VALID_ROLES = ["requester", "technician", "supervisor", "manager", "admin"];
+    const VALID_ROLES = ["requester", "technician", "supervisor", "hod", "manager", "admin"];
     if (!email) return json({ error: "An email address is required." }, 400);
     if (!name) return json({ error: "A name is required." }, 400);
     if (roles.length === 0) return json({ error: "Pick at least one role." }, 400);

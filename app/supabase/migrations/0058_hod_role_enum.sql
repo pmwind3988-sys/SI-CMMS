@@ -1,0 +1,23 @@
+-- ============================================================================
+-- SI — Service Inside · 0058 One enum label, and nothing else
+-- ============================================================================
+-- `si_role` gains 'hod' — Head of Department, the only role that may verify a
+-- completed work order from 0059 onwards.
+--
+-- That is the whole file, and it has to be, for the reason 0035 and 0048 both
+-- set out: Postgres refuses to let a transaction *use* an enum value the same
+-- transaction added, and the Supabase CLI wraps every migration file in a
+-- transaction. Every rule that names 'hod' — si_is_hod(), the rank ladder, the
+-- transition matrix rows it appears in — therefore lives in 0059.
+--
+-- `before 'manager'` places the label where the rank ladder puts it, between
+-- supervisor and manager. That is cosmetic and nothing depends on it:
+-- si_role_rank() is what ranks a role, and enum_range() order shows up only in
+-- a bare `order by` on the type. Placing it correctly anyway keeps the two from
+-- reading as contradictory to whoever opens the type next.
+--
+-- `if not exists`, so re-running the file is a no-op rather than a
+-- duplicate-label error.
+-- ============================================================================
+
+alter type si_role add value if not exists 'hod' before 'manager';

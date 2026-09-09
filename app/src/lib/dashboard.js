@@ -51,7 +51,7 @@ export function listenDashboardCards(cb, onError) {
  * per fifteen minutes; the query is a single indexed scan of one period, and
  * this module is mounted on two pages that only Managers and Admins reach.
  */
-export function listenDashboardChartsRange(period, cb, onError) {
+export function listenDashboardChartsRange(period, plantId, cb, onError) {
   if (!period) {
     cb(null);
     return () => {};
@@ -63,6 +63,10 @@ export function listenDashboardChartsRange(period, cb, onError) {
         p_from: period.from,
         p_to: period.to,
         p_bucket: period.bucket,
+        // Null means every plant. Sent explicitly rather than omitted, because
+        // PostgREST resolves an RPC by the argument names it is given and a
+        // three-key body would look for the signature migration 0059 dropped.
+        p_plant_id: plantId ?? null,
       }),
     cb,
     onError,

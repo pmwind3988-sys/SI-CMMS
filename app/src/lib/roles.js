@@ -8,14 +8,18 @@ export const ROLES = {
   REQUESTER: "requester",
   TECHNICIAN: "technician",
   SUPERVISOR: "supervisor",
-  MANAGER: "manager", // Maintenance Manager
+  // Head of Department. The only role that may verify a completed work order —
+  // see migration 0059, which is also where the rank below comes from.
+  HOD: "hod",
+  MANAGER: "manager",
   ADMIN: "admin", // Administrator
 };
 
 export const ALL_ROLES = Object.values(ROLES);
 
 /**
- * The role hierarchy, mirroring si_role_rank() in migration 0015. You may write
+ * The role hierarchy, mirroring si_role_rank() — last moved by migration 0059,
+ * which inserted HOD at 4 and pushed Manager, Admin and Superuser up one. You may write
  * a user's row if it is your own, or if their rank is strictly below yours —
  * which is what stops one Administrator editing another.
  *
@@ -26,17 +30,18 @@ export const ROLE_RANK = {
   [ROLES.REQUESTER]: 1,
   [ROLES.TECHNICIAN]: 2,
   [ROLES.SUPERVISOR]: 3,
-  [ROLES.MANAGER]: 4,
-  [ROLES.ADMIN]: 5,
+  [ROLES.HOD]: 4,
+  [ROLES.MANAGER]: 5,
+  [ROLES.ADMIN]: 6,
 };
 
 /**
- * A Superuser is not a sixth role — it is `role: 'admin'` carrying
+ * A Superuser is not a role of its own — it is `role: 'admin'` carrying
  * `is_protected`, so every existing admin check keeps passing for them and only
  * the rank comparison sees the extra tier. See migration 0015 for why that
  * beats adding to the si_role enum.
  */
-export const SUPERUSER_RANK = 6;
+export const SUPERUSER_RANK = 7;
 
 export function roleRank(role) {
   return ROLE_RANK[role] ?? 0;
@@ -95,7 +100,8 @@ export const ROLE_LABELS = {
   [ROLES.REQUESTER]: "Requester",
   [ROLES.TECHNICIAN]: "Technician",
   [ROLES.SUPERVISOR]: "Supervisor",
-  [ROLES.MANAGER]: "Maintenance Manager",
+  [ROLES.HOD]: "HOD",
+  [ROLES.MANAGER]: "Manager",
   [ROLES.ADMIN]: "Administrator",
 };
 
@@ -104,6 +110,7 @@ export const ROLE_DASHBOARD_PATH = {
   [ROLES.REQUESTER]: "/dashboard",
   [ROLES.TECHNICIAN]: "/technician/dashboard",
   [ROLES.SUPERVISOR]: "/supervisor/dashboard",
+  [ROLES.HOD]: "/hod/dashboard",
   [ROLES.MANAGER]: "/manager/dashboard",
   [ROLES.ADMIN]: "/admin/dashboard",
 };

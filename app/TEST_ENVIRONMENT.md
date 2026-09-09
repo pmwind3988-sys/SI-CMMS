@@ -143,7 +143,7 @@ npx supabase db push                          # all migrations
 npx supabase functions deploy admin-users
 npx supabase functions deploy auth-signin
 npx supabase config push                      # enables the access-token hook
-npm run bootstrap:users                       # the six fixtures
+npm run bootstrap:users                       # the seven fixtures
 npm run clone:config -- --prune               # real departments and equipment
 npm run seed:demo                             # one work order, raise to closed
 npm run check:env
@@ -187,7 +187,7 @@ Only needed for password-recovery email, so it can wait:
 
 ## Things that are true of test and not of production
 
-**The six fixtures are not marked `is_test_account` on test.** Migration 0028
+**The seven fixtures are not marked `is_test_account` on test.** Migration 0028
 backfills that flag from `seed_source` as a one-time UPDATE, and on a fresh
 project it runs before `bootstrap:users` has created anybody. So on test the
 fixtures are visible in Admin → Users and in the technician roster, and the demo

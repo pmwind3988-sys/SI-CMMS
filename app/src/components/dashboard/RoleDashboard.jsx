@@ -61,12 +61,21 @@ import CardDetail, { rowFromWorkOrder } from "./CardDetail";
  * nobody yet — having no technician is precisely what puts it on their desk.
  */
 const ATTENTION = {
+  /* Migration 0059 took verification away from the requester, so the one
+     status that used to wait on them waits on nobody now — `completed` is the
+     end of the flow. The card is kept and repointed at the queue they DO have
+     a stake in: work they raised that nobody has picked up yet.
+
+     Repointed rather than removed, because `attention` is not optional here —
+     `attention.scope` is what narrows every card and the recent list on this
+     screen, not just the one card at the top. Dropping the entry would widen a
+     Requester's whole dashboard to every row RLS returns them. */
   [ROLES.REQUESTER]: {
-    status: "completed",
+    status: "open",
     scope: (w, uid) => w.requester_id === uid,
-    heading: "Waiting for you to verify",
-    blurb: "The technician says these are fixed. Confirm, or send them back.",
-    cta: "Verify",
+    heading: "Waiting for a technician",
+    blurb: "You raised these and nobody has been assigned yet.",
+    cta: "Open",
   },
   [ROLES.TECHNICIAN]: {
     status: "assigned",
@@ -82,6 +91,23 @@ const ATTENTION = {
     blurb: "These have no technician yet.",
     cta: "Assign",
   },
+  /* An HOD's desk is every completed work order nobody has signed off yet —
+     system-wide, like a Supervisor's, because verification is not scoped by
+     department or plant (migration 0059).
+
+     `unverified` narrows the ATTENTION card beyond its status, which no other
+     role needs: `completed` alone would keep a job on the queue after it had
+     been dealt with, since signing off deliberately does not move the status.
+     It is the one place on this screen that reads verified_at, and only an HOD
+     ever sees this view. */
+  [ROLES.HOD]: {
+    status: "completed",
+    scope: () => true,
+    unverified: true,
+    heading: "Waiting for you to verify",
+    blurb: "Completed work that has not been signed off. None of it counts towards the dashboard until it is.",
+    cta: "Verify",
+  },
 };
 
 const HEADINGS = {
@@ -91,6 +117,7 @@ const HEADINGS = {
   // whole plant, and listenWorkOrderList gives them every row a Manager sees.
   // Naming a department here claimed a filter these figures do not apply.
   [ROLES.SUPERVISOR]: { title: "Supervisor Dashboard", sub: "The plant's queue, assignments and SLA health." },
+  [ROLES.HOD]: { title: "HOD Dashboard", sub: "Completed work waiting on your sign-off, and everything behind it." },
 };
 
 /**
@@ -99,7 +126,21 @@ const HEADINGS = {
  * occur — it is a history state, never a resting one (see the FSD) — while
  * `closed` is the one status the open set is defined by excluding.
  */
-const NOT_OPEN = ["closed", "verified"];
+/**
+ * Statuses that are not "still open work", and therefore never a slice of the
+ * Open card.
+ *
+ * `completed` joined the list in migration 0059, and that is the change rather
+ * than an addition to it: completing a work order used to hand it to the
+ * requester to verify, so it was genuinely still in flight; it is now the end
+ * of the flow. Left out, every finished job would have gone on counting as open
+ * for good, because nothing reaches `closed` any more.
+ *
+ * `verified` stays for completeness and still cannot occur — it was never a
+ * resting state — and `closed` stays because work orders finished before 0059
+ * are sitting at it.
+ */
+const NOT_OPEN = ["closed", "verified", "completed"];
 
 /**
  * @param viewRole  Which role this screen is presenting. An account may hold
@@ -134,7 +175,12 @@ export default function RoleDashboard({ viewRole }) {
     // Every card, the recent list and each drill-down are built from this one
     // array, so none of them can disagree with the heading above them.
     const rows = (workOrders ?? []).filter((w) => attention.scope(w, user?.uid));
-    const open = rows.filter((w) => w.status !== "closed");
+    /* NOT_OPEN rather than `!== "closed"`, which is the same change 0059 made
+       to the byStatus chips below and has to be made in both places: an SLA
+       countdown on a work order that is finished is a deadline for nothing, so
+       leaving completed rows in here would have every completed job drift into
+       Overdue and stay there. */
+    const open = rows.filter((w) => !NOT_OPEN.includes(w.status));
 
     /* The stored deadline, shared with the list and the detail page — see
        slaRemainMs(). A P7 whose resolution clock has not started counts as
@@ -199,7 +245,13 @@ export default function RoleDashboard({ viewRole }) {
     return {
       total: rows.length,
       open,
-      needsMe: rows.filter((w) => w.status === attention.status),
+      /* `unverified` is the HOD's extra clause and nothing else sets it — see
+         ATTENTION. Signing a work order off does not move its status, so the
+         status test alone would leave every verified job sitting on the queue
+         that exists to be emptied. */
+      needsMe: rows.filter(
+        (w) => w.status === attention.status && (!attention.unverified || !w.verified_at)
+      ),
       byStatus,
       overdue,
       atRisk,

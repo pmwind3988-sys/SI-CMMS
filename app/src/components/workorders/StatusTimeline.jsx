@@ -5,8 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 // collides with the DOM's own Image constructor.
 import { CheckCircle2, Image as ImageIcon, PauseCircle, RotateCcw } from "lucide-react";
 import { listenWorkOrderHistory } from "../../lib/workOrders";
-import { isTransition, historyEventLabel } from "../../lib/historyEvents";
+import { isTransition, historyEventLabel, isHodOnlyEvent } from "../../lib/historyEvents";
 import { useReferenceData } from "../../lib/referenceData";
+import { useAuth } from "../../context/AuthContext";
+import { canSeeVerification } from "../../lib/constants";
 import { ErrorBanner } from "../ui/Surfaces";
 
 // Postgres timestamptz arrives as an ISO 8601 string over PostgREST, not as a
@@ -18,13 +20,30 @@ function fmtTime(ts) {
 
 export default function StatusTimeline({ wo }) {
   const { statusFlow, statusLabel, statuses } = useReferenceData();
-  const [history, setHistory] = useState(null);
+  const { user } = useAuth();
+  const [raw, setRaw] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const unsub = listenWorkOrderHistory(wo.id, setHistory, () => setError("Couldn't load the full history — try again."));
+    const unsub = listenWorkOrderHistory(wo.id, setRaw, () => setError("Couldn't load the full history — try again."));
     return unsub;
   }, [wo.id]);
+
+  /* The sign-off row is filtered out of the trail for everyone but a Head of
+     Department (migration 0059), and filtered HERE rather than at each of the
+     three places rows are consumed below — the rungs, the revisits and the
+     notes. Doing it once is what stops a later reader adding a fourth consumer
+     that quietly leaks it.
+
+     Filtered, not fetched differently: wo_history_select delegates to
+     work_orders_select, so the row arrives whoever is looking. This narrows
+     what is DISPLAYED, which is the sanctioned direction; the write is guarded
+     in the database. */
+  const seesVerification = canSeeVerification(user);
+  const history = useMemo(
+    () => (raw === null ? null : raw.filter((h) => seesVerification || !isHodOnlyEvent(h))),
+    [raw, seesVerification]
+  );
 
   /* Order comes from wo_statuses.sort_order, so an admin reordering the ladder
      in Settings reorders this timeline too.

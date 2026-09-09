@@ -768,34 +768,38 @@ export async function testFailed(woId, actor, reason) {
 export async function markCompleted(woId, actor, resolutionNotes) {
   await transition(woId, "completed", {
     fields: { resolution_notes: resolutionNotes },
-    remarks: "Test passed — awaiting requester verification",
+    remarks: "Test passed — work order completed",
   });
 }
 
-/** matrix: completed -> closed, requires verified_by. The trigger stamps
-    closed_at, verified_at and the final sla_breached verdict. The status goes
-    straight to closed; viaStatus records the verification step in the trail. */
-export async function verifyAndClose(woId, actor) {
-  await transition(woId, "closed", {
-    fields: { verified_by: actor.uid },
-    remarks: "Confirmed fixed by requester",
-    viaStatus: "verified",
+/**
+ * Sign off a completed work order as its Head of Department.
+ *
+ * NOT a transition, which is why it does not go through transition() like
+ * everything else in this file. Verification stamps `verified_by`/`verified_at`
+ * and leaves the status at `completed` — see migration 0059 for why it has to
+ * be a stamp rather than a rung: the verified/unverified distinction is meant
+ * to be visible to HODs alone, and a status is visible to everyone who can see
+ * the row.
+ *
+ * si_verify_work_order is SECURITY DEFINER and restates all three of its own
+ * rules — HOD, completed, not already verified — so a caller who reaches it
+ * without the role gets a sentence rather than a silent no-op.
+ */
+export async function verifyWorkOrder(woId, actor, remarks = null) {
+  const { error } = await supabase.rpc("si_verify_work_order", {
+    p_wo_id: woId,
+    p_remarks: remarks,
   });
+  if (error) throw error;
 }
 
-/** matrix: completed -> closed for manager/admin — requester unresponsive */
-export async function forceVerifyAndClose(woId, actor) {
-  await transition(woId, "closed", {
-    fields: { verified_by: actor.uid },
-    remarks: "Force-verified — requester unresponsive",
-    viaStatus: "verified",
-  });
-}
-
-/** matrix: completed -> repairing, requires reopen_reason */
+/** matrix: completed -> repairing, requires reopen_reason. Roles {hod, manager,
+    admin} since 0059 — the requester is off it, because "completed is the end"
+    has to mean the same thing from both directions. */
 export async function reopenWorkOrder(woId, actor, reason) {
   await transition(woId, "repairing", {
     fields: { reopen_reason: reason },
-    remarks: `Reopened: ${reason}`,
+    remarks: `Sent back for rework: ${reason}`,
   });
 }

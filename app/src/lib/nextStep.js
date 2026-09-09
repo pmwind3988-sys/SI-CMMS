@@ -70,6 +70,31 @@ export function nextTransitions(transitions, status, statusOrder) {
 export function nextStep(wo, user, transitions, statusOrder) {
   if (!wo?.status) return null;
 
+  /* COMPLETED IS ANSWERED HERE AND NOT BELOW (migration 0059).
+   *
+   * Two reasons, and neither is a shortcut. The move that matters at this
+   * status is verification, and nextTransitions() cannot see it: verification
+   * is the same-status row `completed -> completed`, and that function drops
+   * same-status rows on purpose so "Reassign" does not become the answer on
+   * every screen. Falling through would leave only "Send back for rework",
+   * whose roles are {hod, manager, admin} — none of them in OWNER_PRIORITY —
+   * so ownerRole() returns null and the line silently disappears from the one
+   * status where a reader most wants to know whether anything is left.
+   *
+   * And the answer is different per reader in a way no other status is. An HOD
+   * is told about sign-off; everybody else is told the work order is finished,
+   * full stop, because verification is not theirs to know about. That is the
+   * same rule canSeeVerification() applies on the panel and the timeline,
+   * restated here rather than imported, because this module is pure and its
+   * two callers are a component and a test. */
+  if (wo.status === "completed") {
+    const seesVerification = hasAnyRole(user, [ROLES.HOD]) || Boolean(user?.isSuperuser);
+    if (!seesVerification || wo.verified_at) {
+      return { text: "Nothing further — this work order is finished.", isYours: false };
+    }
+    return { text: "Your move: Verify this work.", isYours: hasAnyRole(user, [ROLES.HOD]) };
+  }
+
   const moves = nextTransitions(transitions, wo.status, statusOrder);
 
   /* A terminal status says so rather than rendering nothing. A guidance line

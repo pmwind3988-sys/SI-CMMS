@@ -39,7 +39,27 @@ export function isTransition(row) {
 const EVENT_LABELS = {
   photo_replaced: "Photo replaced",
   priority_override: "Priority changed",
+  verified: "Verified",
 };
+
+/**
+ * Rows only a Head of Department may see (migration 0059).
+ *
+ * Verification is a stamp rather than a status precisely so that it can be
+ * withheld from a screen, and the history row is the other half of it: without
+ * this the sign-off would appear on the timeline for everyone who can open the
+ * work order, which is the whole thing the design avoids by not moving the
+ * status.
+ *
+ * DISPLAY ONLY. wo_history_select delegates to work_orders_select, so anyone
+ * who can read the work order can read this row too. Nothing is gated on it —
+ * the write is guarded by si_verify_work_order, in the database.
+ */
+const HOD_ONLY_EVENTS = new Set(["verified"]);
+
+export function isHodOnlyEvent(row) {
+  return HOD_ONLY_EVENTS.has(row?.event_type);
+}
 
 export function historyEventLabel(row) {
   if (isTransition(row)) return null;

@@ -24,11 +24,16 @@ import {
   startTesting,
   testFailed,
   markCompleted,
-  verifyAndClose,
-  forceVerifyAndClose,
+  verifyWorkOrder,
   reopenWorkOrder,
 } from "../../lib/workOrders";
-import { isAssigneeOf, raisedBy, isManagerOrAdmin } from "../../lib/constants";
+import {
+  isAssigneeOf,
+  isManagerOrAdmin,
+  canVerify,
+  canSeeVerification,
+  canSendBackForRework,
+} from "../../lib/constants";
 import { useReferenceData } from "../../lib/referenceData";
 import { nextStep } from "../../lib/nextStep";
 import { describeError } from "../../lib/errors";
@@ -113,9 +118,9 @@ function WorkflowActions({ wo, onGotoAssign }) {
   const [showComplete, setShowComplete] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
   const [showReopen, setShowReopen] = useState(false);
+  const [confirmVerify, setConfirmVerify] = useState(false);
 
   const assignee = isAssigneeOf(wo, user);
-  const requester = raisedBy(wo, user);
   const isSupervisorLike = hasRole(user, ROLES.SUPERVISOR) || isManagerOrAdmin(user);
   const actor = { uid: user.uid, name: user.name, role: user.role };
 
@@ -339,7 +344,12 @@ function WorkflowActions({ wo, onGotoAssign }) {
           {showComplete && (
             <div>
               <textarea value={completionNotes} onChange={(e) => setCompletionNotes(e.target.value)} rows={3} placeholder="What did you do to fix it? (visible to requester)" className={`${inputClass} resize-y mb-2`} />
-              <Button variant="success" icon={Send} disabled={!completionNotes || busy} onClick={async () => { await run(markCompleted, completionNotes); setShowComplete(false); }}>Submit for verification</Button>
+              {/* 0059: no longer "Submit for verification". Completing is the
+                  end of the technician's flow and of the requester's — the HOD
+                  sign-off that follows is not something the technician is
+                  waiting on, and a button promising a step they will never see
+                  the result of was describing the old lifecycle. */}
+              <Button variant="success" icon={Send} disabled={!completionNotes || busy} onClick={async () => { await run(markCompleted, completionNotes); setShowComplete(false); }}>Mark completed</Button>
             </div>
           )}
         </div>
@@ -348,43 +358,142 @@ function WorkflowActions({ wo, onGotoAssign }) {
     return <InfoBox>{wo.assigned_to_name || "Technician"} is testing the fix.</InfoBox>;
   }
 
+  /* COMPLETED IS THE END OF THE FLOW (migration 0059).
+
+     There is no requester verification and no Manager force-close, because
+     there is nothing left to close: `completed -> closed` is off the matrix and
+     nothing reaches `closed` any more. What replaces it is an HOD sign-off that
+     does not move the status at all, which is why this branch is the last one
+     with actions in it rather than a waiting room.
+
+     THE ORDER OF THESE TESTS IS THE FEATURE. An HOD sees the sign-off state
+     first, whoever raised the work order; everyone else — the requester
+     included, and Managers and Administrators too — sees a finished job. That
+     is the requirement that verified/unverified is an HOD's business, and it is
+     enforced here by what is rendered rather than by what is fetched: the
+     column is on the row for anyone who can read the row at all. Hiding it is
+     display, not a boundary. The boundary is si_verify_work_order. */
   if (wo.status === "completed") {
-    if (requester) {
+    const verified = Boolean(wo.verified_at);
+
+    if (canSeeVerification(user)) {
+      if (verified)
+        return (
+          <div>
+            <InfoBox>
+              Completed and verified. Nothing further is needed — the sign-off is
+              on the timeline with who made it and when.
+            </InfoBox>
+          </div>
+        );
+
       return (
         <div>
-          <InfoBox>The technician marked this completed. Please verify the fix before it's closed.</InfoBox>
+          <InfoBox>
+            {wo.assigned_to_name || "The technician"} marked this completed. It
+            is not counted in the dashboard until a Head of Department verifies
+            the work.
+          </InfoBox>
           <ErrorLine />
-          <div className="flex flex-wrap gap-2 mb-3">
-            <Button variant="success" icon={ThumbsUp} disabled={busy} onClick={() => run(verifyAndClose)}>Confirm fixed — Close</Button>
-            <Button variant="danger" icon={RotateCcw} onClick={() => setShowReopen((s) => !s)}>Not fixed</Button>
-          </div>
+
+          {/* Verify is the primary action and the one that happens dozens of
+              times a morning; sending a job back is rarer, heavier and gets the
+              quieter treatment beneath the rule — the same weighting Accept and
+              Decline get above, and for the same reason. */}
+          {canVerify(user) ? (
+            <div className="mb-3 flex flex-col gap-3">
+              <Button
+                variant="successSolid"
+                size="lg"
+                icon={ThumbsUp}
+                className="w-full justify-center"
+                disabled={busy}
+                onClick={() => setConfirmVerify(true)}
+              >
+                Verify this work
+              </Button>
+              {canSendBackForRework(user) && (
+                <div className="flex items-center justify-center border-t border-border pt-3">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={RotateCcw}
+                    aria-expanded={showReopen}
+                    onClick={() => setShowReopen((v) => !v)}
+                  >
+                    Not done properly
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <InfoBox>Waiting for a Head of Department to verify it.</InfoBox>
+          )}
+
           {showReopen && (
             <div className="flex flex-col gap-2 sm:flex-row">
               <input value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} placeholder="What's still wrong?" className={`${inputClass} flex-1`} />
-              <Button variant="danger" disabled={!reopenReason || busy} onClick={async () => { await run(reopenWorkOrder, reopenReason); setShowReopen(false); }}>Reopen</Button>
+              <Button variant="danger" disabled={!reopenReason.trim() || busy} onClick={async () => { await run(reopenWorkOrder, reopenReason.trim()); setShowReopen(false); }}>Send back for rework</Button>
             </div>
           )}
+
+          {/* The yes/no step the sign-off was asked to have. Verification cannot
+              be undone from any screen — si_verify_work_order refuses a second
+              one — and it puts this person's name against the quality of
+              somebody else's repair, which is enough to be worth one deliberate
+              tap rather than an accidental one. */}
+          {confirmVerify && (
+            <ModalOverlay onClose={() => setConfirmVerify(false)} label={`Verify ${wo.wo_number || "this work order"}`}>
+              <div className="bg-white rounded-t-xl sm:rounded-xl w-full sm:max-w-sm p-5">
+                <h2 className="text-[15px] font-bold text-ink mb-1.5">Verify {wo.wo_number}?</h2>
+                <p className="text-[12.5px] text-ink-soft mb-4">
+                  This records you as having checked the work, with the time, and
+                  starts counting it in the dashboard. It cannot be undone.
+                </p>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="ghost" size="sm" onClick={() => setConfirmVerify(false)}>No, not yet</Button>
+                  <Button variant="successSolid" size="sm" icon={ThumbsUp} disabled={busy} onClick={async () => {
+                    const ok = await run(verifyWorkOrder);
+                    setConfirmVerify(false);
+                    if (ok) flash(`Verified — ${wo.wo_number || "work order"} is signed off.`);
+                  }}>{busy ? "Verifying…" : "Yes, verify"}</Button>
+                </div>
+              </div>
+            </ModalOverlay>
+          )}
+          <Toast message={toast} />
         </div>
       );
     }
-    /* Only reached when somebody ELSE raised this work order — the branch above
-       has already taken every case where the reader raised it themselves,
-       whatever roles they hold. That ordering is the fix in migration 0040: an
-       Administrator who reports a fault used to fall through to here and be
-       offered an override on their own job, stamping the history
-       "Force-verified — requester unresponsive" about somebody standing right
-       there. Overriding an unresponsive requester and being the requester are
-       different acts, and the audit trail has to tell them apart. */
-    if (isManagerOrAdmin(user))
-      return (
-        <div>
-          <InfoBox>Awaiting verification by {wo.requester_name || "the requester"}. As {hasRole(user, ROLES.ADMIN) ? "Admin" : "Manager"} you can override and close directly if they are unresponsive.</InfoBox>
-          <ErrorLine />
-          <Button variant="ghost" icon={ThumbsUp} disabled={busy} onClick={() => run(forceVerifyAndClose)}>Force verify & close</Button>
-        </div>
-      );
-    return <InfoBox>Waiting for {wo.requester_name || "the requester"} to verify the fix.</InfoBox>;
+
+    /* Everyone else. A Manager or Administrator keeps the rework path — the
+       matrix gives it to them — but is told nothing about sign-off, which is
+       the point of the ordering above. */
+    return (
+      <div>
+        <InfoBox>
+          Completed{wo.assigned_to_name ? ` by ${wo.assigned_to_name}` : ""}. This
+          work order is finished.
+        </InfoBox>
+        {canSendBackForRework(user) && (
+          <>
+            <ErrorLine />
+            <Button variant="ghost" icon={RotateCcw} onClick={() => setShowReopen((s) => !s)}>Not done properly</Button>
+            {showReopen && (
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <input value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} placeholder="What's still wrong?" className={`${inputClass} flex-1`} />
+                <Button variant="danger" disabled={!reopenReason.trim() || busy} onClick={async () => { await run(reopenWorkOrder, reopenReason.trim()); setShowReopen(false); }}>Send back for rework</Button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
   }
 
-  return <InfoBox>This work order is closed. Verified and archived — cost and history have been finalized.</InfoBox>;
+  /* `closed` only, and only on work orders finished before migration 0059 —
+     nothing reaches it any more. Kept because those rows are real and still
+     open on this screen; see the migration header on why the status was not
+     deleted along with the transition into it. */
+  return <InfoBox>This work order was closed under the previous workflow. Verified and archived — cost and history have been finalized.</InfoBox>;
 }

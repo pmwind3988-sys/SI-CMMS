@@ -14,8 +14,8 @@
  * row IS provisioning the role. One source of truth instead of two that had to
  * be kept in step.
  *
- * Roles match the approved 5-role model: requester, technician, supervisor,
- * manager (Maintenance Manager), admin (Administrator).
+ * Roles match the role model: requester, technician, supervisor, hod (HOD),
+ * manager (Manager), admin (Administrator).
  *
  * Usage:
  *   1. Put SUPABASE_SERVICE_ROLE_KEY in app/.env.local
@@ -33,7 +33,7 @@ const PLANT_ID = "PLT001";
 // Preferred home for the seeded accounts — but only if it is still active. A
 // retired department is a real possibility and not a hypothetical: production
 // has retired DEPT-MACHINING, and cloning that reference data into a fresh
-// project put all six accounts in a department si_guard_retired_reference()
+// project put all seven accounts in a department si_guard_retired_reference()
 // refuses on any work order naming it. Resolved against the database by
 // pickDepartment() below rather than trusted as a constant.
 const PREFERRED_DEPARTMENT_ID = "DEPT-MACHINING";
@@ -43,6 +43,10 @@ const SEED_USERS = [
   { email: "tech.arun@example.com",  password: "ChangeMe123!", name: "Arun Kumar",  roles: ["technician"], phone: "98450 77003", skills: ["Mechanical", "Hydraulics"] },
   { email: "tech.meera@example.com", password: "ChangeMe123!", name: "Meera Iyer",  roles: ["technician"], phone: "98450 77004", skills: ["Electrical", "PLC"] },
   { email: "supervisor@example.com", password: "ChangeMe123!", name: "Priya Nair",  roles: ["supervisor"], phone: "98450 99001", skills: [] },
+  // Migration 0059. Without an HOD fixture a freshly bootstrapped project has
+  // nobody who can verify anything, and every completed work order sits
+  // unsigned-off and uncounted with no way in the app to fix it.
+  { email: "hod@example.com",        password: "ChangeMe123!", name: "Rajesh Menon", roles: ["hod"],        phone: "98450 99005", skills: [] },
   { email: "manager@example.com",    password: "ChangeMe123!", name: "Vikram Shah", roles: ["manager"],    phone: "98450 88002", skills: [] },
   { email: "admin@example.com",      password: "ChangeMe123!", name: "Anita Desai", roles: ["admin"],      phone: "98450 66009", skills: [] },
 ];
@@ -67,7 +71,7 @@ async function findAuthUserByEmail(email) {
  * Retirement is not advisory (migration 0031) — si_guard_retired_reference()
  * refuses a work order naming a retired department, so an account whose home
  * department has been retired cannot raise anything against it. Seeding into
- * one produces six accounts that look fine and fail at the last step, which is
+ * one produces seven accounts that look fine and fail at the last step, which is
  * the shape of bug this schema keeps documenting.
  */
 async function pickDepartment() {

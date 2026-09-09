@@ -137,6 +137,51 @@ export function isManagerOrAdmin(currentUser) {
 export function canAssign(currentUser) {
   return hasRole(currentUser, ROLES.SUPERVISOR) || isManagerOrAdmin(currentUser);
 }
+
+/**
+ * May this person sign off a completed work order? (migration 0059)
+ *
+ * HOD and only HOD, Administrators included — which makes it the one capability
+ * on this schema that an Administrator does not inherit, and si_verify_work_order
+ * enforces exactly the same thing. The reason is that verification puts a name
+ * in `verified_by` to answer "who checked this work", and an Administrator
+ * waving one through answers a different question.
+ *
+ * The status test is separate and belongs to the caller: this asks about the
+ * person, not the record.
+ */
+export function canVerify(currentUser) {
+  return hasRole(currentUser, ROLES.HOD);
+}
+
+/**
+ * May this person SEE whether a work order has been verified?
+ *
+ * HODs, and Superusers because they see everything. Everyone else reads the
+ * work order as Completed with nothing after it — the sign-off is an internal
+ * check on the maintenance chain, not part of the story the requester or the
+ * technician is being told.
+ *
+ * DISPLAY ONLY, and it has to be said out loud: `verified_at` is an ordinary
+ * column on a row that work_orders_select already returns, so this hides a
+ * value rather than protecting one. That is the sanctioned direction — showing
+ * less than the policy allows — and nothing is gated on it. The WRITE is
+ * guarded, in the database, by si_verify_work_order.
+ */
+export function canSeeVerification(currentUser) {
+  return hasRole(currentUser, ROLES.HOD) || Boolean(currentUser?.isSuperuser);
+}
+
+/**
+ * May this person send a completed work order back for rework?
+ *
+ * The matrix row is `{hod, manager, admin}` since 0059. An HOD who can see that
+ * a repair was not really done needs a move other than signing it off anyway,
+ * and Manager and Admin keep the reach they already had.
+ */
+export function canSendBackForRework(currentUser) {
+  return hasRole(currentUser, ROLES.HOD) || isManagerOrAdmin(currentUser);
+}
 export function canEditWhileOpen(wo, currentUser) {
   return (
     raisedBy(wo, currentUser) ||

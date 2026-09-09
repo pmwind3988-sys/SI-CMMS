@@ -118,9 +118,11 @@ export function resolveChartPeriod(key, custom, now = new Date()) {
  * The line the TREND card prints under its title — it is the only one of the
  * four that is bucketed, so it is the only one that says "per week".
  */
-export function periodSubtitle(period, counted) {
+export function periodSubtitle(period, counted, scopeNote) {
   if (!period) return "";
-  return `${counted} · per ${BUCKET_NOUN[period.bucket]} · ${period.description}`;
+  return [counted, `per ${BUCKET_NOUN[period.bucket]}`, period.description, scopeNote]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /**
@@ -133,9 +135,9 @@ export function periodSubtitle(period, counted) {
  * would credit people for jobs they have not started. Saying which, on the
  * card, is what stops the two being read as one number.
  */
-export function periodScope(period, counted) {
+export function periodScope(period, counted, scopeNote) {
   if (!period) return "";
-  return `${counted} · ${period.description}`;
+  return [counted, period.description, scopeNote].filter(Boolean).join(" · ");
 }
 
 export { DATE_PRESETS };

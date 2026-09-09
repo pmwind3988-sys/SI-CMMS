@@ -7,9 +7,9 @@
  *   08:17  Supervisor assigned Technician A.
  *   08:24  Technician accepted.
  *   08:33  Technician arrived.
- *   09:10  Repair completed.
- *   09:15  Requester verified.
- *   09:16  Work order closed.
+ *   09:10  Repair completed — which is the end of the flow since migration
+ *          0059, so there is no closure step any more.
+ *   09:15  HOD verified the work.
  *
  * Our status flow has intermediate states this narrative doesn't call out on its
  * own (on_the_way, repairing-start, testing) — folded into the nearest adjacent
@@ -72,6 +72,7 @@ async function seed() {
   const requester = await userByEmail("requester@example.com");
   const supervisor = await userByEmail("supervisor@example.com");
   const technician = await userByEmail("tech.arun@example.com");
+  const hod = await userByEmail("hod@example.com");
 
   const { data: inserted, error: insertError } = await db
     .from("work_orders")
@@ -119,7 +120,11 @@ async function seed() {
           "Spindle bearing reseated and lubricated; ran under load with no further vibration.",
       },
     },
-    { status: "closed", fields: { verified_by: requester.id } },
+    /* Stops at `completed`. Migration 0059 deleted `completed -> closed` from
+       the matrix, so the step that used to be here would now fail the guard —
+       which is exactly what the comment above promises this script does when
+       the narrative and the matrix disagree. Verification is not a transition
+       and so is not a step: it is stamped with the backdated columns below. */
   ];
 
   for (const step of steps) {
@@ -139,11 +144,15 @@ async function seed() {
       updated_at: t("09:16"),
       sla_ack_due_at: t("08:30"),        // P2 ack target: 15 min after 08:15
       sla_resolution_due_at: t("16:15"), // P2 resolution target: 8 hrs after 08:15
-      sla_breached: false,               // closed at 09:16, well inside the 8hr SLA
+      sla_breached: false,               // repaired by 09:10, well inside the 8hr SLA
       sla_warning_sent: false,
       resolved_at: t("09:10"),
+      // The sign-off, written directly rather than through
+      // si_verify_work_order: this script runs on the service-role key, so
+      // auth.uid() is null and that function would refuse it for not being an
+      // HOD. Same reason every other timestamp here is backdated by UPDATE.
+      verified_by: hod.id,
       verified_at: t("09:15"),
-      closed_at: t("09:16"),
     })
     .eq("id", woId);
   if (woTimeError) throw new Error(`backdate work order: ${woTimeError.message}`);
@@ -162,9 +171,13 @@ async function seed() {
     // Folded in one minute before completion, so it stays a distinct ordered
     // event rather than colliding with "completed" at the same minute.
     { to_status: "testing",    actor: technician, role: "technician", time: "09:09", remarks: "Repair complete — testing" },
-    { to_status: "completed",  actor: technician, role: "technician", time: "09:10", remarks: "Test passed — awaiting requester verification" },
-    { to_status: "verified",   actor: requester,  role: "requester",  time: "09:15", remarks: "Confirmed fixed by requester" },
-    { to_status: "closed",     actor: requester,  role: "requester",  time: "09:16", remarks: null },
+    { to_status: "completed",  actor: technician, role: "technician", time: "09:10", remarks: "Test passed — work order completed" },
+    // The sign-off row, in the shape si_verify_work_order writes: a
+    // non-transition event stamped with the status the work order is already
+    // at, because verification does not move it. `eventType` is what says so —
+    // from_status === to_status cannot, since the matrix has real same-status
+    // rows (0043's header makes this argument).
+    { to_status: "completed",  actor: hod,        role: "hod",        time: "09:15", remarks: "Verified by " + hod.name, eventType: "verified" },
   ];
 
   let prevStatus = null;
@@ -178,8 +191,16 @@ async function seed() {
       actor_role: e.role,
       remarks: e.remarks,
       created_at: t(e.time),
+      // Defaults to 'transition', which is what every row here but the sign-off
+      // is. Sent explicitly rather than omitted so the column reads the same
+      // way whichever branch wrote the row.
+      event_type: e.eventType ?? "transition",
     };
-    prevStatus = e.to_status;
+    /* A non-transition row does not advance the walk: it is stamped with the
+       status the work order is already at, so letting it move `prevStatus`
+       would be harmless today and wrong the moment another one is added
+       mid-flow. */
+    if (!e.eventType) prevStatus = e.to_status;
     return row;
   });
 

@@ -100,11 +100,17 @@ const hours = (mins) => (mins === null ? null : mins / 60);
 /**
  * The statuses that get a timestamp column, in workflow order.
  *
- * `verified` is included even though it is never a resting state — the flow goes
- * completed -> closed in one move and records `verified` as a via-status (see
- * verifyAndClose in lib/workOrders). The history row is the only place that
- * moment exists, which is exactly why the lifecycle is read from history rather
- * than from the work order's own columns.
+ * `verified` and `closed` are both here for work orders finished under the
+ * pre-0059 workflow, which recorded `verified` as a via-status on a single
+ * `completed -> closed` move. Neither can occur on a work order finished since:
+ * completed is terminal, and verification is a stamp rather than a transition.
+ * They stay because the sheet has to keep describing rows that really did pass
+ * through them — the same reason wo_statuses keeps the labels.
+ *
+ * Verification since 0059 is NOT read from here. It is a non-transition history
+ * row (event_type 'verified') and a pair of columns on the work order, so the
+ * two Verified columns below are built from those instead — one source that is
+ * right for both eras beats a lifecycle entry that is blank for half of them.
  */
 const LIFECYCLE = [
   ["assigned", "Assigned At"],
@@ -146,11 +152,19 @@ export function indexHistory(historyRows) {
   for (const row of sorted) {
     let entry = byWo.get(row.work_order_id);
     if (!entry) {
-      entry = { firstAt: {}, actorFor: {}, assignedCount: 0, rows: [] };
+      entry = { firstAt: {}, actorFor: {}, assignedCount: 0, rows: [], verifiedBy: null };
       byWo.set(row.work_order_id, entry);
     }
     entry.rows.push(row);
-    if (!isTransition(row)) continue;
+    if (!isTransition(row)) {
+      // The HOD sign-off (migration 0059) is a non-transition row, so it has to
+      // be picked up before this guard drops it. First one wins, like every
+      // other `firstAt` above — si_verify_work_order refuses a second anyway.
+      if (row.event_type === "verified" && !entry.verifiedBy) {
+        entry.verifiedBy = row.actor_name;
+      }
+      continue;
+    }
 
     if (!(row.to_status in entry.firstAt)) {
       entry.firstAt[row.to_status] = row.created_at;
@@ -275,6 +289,16 @@ function workOrderColumns(labels, ctx) {
 
   // ---- Lifecycle, from the audit trail ----
   for (const [status, header] of LIFECYCLE) {
+    if (status === "verified") {
+      /* verified_at, not the trail. The column is stamped by the trigger on
+         every legacy closure AND written by si_verify_work_order on every new
+         sign-off, so it is the one source that answers for both eras. Reading
+         `firstAt(w, "verified")` would be blank for everything verified since
+         migration 0059, which is a silently empty column rather than a visibly
+         missing one. */
+      cols.push({ header, width: 21, cell: (w) => dateCell(w.verified_at) });
+      continue;
+    }
     cols.push({ header, width: 21, cell: (w) => dateCell(firstAt(w, status)) });
   }
 
@@ -284,9 +308,12 @@ function workOrderColumns(labels, ctx) {
     { header: "Test Failure Reason", width: 34, cell: (w) => wrapCell(w.test_fail_reason) },
     { header: "Resolution Notes", width: 50, cell: (w) => wrapCell(w.resolution_notes) },
     { header: "Reopen Reason", width: 34, cell: (w) => wrapCell(w.reopen_reason) },
-    // verified_by is a uuid, and the name is not on the work order. The trail
-    // has it: whoever performed the `verified` step.
-    { header: "Verified By", width: 18, cell: (w) => textCell(trail(w)?.actorFor?.verified) },
+    /* verified_by is a uuid and the name is not on the work order, so both
+       eras are read out of the trail — `actorFor.verified` for a pre-0059
+       closure, which recorded verification as a via-status, and `verifiedBy`
+       for an HOD sign-off, which is a non-transition row. Falling back rather
+       than choosing, because a single export can contain both. */
+    { header: "Verified By", width: 18, cell: (w) => textCell(trail(w)?.verifiedBy ?? trail(w)?.actorFor?.verified) },
 
     // ---- Derived durations. Hours as numbers, unit in the header, so they
     //      pivot and average instead of being text that looks like a number. ----

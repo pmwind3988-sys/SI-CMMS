@@ -290,7 +290,7 @@ export default function LoginPage() {
             One system, five roles, one source of truth.
           </h1>
           <p className="text-[#B9C9E8] text-[15px] leading-relaxed">
-            Requester, Technician, Supervisor, Maintenance Manager, Administrator — each signs in
+            Requester, Technician, Supervisor, HOD, Manager, Administrator — each signs in
             once and lands exactly where their work is.
           </p>
         </div>

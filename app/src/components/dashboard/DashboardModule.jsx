@@ -16,6 +16,7 @@ import {
   CalendarClock,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { useReferenceData } from "../../lib/referenceData";
 import { listenDashboardCards, listenDashboardChartsRange, listenDashboardCardRows, refreshDashboardStatsNow } from "../../lib/dashboard";
 import { resolveChartPeriod, periodSubtitle, periodScope, DEFAULT_PERIOD } from "../../lib/chartPeriods";
 import { ELEVATED_ROLES, hasAnyRole } from "../../lib/roles";
@@ -28,6 +29,7 @@ import MachineBreakdownChart from "./MachineBreakdownChart";
 import TechnicianPerformanceChart from "./TechnicianPerformanceChart";
 import RoleSwitcher from "./RoleSwitcher";
 import ChartPeriodControl from "./ChartPeriodControl";
+import ChartPlantControl from "./ChartPlantControl";
 import { ErrorBanner } from "../ui/Surfaces";
 
 function fmtMinutes(mins) {
@@ -102,8 +104,8 @@ const CARDS = [
     label: "Completed Today",
     icon: CheckCircle2,
     color: "#22C55E",
-    title: "Closed since midnight",
-    blurb: "Counted on closure, not on the technician marking the repair complete.",
+    title: "Signed off since midnight",
+    blurb: "Counted when the work was signed off, not when the technician marked the repair complete.",
   },
   {
     key: "overdue",
@@ -128,8 +130,8 @@ const CARDS = [
     icon: Wrench,
     color: "#1E4FA0",
     format: (c) => ({ value: fmtMinutes(c?.avg_repair_minutes), unit: unitFor(c?.avg_repair_minutes) }),
-    title: "Raise → close, per work order",
-    blurb: "Finished work orders and how long each one took end to end.",
+    title: "Raise → repair complete, per work order",
+    blurb: "Signed-off work orders and how long each repair took, from being raised to being finished.",
   },
   {
     key: "active_technicians",
@@ -144,6 +146,7 @@ const CARDS = [
 
 export default function DashboardModule() {
   const { user } = useAuth();
+  const { plantName } = useReferenceData();
   const [cards, setCards] = useState(null);
   const [charts, setCharts] = useState(null);
   const [error, setError] = useState(null);
@@ -151,6 +154,8 @@ export default function DashboardModule() {
   const [drill, setDrill] = useState(null); // a CARDS entry
   const [periodKey, setPeriodKey] = useState(DEFAULT_PERIOD);
   const [custom, setCustom] = useState(null);
+  // null = every plant, which is what si_dashboard_charts_range takes.
+  const [plantId, setPlantId] = useState(null);
 
   /* Resolved once per choice rather than on every render: it reads the clock,
      and a period recomputed mid-render would re-run the subscription below
@@ -165,10 +170,20 @@ export default function DashboardModule() {
      that changes by a day re-runs and one that does not, does not. */
   useEffect(() => {
     setCharts(null);
-    return listenDashboardChartsRange(period, setCharts, () =>
+    return listenDashboardChartsRange(period, plantId, setCharts, () =>
       setError("Couldn't load dashboard charts for that period.")
     );
-  }, [period?.from, period?.to, period?.bucket]);
+  }, [period?.from, period?.to, period?.bucket, plantId]);
+
+  /* What every chart subtitle carries beyond its period (migration 0059).
+     "Verified only" is not a footnote: the charts exclude work that has been
+     completed but not yet signed off, so a recent period genuinely reads low
+     and fills in behind the HODs. A chart whose scope is unusual and unstated
+     is the one way a chart can lie without containing a wrong number — 0055
+     made that argument about empty buckets, and it applies here too. */
+  const scopeNote = [plantId ? plantName(plantId) : null, "verified only"]
+    .filter(Boolean)
+    .join(" · ");
 
   const canRefresh = hasAnyRole(user, ELEVATED_ROLES);
 
@@ -248,34 +263,42 @@ export default function DashboardModule() {
           and the cards are current-state counters that take no period. */}
       <div className="mb-2 flex items-end justify-between gap-3">
         <h2 className="text-[13.5px] font-bold text-ink">Trends and breakdowns</h2>
-        <ChartPeriodControl
-          period={period}
-          periodKey={periodKey}
-          custom={custom}
-          onChange={(key, range) => {
-            setPeriodKey(key);
-            setCustom(range);
-          }}
-        />
+        {/* Two scopes, one row, and they wrap together on a phone rather than
+            pushing the heading off it. The plant sits to the LEFT of the period
+            because it is the coarser cut — you pick a site and then ask when,
+            not the other way round. */}
+        <div className="flex flex-wrap items-center justify-end gap-x-1 gap-y-1">
+          <ChartPlantControl plantId={plantId} onChange={setPlantId} />
+          <span aria-hidden className="text-[11.5px] text-[#CBD5E1]">·</span>
+          <ChartPeriodControl
+            period={period}
+            periodKey={periodKey}
+            custom={custom}
+            onChange={(key, range) => {
+              setPeriodKey(key);
+              setCustom(range);
+            }}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <WorkOrderTrendChart
           data={charts?.work_orders_trend}
           period={period}
-          subtitle={periodSubtitle(period, "Raised")}
+          subtitle={periodSubtitle(period, "Raised", scopeNote)}
         />
         <DepartmentBreakdownChart
           data={charts?.department_breakdown}
-          subtitle={periodScope(period, "Raised")}
+          subtitle={periodScope(period, "Raised", scopeNote)}
         />
         <MachineBreakdownChart
           data={charts?.machine_breakdown}
-          subtitle={periodScope(period, "Top 10 by work orders raised")}
+          subtitle={periodScope(period, "Top 10 by work orders raised", scopeNote)}
         />
         <TechnicianPerformanceChart
           data={charts?.technician_performance}
-          subtitle={periodScope(period, "Top 10 by work orders finished")}
+          subtitle={periodScope(period, "Top 10 by work orders signed off", scopeNote)}
         />
       </div>
 

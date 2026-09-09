@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle, ArrowUpDown, UserCircle2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrder, deleteWorkOrder, overrideWorkOrderPriority } from "../../lib/workOrders";
-import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority } from "../../lib/constants";
+import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canSeeVerification } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
 import { slaStages } from "../../lib/slaStages";
@@ -632,6 +632,7 @@ function DeleteDialog({ wo, onClose, onDeleted }) {
 }
 
 function OverviewTab({ wo }) {
+  const { user } = useAuth();
   const { departmentName, plantName, impactLabel, typeLabel, slaForPriority } = useReferenceData();
   const sla = wo.priority ? slaForPriority(wo.priority) : null;
   const stages = slaStages(wo, sla);
@@ -765,6 +766,25 @@ function OverviewTab({ wo }) {
           <div className="mt-4 pt-4 border-t border-border">
             <div className="text-[12px] font-bold text-good-text mb-1.5">Resolution notes</div>
             <div className="text-[13px] text-ink leading-relaxed">{wo.resolution_notes}</div>
+          </div>
+        )}
+        {/* Sign-off, for a Head of Department and nobody else (migration 0059).
+            Rendered from the row's own columns rather than from the trail, so
+            it answers "has this been checked" at a glance without reading the
+            timeline — which is the question an HOD opens a completed work order
+            to ask. Hidden rather than withheld: see canSeeVerification(). */}
+        {canSeeVerification(user) && wo.status === "completed" && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <div className="text-[12px] font-bold text-ink-soft mb-1.5">Verification</div>
+            {wo.verified_at ? (
+              <div className="text-[13px] text-good-text leading-relaxed">
+                Verified {fmtDateTimeMY(wo.verified_at)}.
+              </div>
+            ) : (
+              <div className="text-[13px] text-ink leading-relaxed">
+                Not verified yet — it is not counted in the dashboard until it is.
+              </div>
+            )}
           </div>
         )}
       </div>
