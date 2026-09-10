@@ -822,3 +822,79 @@ export async function reopenWorkOrder(woId, actor, reason) {
     remarks: `Sent back for rework: ${reason}`,
   });
 }
+
+/* ------------------------------------------------------------------
+   PLANT REASSIGNMENT — Superuser only, and only the plant.
+
+   Every work order raised before migration 0049 says PLT001, because there was
+   one plant and createWorkOrder() hardcoded it. That is honest history rather
+   than corrupt data, but PLT001 is retired now and four real sites are not
+   represented in any of it.
+
+   There is deliberately no rule that repairs this automatically. A department
+   here may span more than one plant, so deriving the plant from the department
+   name would write a confident wrong answer into rows nobody would re-check —
+   and departments.plant_id is itself 'PLT001' for every row, because
+   createDepartment() defaults it and the raise form passes no plant. So each of
+   these is a judgement a person makes, one at a time, and migration 0064 ships
+   the authority rather than the answers.
+--------------------------------------------------------------------*/
+
+/** The columns the repair screen needs, and nothing else. */
+const WO_PLANT_SELECT =
+  "id, wo_number, created_at, status, plant_id, department_id, asset_id, asset_name, requester_name";
+
+/**
+ * Work orders currently sitting on one plant, newest first.
+ *
+ * Not scopedWorkOrderQuery(): that one answers "what may this account see",
+ * which is the wrong question here. This screen is Superuser-only and its whole
+ * subject is the rows a plant filter would otherwise hide, so it asks the plant
+ * directly and lets RLS be the only narrowing.
+ */
+export function listenWorkOrdersOnPlant(plantId, cb, onError) {
+  const run = () =>
+    supabase
+      .from("work_orders")
+      .select(WO_PLANT_SELECT)
+      .eq("plant_id", plantId)
+      .order("created_at", { ascending: false })
+      .limit(1000);
+  return liveQuery({ table: "work_orders", run, cb, onError });
+}
+
+/**
+ * Move work orders to a plant. The plant, and nothing else.
+ *
+ * `status` is deliberately absent, unlike updateWorkOrderFields() which pins it
+ * to 'open' for the matrix's open -> open row. A reassignment must not move the
+ * phase: the status-unchanged early returns in si_stamp_work_order and
+ * si_notify_work_order_update are what keep a records fix from stamping
+ * timestamps or notifying anybody, and naming `status` here would defeat both.
+ * Same omission-as-mechanism as migration 0051's re-grade.
+ *
+ * RLS and the 0064 guard both refuse silently — a filtered UPDATE matches zero
+ * rows and raises nothing — so what came back is checked rather than assumed,
+ * the shape deleteWorkOrder() uses. A guard refusal DOES raise, and
+ * describeError() surfaces its sentence verbatim.
+ */
+export async function setWorkOrderPlant(woIds, plantId) {
+  const ids = (Array.isArray(woIds) ? woIds : [woIds]).filter(Boolean);
+  if (!ids.length) throw new Error("Pick at least one work order.");
+  if (!plantId) throw new Error("Pick a plant to move them to.");
+
+  const { data, error } = await supabase
+    .from("work_orders")
+    .update({ plant_id: plantId })
+    .in("id", ids)
+    .select("id");
+
+  if (error) throw error;
+  if ((data?.length ?? 0) !== ids.length) {
+    throw new Error(
+      `Moved ${data?.length ?? 0} of ${ids.length}. The rest were refused — only a ` +
+        "Superuser can change the plant of a work order that has left Open."
+    );
+  }
+  return data.length;
+}

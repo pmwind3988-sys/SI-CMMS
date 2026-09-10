@@ -69,6 +69,7 @@ import {
   canRetireReferenceData,
   canRemoveReferenceRow,
   canSeePlatformUsage,
+  canReassignWorkOrderPlant,
 } from "../../lib/constants";
 import { ALL_ROLES, ROLE_LABELS } from "../../lib/roles";
 import Button from "../ui/Button";
@@ -76,6 +77,7 @@ import Field, { inputClass } from "../ui/Field";
 import { Card, ErrorBanner, Toast, ModalOverlay } from "../ui/Surfaces";
 import { usePaged, useAutoPageSize, PagerFooter } from "../ui/Paged";
 import StorageUsagePanel from "./StorageUsagePanel";
+import PlantAssignmentPanel from "./PlantAssignmentPanel";
 
 /* `superuserOnly` is a display narrowing and nothing more. si_storage_usage()
    re-checks the caller in its own body (migration 0053), which is what actually
@@ -92,7 +94,8 @@ const TABS = [
   { key: "departments", label: "Departments" },
   { key: "assets", label: "Equipment" },
   { key: "permissions", label: "Permissions" },
-  { key: "storage", label: "Storage", superuserOnly: true },
+  { key: "plant-assignment", label: "Plant assignment", gate: canReassignWorkOrderPlant },
+  { key: "storage", label: "Storage", gate: canSeePlatformUsage },
 ];
 
 export default function SettingsAdmin() {
@@ -101,15 +104,17 @@ export default function SettingsAdmin() {
   const [tab, setTab] = useState("statuses");
   const tabStripRef = useRef(null);
 
-  /* Storage is a Superuser's tab. Filtering the list here rather than hiding one
-     button keeps the arrow-key ring and the Home/End ends correct — a button left
-     in TABS and merely styled away is still a stop in the keyboard order and
-     still selectable, which would land an Administrator on a panel whose only
-     possible content is a refusal. */
-  const tabs = useMemo(
-    () => TABS.filter((t) => !t.superuserOnly || canSeePlatformUsage(me)),
-    [me]
-  );
+  /* Storage and Plant assignment are a Superuser's tabs. Filtering the list here
+     rather than hiding one button keeps the arrow-key ring and the Home/End ends
+     correct — a button left in TABS and merely styled away is still a stop in the
+     keyboard order and still selectable, which would land an Administrator on a
+     panel whose only possible content is a refusal.
+
+     Each tab carries its OWN predicate rather than one shared superuserOnly flag.
+     Both currently read the same `isSuperuser`, and that is exactly why: a single
+     flag would make the two tabs move together the day either one's rule changes,
+     silently granting or withdrawing the other. */
+  const tabs = useMemo(() => TABS.filter((t) => !t.gate || t.gate(me)), [me]);
 
   /* The selected tab can sit off-screen on a phone — nine of them need about
      900px — so it is scrolled back into view whenever it changes. */
@@ -539,6 +544,13 @@ export default function SettingsAdmin() {
       {/* Deliberately not behind `ref.ready`: this panel reads no reference
           data, so waiting on the provider would leave it showing "Loading
           settings…" for a load it does not depend on. */}
+      {/* Like Storage, deliberately not behind `ref.ready`: it subscribes to
+          work orders itself and only uses reference data to put names to ids,
+          which resolve on their own the moment the provider arrives. */}
+      {tab === "plant-assignment" && canReassignWorkOrderPlant(me) && (
+        <PlantAssignmentPanel onFlash={flash} onError={(e) => fail(e, "Could not move those work orders.")} />
+      )}
+
       {tab === "storage" && canSeePlatformUsage(me) && <StorageUsagePanel />}
     </div>
   );

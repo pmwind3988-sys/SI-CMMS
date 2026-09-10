@@ -482,3 +482,20 @@ export const QUOTA_THRESHOLDS = { warn: 0.7, critical: 0.9 };
 export function canSeePlatformUsage(currentUser) {
   return currentUser?.isSuperuser === true;
 }
+
+/**
+ * May this account move a work order to a different plant?
+ *
+ * Superuser only, and stated separately from canSeePlatformUsage() despite
+ * testing the same flag: they answer different questions, and folding them
+ * together would make one predicate mean two things the day either changes.
+ *
+ * This decides what to SHOW. si_guard_work_order_plant (migration 0064) is what
+ * is ALLOWED, and it exempts a work order still at `open` — that one is being
+ * edited rather than reassigned, and the raise form's plant picker is the
+ * control for it. So the two are deliberately not mirror images: this predicate
+ * gates a repair screen, not the edit form.
+ */
+export function canReassignWorkOrderPlant(currentUser) {
+  return currentUser?.isSuperuser === true;
+}

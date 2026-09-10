@@ -672,6 +672,77 @@ site with no equipment registered yet is a valid starting state; a database with
 is not, so an empty `plants` means the same thing an empty `priorities` does — the fetch ran
 unauthenticated.
 
+### Only a Superuser moves a work order's plant (migration 0064)
+
+**Every work order raised before 0049 says `PLT001`, and that is honest rather than
+wrong.** There was one plant, `createWorkOrder()` hardcoded it, and 0049's backfill said
+so deliberately. It stopped being *useful* the moment there were four sites and PLT001 was
+retired: a filter, a chart or an export grouped by plant puts the whole history in a bucket
+that names nowhere.
+
+**There is deliberately no backfill, and the rule that was rejected is the point.** Reading
+the plant off the department — "Production F1" is at F1 — was designed and then dropped,
+because a department here may span more than one plant. It would have written a confident
+wrong answer into rows nobody would ever re-check, and a wrong plant is worse than the
+PLT001 it replaced, which at least reads as "from before we had plants".
+`departments.plant_id` cannot stand in either: `createDepartment()` writes `'PLT001'` for
+every department ever added and the raise form passes no plant, so that column holds no
+information at all. So this migration ships the **authority** to make each judgement rather
+than the answers, and Admin → Settings → **Plant assignment** is where they are made.
+
+**`work_orders_update` could not be narrowed and a screen alone would have decided
+nothing.** Every transition and every edit needs that policy, and 0003's transition guard
+returns early for `admin` — so before 0064 *any* Administrator could PATCH `plant_id` on
+any work order straight at PostgREST. A Superuser-only screen in front of that is exactly
+the failure 0026 and 0031 both describe: a control that guards something reachable around
+it. `si_guard_work_order_plant` (BEFORE UPDATE) is the boundary.
+
+The write itself stays an ordinary RLS-enforced UPDATE, the way `deleteWorkOrder()` is. No
+RPC, because nothing bypasses RLS and so nothing has to be restated inside a SECURITY
+DEFINER body — the shape 0037 and 0043 needed, and this does not.
+
+Four things there are load-bearing:
+
+- **A work order at `open` is exempt, and has to be.** `WorkOrderDetail` gates Edit on
+  `status === "open"` and the raise form doubles as the edit form, plant picker included.
+  Refusing that would break correcting a plant chosen thirty seconds ago — the one case
+  where the person who raised it knows best. So the client predicate and the guard are
+  deliberately **not** mirror images: `canReassignWorkOrderPlant()` gates a repair screen,
+  not the edit form.
+- **`old.status`, not `new.status`.** An edit moves no status, and reading NEW would let a
+  transition out of `open` carry a plant change along with it.
+- **`is not distinct from`, not `=`.** `plant_id` was nullable until 0049, and
+  `null = null` is NULL rather than true — so the plain comparison falls through to the
+  refusal on rows this guard should ignore. Same reason 0052 uses it on the assignee.
+- **The trigger is `a0000_`** so it fires ahead of `a000_` (0051's override guard), `a00_`
+  (0036's derivation) and `a0_` (0031's retired-reference guard): a refusal about who you
+  are should arrive before one about what you picked. Every digit sorts below `_` in ASCII,
+  the same fact that stops a migration being numbered between two existing ones.
+
+**Only the plant moves, and the silence is free.** `setWorkOrderPlant()` names one column
+and does *not* pin `status` the way `updateWorkOrderFields()` does. Because the status is
+unchanged, `si_stamp_work_order` and `si_notify_work_order_update` both hit their opening
+early return, so a records fix stamps no timestamps, writes no history row and notifies
+nobody — omission as the mechanism, exactly as 0051 uses it. That is deliberate: a
+correction to what a record says about itself is not an event in the work order's life.
+
+RLS and the guard refuse differently and both are handled: a filtered UPDATE matches zero
+rows and raises nothing, so `setWorkOrderPlant()` counts what came back against what it
+asked for, the shape `deleteWorkOrder()` uses; a guard refusal *does* raise, and
+`describeError()` surfaces its sentence verbatim.
+
+On the screen, **nothing is ever pre-selected.** The department filter and the bulk apply
+exist because a Superuser will often see at a glance that these eleven are all F3 — not
+because the department implies the plant. A checkbox ticked on their behalf would smuggle
+the rejected rule back in wearing a suggestion's clothes. Rows already on a real plant can
+be listed too, because a repair screen that only shows the unrepaired makes the first
+mis-assignment permanent and invisible.
+
+`SettingsAdmin`'s tabs now each carry **their own predicate** rather than one shared
+`superuserOnly` flag. Both currently read the same `isSuperuser`, and that is precisely
+why: one flag would make Storage and Plant assignment move together the day either rule
+changes, silently granting or withdrawing the other.
+
 ### P7, and an SLA whose stages start when the last one finished (0048, 0050)
 
 **P7 is a long-term task**: planned work with no immediate production impact, measured in days.
@@ -2188,6 +2259,19 @@ has happened on this project, and is what 0013 exists to fix.
 
 ## Known gaps
 
+- **`departments.plant_id` holds no information.** `createDepartment()` defaults it to
+  `'PLT001'` and the raise form passes no plant, so every department on both projects —
+  including the ones that clearly belong to one site — points at the retired plant. Worse
+  than stale: a department here may span several plants, so the column may be the wrong
+  *shape* rather than merely unfilled. Nothing reads it, which is why it has cost nothing so
+  far; it is also why 0064 could not use it. Deciding whether it becomes a set, or goes, is
+  its own pass.
+- **Repairing the pre-0049 plants is manual and unfinished until somebody does it.** 0064
+  ships the screen and the authority, not the answers, so until a Superuser works through
+  Admin → Settings → Plant assignment every work order raised before 0049 still reports as
+  Main Plant in the list, the filters and the export. That is the intended trade — see the
+  0064 section for why a derived backfill was rejected — but it means the plant column is
+  trustworthy only for work orders raised after 0049 plus whatever has been repaired by hand.
 - **The fixtures live on the test project only, and nothing hides them there any more.**
   Migration 0046 deleted the five on production; the six on test survive it, because 0028
   never marked them and 0046 keys on that mark. With 0047 applied they are ordinary
