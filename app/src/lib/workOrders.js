@@ -742,6 +742,25 @@ export async function overrideWorkOrderPriority(woId, priority, reason) {
 }
 
 /**
+ * Superuser fix for a work order abandoned mid-work (migration 0065).
+ *
+ * Forces it to completed, backdates the completion to `completedAt`, recomputes
+ * the SLA breach against that time, writes the timeline and an audit row, and
+ * refreshes the dashboard — all server-side, in one transaction. `completedAt`
+ * is an ISO string (or a Date). The server re-checks Superuser, the reason floor
+ * and the correctable status in its own body, so a disagreement with the client
+ * predicate surfaces as an error rather than a silent success.
+ */
+export async function correctWorkOrderTimeline(woId, completedAt, reason) {
+  const { error } = await supabase.rpc("si_correct_work_order_timeline", {
+    p_work_order_id: woId,
+    p_completed_at: completedAt instanceof Date ? completedAt.toISOString() : completedAt,
+    p_reason: reason,
+  });
+  if (error) throw error;
+}
+
+/**
  * matrix: accepted -> repairing
  *
  * Migration 0039 removed `on_the_way` and `on_site`, so the technician goes from

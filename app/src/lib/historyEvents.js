@@ -40,6 +40,9 @@ const EVENT_LABELS = {
   photo_replaced: "Photo replaced",
   priority_override: "Priority changed",
   verified: "Verified",
+  // Migration 0065 — a Superuser forced a stuck work order to completed and
+  // backdated its completion time.
+  timeline_correction: "Timeline corrected",
 };
 
 /**

@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Download, AlertTriangle, Loader2 } from "lucide-react";
+import { Plus, Search, Download, AlertTriangle, Loader2, SlidersHorizontal, X } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrderList, fetchWorkOrdersForExport } from "../../lib/workOrders";
-import { fmtDue, slaRemainMs } from "../../lib/constants";
+import { fmtDue, slaRemainMs, slaWindowMs } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import {
   DATE_PRESETS,
@@ -62,10 +62,40 @@ const DISPLAY_LIMIT = 300;
  */
 const Spinner = () => <Loader2 size={14} className="animate-spin" />;
 
+/**
+ * Which SLA band a work order is in, for the advanced SLA filter. The thresholds
+ * mirror the list's own SLA cell and si_sla_warning_sweep()'s 25%-of-window
+ * warning point, so "At risk" here means exactly what the amber countdown means.
+ *
+ *   overdue   deadline passed
+ *   at_risk   under a quarter of the window left
+ *   on_track  more than a quarter left
+ *   none      no deadline running (a P7 not yet started, or a closed job)
+ */
+function slaState(w) {
+  const remain = slaRemainMs(w);
+  if (remain == null) return "none";
+  if (remain < 0) return "overdue";
+  const window = slaWindowMs(w);
+  if (window && remain < window * 0.25) return "at_risk";
+  return "on_track";
+}
+
+const SLA_STATES = [
+  ["overdue", "Overdue"],
+  ["at_risk", "At risk"],
+  ["on_track", "On track"],
+  ["none", "No deadline"],
+];
+
 export default function WorkOrderList() {
   const { user } = useAuth();
   const reference = useReferenceData();
-  const { priorities, statuses } = reference;
+  // activeStatuses, not statuses: the filter must not offer a status a work
+  // order can no longer be in. wo_statuses still carries the retired rungs
+  // (on_the_way, on_site, verified) so old records keep their label, but a live
+  // filter listing them lets you pick a status that returns nothing.
+  const { priorities, activeStatuses, activeDepartments, activePlants } = reference;
   const router = useRouter();
   const [workOrders, setWorkOrders] = useState(null);
   const [error, setError] = useState(null);
@@ -73,6 +103,17 @@ export default function WorkOrderList() {
   const [fStatus, setFStatus] = useState("All");
   const [q, setQ] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+
+  /* Advanced filters — hidden behind a toggle, closed by default, one control
+     per column the always-visible row does not already cover (department,
+     plant, assignee, SLA band). They filter the loaded rows exactly like the
+     primary controls, so Export stays in step. "All" means the column is not
+     narrowing. */
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [fDepartment, setFDepartment] = useState("All");
+  const [fPlant, setFPlant] = useState("All");
+  const [fAssignee, setFAssignee] = useState("All"); // "All" | "unassigned" | assigned_to_id
+  const [fSla, setFSla] = useState("All");
 
   // Date filtering. The preset is the control; `custom` reveals the two inputs.
   const [preset, setPreset] = useState("all");
@@ -123,6 +164,15 @@ export default function WorkOrderList() {
     (w) => {
       if (fPriority !== "All" && w.priority !== fPriority) return false;
       if (fStatus !== "All" && w.status !== fStatus) return false;
+      // Advanced filters — each "All" is a no-op, so a closed panel changes
+      // nothing.
+      if (fDepartment !== "All" && w.department_id !== fDepartment) return false;
+      if (fPlant !== "All" && w.plant_id !== fPlant) return false;
+      if (fAssignee !== "All") {
+        if (fAssignee === "unassigned" ? w.assigned_to_id != null : w.assigned_to_id !== fAssignee)
+          return false;
+      }
+      if (fSla !== "All" && slaState(w) !== fSla) return false;
       if (q) {
         const needle = q.toLowerCase();
         // area joins WO# and equipment rather than getting its own filter: it is
@@ -133,7 +183,7 @@ export default function WorkOrderList() {
       }
       return true;
     },
-    [fPriority, fStatus, q]
+    [fPriority, fStatus, fDepartment, fPlant, fAssignee, fSla, q]
   );
 
   const filtered = useMemo(() => (workOrders ? workOrders.filter(matches) : []), [workOrders, matches]);
@@ -148,20 +198,46 @@ export default function WorkOrderList() {
      25-at-a-time on a monitor and a handful at a time on a phone. */
   const tableRef = useRef(null);
   const cardsRef = useRef(null);
-  /* min 4, requested deliberately over the measured floor. A page of two work
-     orders reads as broken however well it fits, so four is the floor even
-     where four do not fit: on a phone the title, the triage banner and the four
+  /* min 5, requested deliberately over the measured floor. A page of two work
+     orders reads as broken however well it fits, so five is the floor even
+     where five do not fit: on a phone the title, the triage banner and the
      filter controls take about 300px before the list starts and a card is
      ~185px, so the last card or two on a short screen is reached by scrolling
      rather than by pressing 2. That is the accepted trade - the alternative was
      a page nobody believed was a page. Desktop is unaffected; the table already
-     measures well above four. */
-  const pageSize = useAutoPageSize([tableRef, cardsRef], { min: 4, ready: !!workOrders, signature: filtered.length });
+     measures well above five. */
+  const pageSize = useAutoPageSize([tableRef, cardsRef], { min: 5, ready: !!workOrders, signature: filtered.length });
 
   const pager = usePaged(filtered, {
     pageSize,
-    resetKey: `${fPriority}|${fStatus}|${rangeKey}|${q}`,
+    resetKey: `${fPriority}|${fStatus}|${fDepartment}|${fPlant}|${fAssignee}|${fSla}|${rangeKey}|${q}`,
   });
+
+  /* The assignees actually present in the loaded rows, for the advanced
+     assignee filter — built from the rows themselves rather than the whole user
+     roster, so the dropdown only offers people who appear on screen. */
+  const assigneeOptions = useMemo(() => {
+    const seen = new Map();
+    for (const w of workOrders || []) {
+      if (w.assigned_to_id && !seen.has(w.assigned_to_id)) {
+        seen.set(w.assigned_to_id, w.assigned_to_name || w.assigned_to_id);
+      }
+    }
+    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [workOrders]);
+
+  const advancedActive =
+    (fDepartment !== "All" ? 1 : 0) +
+    (fPlant !== "All" ? 1 : 0) +
+    (fAssignee !== "All" ? 1 : 0) +
+    (fSla !== "All" ? 1 : 0);
+
+  function clearAdvanced() {
+    setFDepartment("All");
+    setFPlant("All");
+    setFAssignee("All");
+    setFSla("All");
+  }
 
   const needsAssignment = (workOrders || []).filter((w) => w.status === "open").length;
   // Assigned to THIS person, not merely assigned. A Supervisor+Technician sees
@@ -177,10 +253,22 @@ export default function WorkOrderList() {
     const bits = [];
     if (fStatus !== "All") bits.push(`Status: ${reference.statusLabel(fStatus)}`);
     if (fPriority !== "All") bits.push(`Priority: ${fPriority}`);
+    if (fDepartment !== "All") bits.push(`Department: ${reference.departmentName(fDepartment)}`);
+    if (fPlant !== "All") bits.push(`Plant: ${reference.plantName(fPlant)}`);
+    if (fAssignee !== "All") {
+      bits.push(
+        `Assignee: ${
+          fAssignee === "unassigned"
+            ? "Unassigned"
+            : assigneeOptions.find(([id]) => id === fAssignee)?.[1] || fAssignee
+        }`
+      );
+    }
+    if (fSla !== "All") bits.push(`SLA: ${SLA_STATES.find(([k]) => k === fSla)?.[1] || fSla}`);
     if (q) bits.push(`Search: "${q}"`);
     return bits.length ? bits.join(" · ") : "None";
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fStatus, fPriority, q, reference.ready]);
+  }, [fStatus, fPriority, fDepartment, fPlant, fAssignee, fSla, q, assigneeOptions, reference.ready]);
 
   async function handleExport() {
     setExporting(true);
@@ -313,7 +401,7 @@ export default function WorkOrderList() {
           className={`${inputClass} min-w-0 sm:w-52`}
         >
           <option value="All">Status: All</option>
-          {statuses.map((s) => (
+          {activeStatuses.map((s) => (
             <option key={s.code} value={s.code}>
               {s.label}
             </option>
@@ -355,16 +443,108 @@ export default function WorkOrderList() {
         )}
 
         <Button
+          variant={showAdvanced || advancedActive ? "subtle" : "ghost"}
+          size="sm"
+          icon={SlidersHorizontal}
+          onClick={() => setShowAdvanced((v) => !v)}
+          aria-expanded={showAdvanced}
+          className="col-span-1 justify-center whitespace-nowrap"
+        >
+          Filters{advancedActive ? ` · ${advancedActive}` : ""}
+        </Button>
+
+        <Button
           variant="ghost"
           size="sm"
           icon={exporting ? Spinner : Download}
           onClick={handleExport}
           disabled={exporting || !workOrders}
-          className="col-span-2 justify-center sm:col-span-1"
+          className="col-span-1 justify-center sm:col-span-1"
         >
           {exporting ? "Building…" : "Export"}
         </Button>
       </div>
+
+      {/* The advanced panel — one control per column not already in the row
+          above. Hidden by default; it always states its own active count on the
+          toggle so a narrowed list is never a mystery. */}
+      {showAdvanced && (
+        <div className="mb-3.5 rounded border border-border bg-canvas p-3">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
+              Department
+              <select
+                value={fDepartment}
+                onChange={(e) => setFDepartment(e.target.value)}
+                className={`${inputClass} font-normal`}
+              >
+                <option value="All">All</option>
+                {activeDepartments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
+              Plant
+              <select
+                value={fPlant}
+                onChange={(e) => setFPlant(e.target.value)}
+                className={`${inputClass} font-normal`}
+              >
+                <option value="All">All</option>
+                {activePlants.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
+              Assignee
+              <select
+                value={fAssignee}
+                onChange={(e) => setFAssignee(e.target.value)}
+                className={`${inputClass} font-normal`}
+              >
+                <option value="All">All</option>
+                <option value="unassigned">Unassigned</option>
+                {assigneeOptions.map(([id, name]) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
+              SLA
+              <select
+                value={fSla}
+                onChange={(e) => setFSla(e.target.value)}
+                className={`${inputClass} font-normal`}
+              >
+                <option value="All">All</option>
+                {SLA_STATES.map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {advancedActive > 0 && (
+            <div className="mt-2.5 flex justify-end">
+              <button
+                onClick={clearAdvanced}
+                className="inline-flex items-center gap-1 text-[12px] font-semibold text-ink-soft hover:text-ink"
+              >
+                <X size={13} /> Clear advanced filters
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {exportNote && (
         <div

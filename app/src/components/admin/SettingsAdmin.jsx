@@ -787,7 +787,7 @@ function EditableTable({
   const liveRef = useRef(null);
   /* No reserve for the retired block below: the hook measures what is under the
      list rather than being told about it. */
-  const liveSize = useAutoPageSize(liveRef, { min: 3, signature: rows.length });
+  const liveSize = useAutoPageSize(liveRef, { min: 5, signature: rows.length });
 
   const livePager = usePaged(liveRows, { pageSize: liveSize, resetKey: `live|${rowKey}|${retireTable ?? ""}` });
   const retiredPager = usePaged(retiredRows, { pageSize: 10, resetKey: `retired|${rowKey}|${retireTable ?? ""}` });

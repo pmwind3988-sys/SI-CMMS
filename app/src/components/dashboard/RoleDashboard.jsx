@@ -291,7 +291,7 @@ export default function RoleDashboard({ viewRole }) {
   /* Capped at 10 however tall the screen is: this strip has the stat cards above
      it and the Recent list below, so filling the viewport with it would push the
      rest of the dashboard off the bottom. */
-  const needsMeSize = useAutoPageSize(needsMeRef, { min: 3, max: 10, ready: !loading, signature: stats.needsMe.length });
+  const needsMeSize = useAutoPageSize(needsMeRef, { min: 5, max: 10, ready: !loading, signature: stats.needsMe.length });
 
   const needsMePager = usePaged(stats.needsMe, { pageSize: needsMeSize, resetKey: view });
 

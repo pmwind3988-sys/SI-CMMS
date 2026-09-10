@@ -214,6 +214,26 @@ export function canOverridePriority(wo, currentUser) {
   return hasRole(currentUser, ROLES.ADMIN);
 }
 
+/** The "work underway" statuses a stuck work order can be corrected from. Mirrors
+ *  the status check in si_correct_work_order_timeline (migration 0065). */
+export const TIMELINE_CORRECTABLE_STATUSES = ["repairing", "waiting_spare_part", "testing"];
+
+/**
+ * May this account force a stuck work order to completed and correct its
+ * timeline? Superuser only, and only while it is under way (migration 0065).
+ *
+ * This is the impromptu fix for a job abandoned mid-work — a technician who did
+ * not know how to finish a `testing` job and let it breach. It decides what to
+ * SHOW; si_correct_work_order_timeline re-checks Superuser, the reason floor and
+ * the status in its own body, so a disagreement is an error, not a silent
+ * success.
+ */
+export function canCorrectWorkOrderTimeline(wo, currentUser) {
+  if (!wo || !currentUser) return false;
+  if (currentUser.isSuperuser !== true) return false;
+  return TIMELINE_CORRECTABLE_STATUSES.includes(wo.status);
+}
+
 /**
  * May this account delete work orders at all?
  *

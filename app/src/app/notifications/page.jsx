@@ -74,7 +74,7 @@ function NotificationsInner() {
      `read` - every loaded row, not the page on screen. A button whose meaning
      changed with how far you had paged would be the worse bug. */
   const listRef = useRef(null);
-  const pageSize = useAutoPageSize(listRef, { min: 3, ready: !!items, signature: filtered.length });
+  const pageSize = useAutoPageSize(listRef, { min: 5, ready: !!items, signature: filtered.length });
 
   const pager = usePaged(filtered, { pageSize, resetKey: filter });
   const sourcesPresent = SOURCE_ORDER.filter((k) => (items || []).some((n) => notificationSource(n) === k));

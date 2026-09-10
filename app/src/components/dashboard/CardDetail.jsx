@@ -62,7 +62,7 @@ export default function CardDetail({
      is capped at 88dvh, so the viewport is the wrong ruler. `reserve` is small
      because the footnote strip is the only thing under the rows. */
   const listRef = useRef(null);
-  const pageSize = useAutoPageSize(listRef, { min: 3, ready: !loading && !error, signature: list.length });
+  const pageSize = useAutoPageSize(listRef, { min: 5, ready: !loading && !error, signature: list.length });
 
   const pager = usePaged(list, { pageSize, resetKey: title });
 

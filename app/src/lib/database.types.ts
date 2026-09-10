@@ -1135,6 +1135,12 @@ export type Database = {
           spare_part_reason: string | null
           status: Database["public"]["Enums"]["si_wo_status"]
           test_fail_reason: string | null
+          timeline_corrected_at: string | null
+          timeline_corrected_by: string | null
+          timeline_correction_reason: string | null
+          timeline_original_status:
+            | Database["public"]["Enums"]["si_wo_status"]
+            | null
           type: Database["public"]["Enums"]["si_wo_type"] | null
           updated_at: string
           verification_notes: string | null
@@ -1180,6 +1186,12 @@ export type Database = {
           spare_part_reason?: string | null
           status?: Database["public"]["Enums"]["si_wo_status"]
           test_fail_reason?: string | null
+          timeline_corrected_at?: string | null
+          timeline_corrected_by?: string | null
+          timeline_correction_reason?: string | null
+          timeline_original_status?:
+            | Database["public"]["Enums"]["si_wo_status"]
+            | null
           type?: Database["public"]["Enums"]["si_wo_type"] | null
           updated_at?: string
           verification_notes?: string | null
@@ -1225,6 +1237,12 @@ export type Database = {
           spare_part_reason?: string | null
           status?: Database["public"]["Enums"]["si_wo_status"]
           test_fail_reason?: string | null
+          timeline_corrected_at?: string | null
+          timeline_corrected_by?: string | null
+          timeline_correction_reason?: string | null
+          timeline_original_status?:
+            | Database["public"]["Enums"]["si_wo_status"]
+            | null
           type?: Database["public"]["Enums"]["si_wo_type"] | null
           updated_at?: string
           verification_notes?: string | null
@@ -1294,6 +1312,14 @@ export type Database = {
       si_caller_rank: { Args: never; Returns: number }
       si_can_delete_work_orders: { Args: never; Returns: boolean }
       si_compute_dashboard_stats: { Args: never; Returns: undefined }
+      si_correct_work_order_timeline: {
+        Args: {
+          p_completed_at: string
+          p_reason: string
+          p_work_order_id: string
+        }
+        Returns: undefined
+      }
       si_dashboard_card_rows: {
         Args: { p_card: string; p_limit?: number }
         Returns: {
@@ -1417,6 +1443,7 @@ export type Database = {
       }
       si_sla_warning_sweep: { Args: never; Returns: number }
       si_sweep_login_attempts: { Args: never; Returns: undefined }
+      si_timeline_correction: { Args: never; Returns: boolean }
       si_terminal_statuses: {
         Args: never
         Returns: Database["public"]["Enums"]["si_wo_status"][]
@@ -1467,6 +1494,12 @@ export type Database = {
           spare_part_reason: string | null
           status: Database["public"]["Enums"]["si_wo_status"]
           test_fail_reason: string | null
+          timeline_corrected_at: string | null
+          timeline_corrected_by: string | null
+          timeline_correction_reason: string | null
+          timeline_original_status:
+            | Database["public"]["Enums"]["si_wo_status"]
+            | null
           type: Database["public"]["Enums"]["si_wo_type"] | null
           updated_at: string
           verification_notes: string | null

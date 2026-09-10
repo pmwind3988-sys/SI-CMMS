@@ -110,7 +110,7 @@ export function usePaged(rows, { pageSize = PAGE_SIZE, resetKey = "" } = {}) {
  * late-arriving data is re-measured) - never in response to its own result, so
  * there is no loop between "fewer rows" and "more room".
  */
-export function useAutoPageSize(refs, { min = 3, max = PAGE_SIZE, reserve = 16, ready = true, signature = 0 } = {}) {
+export function useAutoPageSize(refs, { min = 5, max = PAGE_SIZE, reserve = 16, ready = true, signature = 0 } = {}) {
   const [size, setSize] = useState(max);
   const list = Array.isArray(refs) ? refs : [refs];
 

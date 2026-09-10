@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle, ArrowUpDown, UserCircle2 } from "lucide-react";
+import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle, ArrowUpDown, UserCircle2, History } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import { listenWorkOrder, deleteWorkOrder, overrideWorkOrderPriority } from "../../lib/workOrders";
-import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canSeeVerification } from "../../lib/constants";
+import { listenWorkOrder, deleteWorkOrder, overrideWorkOrderPriority, correctWorkOrderTimeline } from "../../lib/workOrders";
+import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canCorrectWorkOrderTimeline, canSeeVerification } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
 import { slaStages } from "../../lib/slaStages";
@@ -43,6 +43,7 @@ export default function WorkOrderDetail({ woId }) {
   const [tab, setTab] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [changingPriority, setChangingPriority] = useState(false);
+  const [correctingTimeline, setCorrectingTimeline] = useState(false);
   /* Reported up from CommentsPanel, which owns the two listeners the count is
      derived from. Lifting them here instead would open the same subscriptions a
      level higher and make the tab strip responsible for merging comments with
@@ -140,6 +141,10 @@ export default function WorkOrderDetail({ woId }) {
   // Administrator only, and only while the work order is live — the same two
   // tests si_override_work_order_priority makes in its own body (0051).
   const showPriority = canOverridePriority(wo, user);
+  // Superuser only, and only while the work order is under way — the impromptu
+  // fix for a job abandoned mid-work (migration 0065). Same two tests
+  // si_correct_work_order_timeline makes in its own body.
+  const showTimelineFix = canCorrectWorkOrderTimeline(wo, user);
 
   return (
     <div className="max-w-5xl">
@@ -165,6 +170,11 @@ export default function WorkOrderDetail({ woId }) {
           {showPriority && (
             <Button variant="ghost" icon={ArrowUpDown} onClick={() => setChangingPriority(true)}>
               Change priority
+            </Button>
+          )}
+          {showTimelineFix && (
+            <Button variant="ghost" icon={History} onClick={() => setCorrectingTimeline(true)}>
+              Correct timeline
             </Button>
           )}
           {showDelete && (
@@ -330,6 +340,10 @@ export default function WorkOrderDetail({ woId }) {
 
       {changingPriority && (
         <PriorityDialog wo={wo} onClose={() => setChangingPriority(false)} />
+      )}
+
+      {correctingTimeline && (
+        <TimelineCorrectionDialog wo={wo} onClose={() => setCorrectingTimeline(false)} />
       )}
 
       {confirmingDelete && (
@@ -539,6 +553,149 @@ function PriorityDialog({ wo, onClose }) {
               disabled={busy || !reasonOk || unchanged || !selected}
             >
               {busy ? "Changing…" : "Change priority"}
+            </Button>
+          </div>
+        </form>
+      </Card>
+    </ModalOverlay>
+  );
+}
+
+/** An ISO instant as a `YYYY-MM-DDTHH:mm` string for a datetime-local input, in
+ *  the browser's own timezone — which on a plant device is Kuala Lumpur. */
+function toLocalInput(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(
+    d.getMinutes()
+  )}`;
+}
+
+/**
+ * Superuser fix for a work order abandoned mid-work (migration 0065).
+ *
+ * The scenario this exists for: a technician who did not know how to finish a
+ * job in `testing` left it there and let its SLA breach. This forces it to
+ * completed and lets the Superuser set the time it was ACTUALLY finished, so the
+ * breach and the timeline re-settle honestly.
+ *
+ * Three things shape the dialog:
+ *
+ *  - **The completion time defaults to when work started**, not to now. "The
+ *    time it was set to testing" is what the fault report's timeline actually
+ *    reflects, so `responded_at` (work under way) is the sensible starting point
+ *    and the Superuser adjusts from there. The floor is the same value — you
+ *    cannot complete a job before the work on it began — and the ceiling is now.
+ *  - **The SLA consequence is named before the change.** The breach is
+ *    recomputed against the chosen time, so an overdue flag clearing is the
+ *    whole point rather than a surprise.
+ *  - **The reason is a required field**, stored on the work order and written to
+ *    the timeline, matching the priority re-grade. The ten-character floor is
+ *    the server's, restated so the button is disabled rather than the submit
+ *    refused.
+ */
+function TimelineCorrectionDialog({ wo, onClose }) {
+  const started = wo.responded_at || wo.acknowledged_at || wo.created_at;
+  const [completedAt, setCompletedAt] = useState(toLocalInput(started));
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const nowLocal = toLocalInput(new Date());
+  const startedLocal = toLocalInput(started);
+  const reasonOk = reason.trim().length >= 10;
+  const inRange = completedAt >= startedLocal && completedAt <= nowLocal;
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!reasonOk || !inRange) return;
+    setError(null);
+    setBusy(true);
+    try {
+      // datetime-local has no timezone; new Date() reads it in the browser's own
+      // zone, which is Kuala Lumpur on a plant device — the same instant the
+      // server then records.
+      await correctWorkOrderTimeline(wo.id, new Date(completedAt), reason.trim());
+      onClose();
+    } catch (err) {
+      setError(describeError(err, "Couldn't correct the timeline."));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={onClose} label="Correct timeline" className="p-4">
+      <Card className="rise max-h-[85dvh] w-full max-w-md overflow-y-auto p-4 sm:p-5">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h2 className="text-[15.5px] font-bold text-ink">Correct the timeline</h2>
+          <button onClick={onClose} aria-label="Close" className="text-ink-soft hover:text-ink">
+            <X size={18} />
+          </button>
+        </div>
+
+        {error && <ErrorBanner message={error} />}
+
+        <p className="mb-3.5 text-[12.5px] leading-relaxed text-ink-soft">
+          <strong className="font-mono text-ink">{wo.wo_number || "This work order"}</strong> is stuck at{" "}
+          <strong className="text-ink">
+            <StatusBadge s={wo.status} />
+          </strong>
+          . This marks it <strong className="text-ink">completed</strong> and closes it, using the
+          completion time you set below — the record then reflects the repair being finished, and its
+          SLA is judged against that time rather than left breaching.
+        </p>
+
+        <form onSubmit={submit}>
+          <label className="mb-1.5 block text-[12.5px] font-semibold text-ink" htmlFor="completed-at">
+            Completed at <span className="text-danger">*</span>
+          </label>
+          <input
+            id="completed-at"
+            type="datetime-local"
+            value={completedAt}
+            min={startedLocal}
+            max={nowLocal}
+            onChange={(e) => setCompletedAt(e.target.value)}
+            className="mb-1 w-full rounded border border-[#D8DEE4] bg-white px-3 py-2.5 text-[13.5px] text-ink focus:border-navy focus:outline-none"
+          />
+          <p className="mb-4 text-[11.5px] text-ink-soft">
+            Defaults to when work started on it ({fmtDateTimeMY(started)}). Cannot be before then, or
+            in the future.
+          </p>
+
+          <div className="mb-4 flex items-start gap-2 rounded border border-[#F59E0B55] bg-[#FEF3C7] px-3.5 py-3 text-[12.5px] leading-relaxed text-[#78350F]">
+            <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
+            <span>
+              The SLA breach is recomputed against this time, so an overdue flag can clear. The work
+              order then waits for a Head of Department to sign it off, like any finished job — you
+              are undoing the abandonment, not verifying the repair.
+            </span>
+          </div>
+
+          <label className="mb-1.5 block text-[12.5px] font-semibold text-ink" htmlFor="timeline-reason">
+            Reason <span className="text-danger">*</span>
+          </label>
+          <textarea
+            id="timeline-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            maxLength={500}
+            placeholder="Why this needs correcting — recorded on the work order and its timeline."
+            className="mb-1 w-full rounded border border-[#D8DEE4] bg-white px-3 py-2.5 text-[13.5px] text-ink focus:border-navy focus:outline-none"
+          />
+          <p className="mb-4 text-[11.5px] text-ink-soft">
+            {reasonOk
+              ? "Recorded on the work order and on its timeline."
+              : `At least 10 characters (${reason.trim().length} so far).`}
+          </p>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" type="button" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" icon={busy ? Loader2 : History} disabled={busy || !reasonOk || !inRange}>
+              {busy ? "Correcting…" : "Correct timeline"}
             </Button>
           </div>
         </form>
