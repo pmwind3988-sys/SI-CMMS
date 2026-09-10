@@ -6,7 +6,6 @@ import { ArrowLeft, Factory, Image as ImageIcon, X, Sparkles, AlertTriangle, Sen
 import { useAuth } from "../../context/AuthContext";
 import { createWorkOrder, updateWorkOrderFields, addAttachment } from "../../lib/workOrders";
 import { useReferenceData, includingCurrent } from "../../lib/referenceData";
-import { createDepartment } from "../../lib/admin";
 import { describeError } from "../../lib/errors";
 import { registerDraftSource, takeDraft } from "../../lib/draftRecovery";
 import Field, { inputClass } from "../ui/Field";
@@ -114,7 +113,6 @@ export default function RaiseWorkOrderForm({ existing }) {
       : ""
   );
   const [area, setArea] = useState(existing?.area || "");
-  const [creatingDept, setCreatingDept] = useState(false);
   const [type, setType] = useState(existing?.type || "breakdown");
   const [complaint, setComplaint] = useState(existing?.description || "");
   const [impact, setImpact] = useState(existing?.impact || "");
@@ -163,10 +161,10 @@ export default function RaiseWorkOrderForm({ existing }) {
    * if they were. The restore notice says so out loud rather than letting
    * somebody submit a fault report believing the picture is still attached.
    *
-   * Transient state is absent too — `errors`, `submitting`, `submitError`,
-   * `creatingDept`. Restoring a validation error the user has
-   * not earned yet, or a spinner for a submit that never happened, would be
-   * restoring the interruption rather than the work.
+   * Transient state is absent too — `errors`, `submitting`, `submitError`.
+   * Restoring a validation error the user has not earned yet, or a spinner for
+   * a submit that never happened, would be restoring the interruption rather
+   * than the work.
    */
   const snapshot = () => ({
     departmentId,
@@ -446,21 +444,10 @@ export default function RaiseWorkOrderForm({ existing }) {
      the boundary; removing the button only stops offering an action whose one
      possible outcome is now a refusal. */
 
-  async function handleCreateDepartment(name) {
-    setCreatingDept(true);
-    setSubmitError(null);
-    try {
-      const created = await createDepartment({ name });
-      // Realtime will deliver the new row to every open session including this
-      // one, but selecting it here rather than waiting for that round trip keeps
-      // the picker from appearing to have done nothing.
-      setDepartmentId(created.id);
-    } catch (e) {
-      setSubmitError(describeError(e, "Couldn't add that department."));
-    } finally {
-      setCreatingDept(false);
-    }
-  }
+  /* handleCreateDepartment is gone: the raise form's pickers are native
+     <select>s now, which cannot create, so adding a department moved to
+     Admin → Settings (departments_insert is still open to any signed-in user
+     there). Same shape as handleCreateAsset's removal above. */
 
   function validate() {
     const errs = {};
@@ -618,32 +605,46 @@ export default function RaiseWorkOrderForm({ existing }) {
               required
               hint={errors.department}
             >
-              <Combobox
+              {/* Native <select> so Android/iOS show the OS picker. Adding a new
+                  department from here was dropped — it now lives in Admin →
+                  Settings. */}
+              <select
                 value={departmentId}
-                onChange={handleDepartmentChange}
-                options={departmentOptions}
-                loading={!ready || creatingDept}
-                loadingLabel={creatingDept ? "Adding…" : "Loading…"}
-                placeholder="Search departments…"
-                emptyLabel="No departments yet"
-                onCreate={handleCreateDepartment}
-                createLabel="Add department"
-              />
+                onChange={(e) => handleDepartmentChange(e.target.value)}
+                disabled={!ready}
+                className={inputClass}
+              >
+                <option value="" disabled>
+                  {ready ? "Choose a department…" : "Loading…"}
+                </option>
+                {departmentOptions.map((d) => (
+                  <option key={d.value} value={d.value}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
               <p className="mt-1.5 text-[11.5px] text-ink-soft">
-                Who should handle this. Change it if someone else should take it, or type a name
-                that isn&apos;t listed to add it.
+                Who should handle this. Change it if someone else should take it.
               </p>
             </Field>
 
             <Field label="Plant" required hint={errors.plant}>
-              <Combobox
+              {/* Native <select> — four plants, nothing to search. */}
+              <select
                 value={plantId}
-                onChange={handlePlantChange}
-                options={plantOptions}
-                loading={!ready}
-                placeholder="Search plants…"
-                emptyLabel="No plants configured"
-              />
+                onChange={(e) => handlePlantChange(e.target.value)}
+                disabled={!ready}
+                className={inputClass}
+              >
+                <option value="" disabled>
+                  {ready ? "Choose a plant…" : "Loading…"}
+                </option>
+                {plantOptions.map((pl) => (
+                  <option key={pl.value} value={pl.value}>
+                    {pl.label}
+                  </option>
+                ))}
+              </select>
               <p className="mt-1.5 text-[11.5px] text-ink-soft">
                 Where the machine is. This is what decides the equipment list below — changing it
                 clears the equipment, because each plant keeps its own machines.
