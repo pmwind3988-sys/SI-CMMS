@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle, ArrowUpDown, UserCircle2, History } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrder, deleteWorkOrder, overrideWorkOrderPriority, correctWorkOrderTimeline } from "../../lib/workOrders";
-import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canCorrectWorkOrderTimeline, canSeeVerification } from "../../lib/constants";
+import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canCorrectWorkOrderTimeline, isFinishedForTimelineFix, canSeeVerification } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
 import { slaStages } from "../../lib/slaStages";
@@ -595,8 +595,20 @@ function toLocalInput(iso) {
  *    refused.
  */
 function TimelineCorrectionDialog({ wo, onClose }) {
+  const finished = isFinishedForTimelineFix(wo);
   const started = wo.responded_at || wo.acknowledged_at || wo.created_at;
-  const [completedAt, setCompletedAt] = useState(toLocalInput(started));
+
+  /* For a finished job, default to its SLA deadline — "the moment it breached" —
+     so it lands just on time; otherwise to when work started. Clamped into
+     [started, now] so a not-yet-passed deadline cannot seed an out-of-range
+     value. */
+  const startedMs = new Date(started).getTime();
+  const nowMs = Date.now();
+  const rawDefault =
+    finished && wo.sla_resolution_due_at ? new Date(wo.sla_resolution_due_at).getTime() : startedMs;
+  const defaultMs = Math.min(Math.max(rawDefault, startedMs), nowMs);
+
+  const [completedAt, setCompletedAt] = useState(toLocalInput(new Date(defaultMs)));
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -636,13 +648,22 @@ function TimelineCorrectionDialog({ wo, onClose }) {
         {error && <ErrorBanner message={error} />}
 
         <p className="mb-3.5 text-[12.5px] leading-relaxed text-ink-soft">
-          <strong className="font-mono text-ink">{wo.wo_number || "This work order"}</strong> is stuck at{" "}
-          <strong className="text-ink">
-            <StatusBadge s={wo.status} />
-          </strong>
-          . This marks it <strong className="text-ink">completed</strong> and closes it, using the
-          completion time you set below — the record then reflects the repair being finished, and its
-          SLA is judged against that time rather than left breaching.
+          <strong className="font-mono text-ink">{wo.wo_number || "This work order"}</strong>{" "}
+          {finished ? "is" : "is stuck at"}{" "}
+          <StatusBadge s={wo.status} />
+          {finished ? (
+            <>
+              . This <strong className="text-ink">backdates its completion</strong> to the time you
+              set below and recomputes its SLA against it — clearing a breach that should not stand.
+              Its status and any sign-off are left as they are.
+            </>
+          ) : (
+            <>
+              . This marks it <strong className="text-ink">completed</strong> and closes it, using
+              the completion time you set below — the record then reflects the repair being finished,
+              and its SLA is judged against that time rather than left breaching.
+            </>
+          )}
         </p>
 
         <form onSubmit={submit}>
@@ -659,16 +680,17 @@ function TimelineCorrectionDialog({ wo, onClose }) {
             className="mb-1 w-full rounded border border-[#D8DEE4] bg-white px-3 py-2.5 text-[13.5px] text-ink focus:border-navy focus:outline-none"
           />
           <p className="mb-4 text-[11.5px] text-ink-soft">
-            Defaults to when work started on it ({fmtDateTimeMY(started)}). Cannot be before then, or
-            in the future.
+            {finished
+              ? `Defaults to ${fmtDateTimeMY(new Date(defaultMs))}. Cannot be before work started (${fmtDateTimeMY(started)}), or in the future.`
+              : `Defaults to when work started on it (${fmtDateTimeMY(started)}). Cannot be before then, or in the future.`}
           </p>
 
           <div className="mb-4 flex items-start gap-2 rounded border border-[#F59E0B55] bg-[#FEF3C7] px-3.5 py-3 text-[12.5px] leading-relaxed text-[#78350F]">
             <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
             <span>
-              The SLA breach is recomputed against this time, so an overdue flag can clear. The work
-              order then waits for a Head of Department to sign it off, like any finished job — you
-              are undoing the abandonment, not verifying the repair.
+              {finished
+                ? "The SLA breach is recomputed against this time, so an overdue flag can clear. The status and any Head-of-Department sign-off are left exactly as they are — only the recorded completion time and the breach change."
+                : "The SLA breach is recomputed against this time, so an overdue flag can clear. The work order then waits for a Head of Department to sign it off, like any finished job — you are undoing the abandonment, not verifying the repair."}
             </span>
           </div>
 

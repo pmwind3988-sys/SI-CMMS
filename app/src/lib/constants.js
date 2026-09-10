@@ -214,18 +214,34 @@ export function canOverridePriority(wo, currentUser) {
   return hasRole(currentUser, ROLES.ADMIN);
 }
 
-/** The "work underway" statuses a stuck work order can be corrected from. Mirrors
- *  the status check in si_correct_work_order_timeline (migration 0065). */
-export const TIMELINE_CORRECTABLE_STATUSES = ["repairing", "waiting_spare_part", "testing"];
+/** The statuses a work order's timeline can be corrected from. The first three
+ *  are "work underway" (forced to completed); completed/closed are finished
+ *  records backdated in place. Mirrors si_correct_work_order_timeline (0065,
+ *  widened by 0066). Not-yet-started statuses (open/assigned/accepted) are
+ *  excluded — there is no completion to record. */
+export const TIMELINE_CORRECTABLE_STATUSES = [
+  "repairing",
+  "waiting_spare_part",
+  "testing",
+  "completed",
+  "closed",
+];
+
+/** Is this a finished work order the timeline fix backdates in place, rather than
+ *  a live one it forces to completed? */
+export function isFinishedForTimelineFix(wo) {
+  return wo?.status === "completed" || wo?.status === "closed";
+}
 
 /**
- * May this account force a stuck work order to completed and correct its
- * timeline? Superuser only, and only while it is under way (migration 0065).
+ * May this account correct a work order's timeline? Superuser only (migrations
+ * 0065, 0066).
  *
- * This is the impromptu fix for a job abandoned mid-work — a technician who did
- * not know how to finish a `testing` job and let it breach. It decides what to
- * SHOW; si_correct_work_order_timeline re-checks Superuser, the reason floor and
- * the status in its own body, so a disagreement is an error, not a silent
+ * Two cases: a job abandoned mid-work (repairing/waiting/testing) is forced to
+ * completed; a finished job (completed/closed, verified or not) has its
+ * completion time backdated and its breach recomputed in place. It decides what
+ * to SHOW; si_correct_work_order_timeline re-checks Superuser, the reason floor
+ * and the status in its own body, so a disagreement is an error, not a silent
  * success.
  */
 export function canCorrectWorkOrderTimeline(wo, currentUser) {
