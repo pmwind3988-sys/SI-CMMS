@@ -88,6 +88,45 @@ const SLA_STATES = [
   ["none", "No deadline"],
 ];
 
+const SORT_OPTIONS = [
+  ["newest", "Newest first"],
+  ["oldest", "Oldest first"],
+  ["priority", "Priority (most urgent)"],
+  ["sla", "SLA (soonest due)"],
+  ["wo", "Work order #"],
+];
+
+/**
+ * Sort the already-filtered rows. Pure, so it can be memoised. `priorityRank`
+ * maps a priority code to its severity rank (P1 = 1, most urgent) from the
+ * live reference table; anything unknown sorts last. SLA sorts by time left,
+ * most overdue first, with "no deadline" last.
+ */
+function sortWorkOrders(rows, sort, priorityRank) {
+  const by = [...rows];
+  const t = (w) => new Date(w.created_at).getTime();
+  switch (sort) {
+    case "oldest":
+      return by.sort((a, b) => t(a) - t(b));
+    case "priority":
+      return by.sort(
+        (a, b) => (priorityRank(a.priority) - priorityRank(b.priority)) || (t(b) - t(a))
+      );
+    case "sla": {
+      const r = (w) => {
+        const ms = slaRemainMs(w);
+        return ms == null ? Infinity : ms;
+      };
+      return by.sort((a, b) => (r(a) - r(b)) || (t(b) - t(a)));
+    }
+    case "wo":
+      return by.sort((a, b) => String(a.wo_number || "~").localeCompare(String(b.wo_number || "~")));
+    case "newest":
+    default:
+      return by.sort((a, b) => t(b) - t(a));
+  }
+}
+
 export default function WorkOrderList() {
   const { user } = useAuth();
   const reference = useReferenceData();
@@ -114,6 +153,9 @@ export default function WorkOrderList() {
   const [fPlant, setFPlant] = useState("All");
   const [fAssignee, setFAssignee] = useState("All"); // "All" | "unassigned" | assigned_to_id
   const [fSla, setFSla] = useState("All");
+
+  // Sort control — a view setting, kept in the always-visible row.
+  const [fSort, setFSort] = useState("newest");
 
   // Date filtering. The preset is the control; `custom` reveals the two inputs.
   const [preset, setPreset] = useState("all");
@@ -188,6 +230,17 @@ export default function WorkOrderList() {
 
   const filtered = useMemo(() => (workOrders ? workOrders.filter(matches) : []), [workOrders, matches]);
 
+  /* Severity rank straight off the live priorities table, so a relabelled or
+     re-ranked priority sorts correctly without a code change. */
+  const priorityRank = useCallback(
+    (code) => priorities.find((p) => p.id === code)?.rank ?? Number.POSITIVE_INFINITY,
+    [priorities]
+  );
+  const sorted = useMemo(
+    () => sortWorkOrders(filtered, fSort, priorityRank),
+    [filtered, fSort, priorityRank]
+  );
+
   /* Paginated AFTER the filter, never before: `matches` has already run over
      every row loaded for this date range, so searching a WO number finds it
      wherever it sits and the pager then walks the matches. Reset is keyed on
@@ -206,11 +259,11 @@ export default function WorkOrderList() {
      rather than by pressing 2. That is the accepted trade - the alternative was
      a page nobody believed was a page. Desktop is unaffected; the table already
      measures well above five. */
-  const pageSize = useAutoPageSize([tableRef, cardsRef], { min: 5, ready: !!workOrders, signature: filtered.length });
+  const pageSize = useAutoPageSize([tableRef, cardsRef], { min: 5, ready: !!workOrders, signature: sorted.length });
 
-  const pager = usePaged(filtered, {
+  const pager = usePaged(sorted, {
     pageSize,
-    resetKey: `${fPriority}|${fStatus}|${fDepartment}|${fPlant}|${fAssignee}|${fSla}|${rangeKey}|${q}`,
+    resetKey: `${fPriority}|${fStatus}|${fDepartment}|${fPlant}|${fAssignee}|${fSla}|${fSort}|${rangeKey}|${q}`,
   });
 
   /* The assignees actually present in the loaded rows, for the advanced
@@ -227,12 +280,20 @@ export default function WorkOrderList() {
   }, [workOrders]);
 
   const advancedActive =
+    (fPriority !== "All" ? 1 : 0) +
+    (fStatus !== "All" ? 1 : 0) +
+    (preset !== "all" ? 1 : 0) +
     (fDepartment !== "All" ? 1 : 0) +
     (fPlant !== "All" ? 1 : 0) +
     (fAssignee !== "All" ? 1 : 0) +
     (fSla !== "All" ? 1 : 0);
 
   function clearAdvanced() {
+    setFPriority("All");
+    setFStatus("All");
+    setPreset("all");
+    setCustomFrom("");
+    setCustomTo("");
     setFDepartment("All");
     setFPlant("All");
     setFAssignee("All");
@@ -375,72 +436,21 @@ export default function WorkOrderList() {
             className="w-full min-w-0 outline-none text-[13px]"
           />
         </div>
-        {/* Both of these read "All" when nothing is chosen, and side by side —
-            stacked on a phone — there was nothing on screen saying which was
-            priority and which was status. You had to open one to find out. The
-            placeholder option now names the field, so the closed control is
-            self-describing at every width, and aria-label does the same for a
-            screen reader without spending a line of vertical space. */}
+        {/* Priority, Status and Date moved into the advanced panel; the always-
+            visible row keeps Search, Sort (a view control changed often) and the
+            Filters / Export buttons. */}
         <select
-          value={fPriority}
-          onChange={(e) => setFPriority(e.target.value)}
-          aria-label="Filter by priority"
-          className={`${inputClass} min-w-0 sm:w-40`}
+          value={fSort}
+          onChange={(e) => setFSort(e.target.value)}
+          aria-label="Sort work orders"
+          className={`${inputClass} col-span-2 min-w-0 sm:col-span-1 sm:w-52`}
         >
-          <option value="All">Priority: All</option>
-          {priorities.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.id} — {p.label}
+          {SORT_OPTIONS.map(([k, label]) => (
+            <option key={k} value={k}>
+              Sort: {label}
             </option>
           ))}
         </select>
-        <select
-          value={fStatus}
-          onChange={(e) => setFStatus(e.target.value)}
-          aria-label="Filter by status"
-          className={`${inputClass} min-w-0 sm:w-52`}
-        >
-          <option value="All">Status: All</option>
-          {activeStatuses.map((s) => (
-            <option key={s.code} value={s.code}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={preset}
-          onChange={(e) => setPreset(e.target.value)}
-          aria-label="Filter by date raised"
-          className={`${inputClass} min-w-0 sm:w-44`}
-        >
-          {DATE_PRESETS.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-
-        {preset === "custom" && (
-          <div className="col-span-2 flex items-center gap-2 sm:col-span-1">
-            <input
-              type="date"
-              value={customFrom}
-              max={customTo || isoDateMY()}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              aria-label="Raised from"
-              className={`${inputClass} min-w-0 flex-1 sm:w-36 sm:flex-none`}
-            />
-            <span className="text-[12px] text-ink-soft">to</span>
-            <input
-              type="date"
-              value={customTo}
-              min={customFrom || undefined}
-              onChange={(e) => setCustomTo(e.target.value)}
-              aria-label="Raised to"
-              className={`${inputClass} min-w-0 flex-1 sm:w-36 sm:flex-none`}
-            />
-          </div>
-        )}
 
         <Button
           variant={showAdvanced || advancedActive ? "subtle" : "ghost"}
@@ -472,6 +482,50 @@ export default function WorkOrderList() {
         <div className="mb-3.5 rounded border border-border bg-canvas p-3">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
+              Priority
+              <select
+                value={fPriority}
+                onChange={(e) => setFPriority(e.target.value)}
+                className={`${inputClass} font-normal`}
+              >
+                <option value="All">All</option>
+                {priorities.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.id} — {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
+              Status
+              <select
+                value={fStatus}
+                onChange={(e) => setFStatus(e.target.value)}
+                className={`${inputClass} font-normal`}
+              >
+                <option value="All">All</option>
+                {activeStatuses.map((s) => (
+                  <option key={s.code} value={s.code}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
+              Date raised
+              <select
+                value={preset}
+                onChange={(e) => setPreset(e.target.value)}
+                className={`${inputClass} font-normal`}
+              >
+                {DATE_PRESETS.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
               Department
               <select
                 value={fDepartment}
@@ -502,7 +556,7 @@ export default function WorkOrderList() {
               </select>
             </label>
             <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
-              Assignee
+              Assigned technician
               <select
                 value={fAssignee}
                 onChange={(e) => setFAssignee(e.target.value)}
@@ -533,13 +587,36 @@ export default function WorkOrderList() {
               </select>
             </label>
           </div>
+
+          {/* Custom date range — only when the Date raised preset is "custom". */}
+          {preset === "custom" && (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="date"
+                value={customFrom}
+                max={customTo || isoDateMY()}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                aria-label="Raised from"
+                className={`${inputClass} min-w-0 flex-1`}
+              />
+              <span className="text-[12px] text-ink-soft">to</span>
+              <input
+                type="date"
+                value={customTo}
+                min={customFrom || undefined}
+                onChange={(e) => setCustomTo(e.target.value)}
+                aria-label="Raised to"
+                className={`${inputClass} min-w-0 flex-1`}
+              />
+            </div>
+          )}
           {advancedActive > 0 && (
             <div className="mt-2.5 flex justify-end">
               <button
                 onClick={clearAdvanced}
                 className="inline-flex items-center gap-1 text-[12px] font-semibold text-ink-soft hover:text-ink"
               >
-                <X size={13} /> Clear advanced filters
+                <X size={13} /> Clear filters
               </button>
             </div>
           )}
