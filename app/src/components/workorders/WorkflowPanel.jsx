@@ -119,6 +119,7 @@ function WorkflowActions({ wo, onGotoAssign }) {
   const [reopenReason, setReopenReason] = useState("");
   const [showReopen, setShowReopen] = useState(false);
   const [confirmVerify, setConfirmVerify] = useState(false);
+  const [verifyNote, setVerifyNote] = useState("");
 
   const assignee = isAssigneeOf(wo, user);
   const isSupervisorLike = hasRole(user, ROLES.SUPERVISOR) || isManagerOrAdmin(user);
@@ -450,16 +451,27 @@ function WorkflowActions({ wo, onGotoAssign }) {
             <ModalOverlay onClose={() => setConfirmVerify(false)} label={`Verify ${wo.wo_number || "this work order"}`}>
               <div className="bg-white rounded-t-xl sm:rounded-xl w-full sm:max-w-sm p-5">
                 <h2 className="text-[15px] font-bold text-ink mb-1.5">Verify {wo.wo_number}?</h2>
-                <p className="text-[12.5px] text-ink-soft mb-4">
+                <p className="text-[12.5px] text-ink-soft mb-3">
                   This records you as having checked the work, with the time, and
                   starts counting it in the dashboard. It cannot be undone.
                 </p>
+                {/* Required, and gated on the trimmed value the way Mark
+                    completed and Send back for rework are. Display only:
+                    si_verify_work_order refuses a blank note itself (0063), so
+                    the two disagreeing is an error rather than a silent pass. */}
+                <textarea
+                  value={verifyNote}
+                  onChange={(e) => setVerifyNote(e.target.value)}
+                  rows={3}
+                  placeholder="What did you check? e.g. ran the pump for 10 minutes, no leak, vibration normal"
+                  className={`${inputClass} mb-4 w-full`}
+                />
                 <div className="flex gap-2 justify-end">
                   <Button variant="ghost" size="sm" onClick={() => setConfirmVerify(false)}>No, not yet</Button>
-                  <Button variant="successSolid" size="sm" icon={ThumbsUp} disabled={busy} onClick={async () => {
-                    const ok = await run(verifyWorkOrder);
+                  <Button variant="successSolid" size="sm" icon={ThumbsUp} disabled={busy || !verifyNote.trim()} onClick={async () => {
+                    const ok = await run(verifyWorkOrder, verifyNote.trim());
                     setConfirmVerify(false);
-                    if (ok) flash(`Verified — ${wo.wo_number || "work order"} is signed off.`);
+                    if (ok) { setVerifyNote(""); flash(`Verified — ${wo.wo_number || "work order"} is signed off.`); }
                   }}>{busy ? "Verifying…" : "Yes, verify"}</Button>
                 </div>
               </div>

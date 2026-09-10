@@ -768,12 +768,21 @@ function OverviewTab({ wo }) {
             <div className="text-[13px] text-ink leading-relaxed">{wo.resolution_notes}</div>
           </div>
         )}
-        {/* Sign-off, for a Head of Department and nobody else (migration 0059).
-            Rendered from the row's own columns rather than from the trail, so
-            it answers "has this been checked" at a glance without reading the
-            timeline — which is the question an HOD opens a completed work order
-            to ask. Hidden rather than withheld: see canSeeVerification(). */}
-        {canSeeVerification(user) && wo.status === "completed" && (
+        {/* Sign-off, for a Head of Department and nobody else (migrations 0059,
+           0061). Rendered from the row's own columns rather than from the trail,
+           so it answers "has this been checked" at a glance without reading the
+           timeline — which is the question an HOD opens a finished work order to
+           ask. Hidden rather than withheld: see canSeeVerification().
+
+           `closed` as well as `completed`, since 0061 closes a work order the
+           moment the repair is marked completed — keyed on `completed` alone this
+           block would render on nothing at all.
+
+           The note lives INSIDE this gate, which is the whole reason it is not
+           the separate always-visible block the verify-and-close work put here:
+           `verification_notes` now holds what the HOD checked (0063), and that is
+           exactly what everyone but an HOD is not shown. */}
+        {canSeeVerification(user) && (wo.status === "completed" || wo.status === "closed") && (
           <div className="mt-4 pt-4 border-t border-border">
             <div className="text-[12px] font-bold text-ink-soft mb-1.5">Verification</div>
             {wo.verified_at ? (
@@ -784,6 +793,9 @@ function OverviewTab({ wo }) {
               <div className="text-[13px] text-ink leading-relaxed">
                 Not verified yet — it is not counted in the dashboard until it is.
               </div>
+            )}
+            {wo.verification_notes && (
+              <div className="mt-2 text-[13px] text-ink leading-relaxed">{wo.verification_notes}</div>
             )}
           </div>
         )}

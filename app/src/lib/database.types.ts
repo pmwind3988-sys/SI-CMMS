@@ -1137,6 +1137,7 @@ export type Database = {
           test_fail_reason: string | null
           type: Database["public"]["Enums"]["si_wo_type"] | null
           updated_at: string
+          verification_notes: string | null
           verified_at: string | null
           verified_by: string | null
           wo_number: string | null
@@ -1181,6 +1182,7 @@ export type Database = {
           test_fail_reason?: string | null
           type?: Database["public"]["Enums"]["si_wo_type"] | null
           updated_at?: string
+          verification_notes?: string | null
           verified_at?: string | null
           verified_by?: string | null
           wo_number?: string | null
@@ -1225,6 +1227,7 @@ export type Database = {
           test_fail_reason?: string | null
           type?: Database["public"]["Enums"]["si_wo_type"] | null
           updated_at?: string
+          verification_notes?: string | null
           verified_at?: string | null
           verified_by?: string | null
           wo_number?: string | null
@@ -1466,6 +1469,7 @@ export type Database = {
           test_fail_reason: string | null
           type: Database["public"]["Enums"]["si_wo_type"] | null
           updated_at: string
+          verification_notes: string | null
           verified_at: string | null
           verified_by: string | null
           wo_number: string | null

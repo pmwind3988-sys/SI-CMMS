@@ -307,6 +307,16 @@ function workOrderColumns(labels, ctx) {
     { header: "Spare Part Reason", width: 34, cell: (w) => wrapCell(w.spare_part_reason) },
     { header: "Test Failure Reason", width: 34, cell: (w) => wrapCell(w.test_fail_reason) },
     { header: "Resolution Notes", width: 50, cell: (w) => wrapCell(w.resolution_notes) },
+    /* NO "Verification Notes" COLUMN, deliberately — see migration 0063.
+
+       That column was written when the note said what the REQUESTER had
+       checked before closing. It now holds what a Head of Department checked
+       when they signed the work off, and that is precisely the thing 0059
+       withholds from everybody else: the detail page renders it inside
+       canSeeVerification() and a workbook has no such gate, so a Manager
+       exporting the month would read the sign-off the app declines to show
+       them. The verified-by and verified-at columns below are read out of the
+       trail and predate all of this. */
     { header: "Reopen Reason", width: 34, cell: (w) => wrapCell(w.reopen_reason) },
     /* verified_by is a uuid and the name is not on the work order, so both
        eras are read out of the trail — `actorFor.verified` for a pre-0059

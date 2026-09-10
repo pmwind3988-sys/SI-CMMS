@@ -892,6 +892,47 @@ same reason `exportWorkOrders.js`, `historyEvents.js` and `attachmentPhases.js` 
 way: it is what let the raise form and the priority dialog be exercised against the real
 context without a session.
 
+### The sign-off says what was checked (migration 0063)
+
+**This section replaced one about migration 0058, and the replacement is the history worth
+keeping.** `main` carried "Closing a work order says what was verified":
+`work_orders.verification_notes`, required by `completed -> closed`, because that was the one
+move in the flow that recorded a decision and no reason — the trail read "Confirmed fixed by
+requester", a sentence `lib/workOrders.js` wrote rather than anything the person pressing the
+button knew. The argument holds. Where the note is collected does not, because 0061 made that
+move automatic: nobody performs it, so nobody can be asked.
+
+**Main's `0058_verify_and_close_says_what_was_verified.sql` is deleted rather than amended,
+and it was safe only because of where it had reached.** Production was at 0057 and never
+applied it; on test its version number was already taken by `0058_hod_role_enum`, so
+`db push` had skipped it there too. Applied nowhere. The number was also the practical
+problem: two files claiming 0058 is not a state the CLI can resolve, and renumbering the
+*applied* one is the thing this file says never to do.
+
+Left alone its rule refuses **every completion**: the guard demands a note on
+`completed -> closed`, `si_auto_close_completed` performs exactly that move, and it has
+nothing to say. Measured on test, which was carrying that guard out-of-band — *"Closing a
+work order needs a note saying what was verified."* raised from inside the auto-close
+trigger, with a technician's **Mark completed** the thing that failed.
+
+So the note moves to the act that is still a person's decision: **the HOD's sign-off, where
+it is required.** That is main's own choice about this column rather than a new one, and it
+matches every other deliberate act here — a decline, a rework and an Administrator's re-grade
+all carry a reason. Two readings, one argument, exactly as main put it: the column is what
+the work order says about itself, the history remark is what the timeline says about the
+moment it was signed. `si_verify_work_order` already wrote the remark and writes the column
+now too, and `('closed','closed')` requires both `verified_by` and `verification_notes`, so
+the guard's own loop enforces it and the newest rule is data like the oldest.
+
+**Who may read it is the part not to undo.** The note *is* the sign-off now, so it is
+HOD-only like the rest of it (0059): `WorkOrderDetail` renders it inside
+`canSeeVerification()`, and **the export column main added was removed with this migration**
+— a workbook has no such gate, so a Manager exporting the month would read exactly what the
+app declines to show them.
+
+The column stays nullable with no backfill, so a work order closed before any of this keeps
+its null note and every reader renders it conditionally — the same shape the two
+estimated-downtime rows have.
 ### A handover tells the technician it happened (migration 0052)
 
 **Only the first assignment ever notified the technician. Every reassignment notified nobody** —
@@ -1402,11 +1443,10 @@ through it, and anything auto-closed since 0061 always has one and is never touc
 `verified_by` stays NULL, which is exactly the shape the old stamp produced: counted, with
 no name against a check that never happened. Measured on test — the charts went from 8 to
 11 and the two genuinely-awaiting rows stayed out of both readings.
-**Merge hazard worth knowing about**: the branch adding `work_orders.verification_notes`
-requires a note on `completed → closed` inside `si_guard_work_order_transition`. That rule
-was written when a person performed the close; here nobody does, so the guard refuses every
-completion — measured on the test project, which was carrying that branch's guard
-out-of-band. It has to come out when the two branches meet.
+**That merge has happened**, and migration 0063 is where it landed: the note main required
+at close is required at the HOD sign-off instead, because nobody performs the close any
+more. See "The sign-off says what was checked" above for why main's 0058 was deleted rather
+than renumbered.
 
 The permitted moves are **data, not code** — 22 rows in `wo_status_transitions` recording
 which roles may perform each move, which fields it requires, and whether it demands a
