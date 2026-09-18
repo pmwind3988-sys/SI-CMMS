@@ -285,6 +285,19 @@ function workOrderColumns(labels, ctx) {
     { header: "Work Started At", width: 21, cell: (w) => dateCell(w.responded_at) },
     { header: "SLA Status", width: 16, cell: (w) => textCell(w.sla_breached ? "Breached" : "Within target") },
     { header: "SLA Warning Sent", width: 16, cell: (w) => textCell(yesNo(w.sla_warning_sent)) },
+    /* Which stages were missed, migration 0067. `SLA Status` above keeps its
+       meaning — "was this work order ever late" — and these three say where,
+       which is the question a monthly review actually asks. The dashboard's
+       transient sla_stage_overdue is deliberately NOT exported: a workbook is
+       read weeks later and "late right now" would mean "late when the file was
+       saved", which is a fact about the download rather than about the work. */
+    { header: "Ack Stage Missed", width: 16, cell: (w) => textCell(yesNo(w.sla_ack_breached)) },
+    { header: "Response Stage Missed", width: 20, cell: (w) => textCell(yesNo(w.sla_response_breached)) },
+    { header: "Resolution Stage Missed", width: 22, cell: (w) => textCell(yesNo(w.sla_resolution_breached)) },
+    /* Migration 0071. Distinct from "Priority Overridden", which records the
+       requester overriding a suggestion and has read "No" for everything since
+       0036 — folding them together would make one heading mean two things. */
+    { header: "SLA Extensions", width: 14, cell: (w) => numCell(w.sla_extension_count ?? 0) },
   ];
 
   // ---- Lifecycle, from the audit trail ----
