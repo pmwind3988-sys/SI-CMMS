@@ -24,6 +24,7 @@
 // ids ("tech-arun") could never have been assigned. AssignPanel reads the real
 // roster via listenTechnicians().
 import { ROLES, ALL_ROLES, roleRank, accountRank, hasRole } from "./roles";
+import { isStageOverdue, isStageAtRisk } from "./slaStages";
 
 /** Humanise a millisecond duration for an SLA countdown. */
 export function fmtDue(ms) {
@@ -212,6 +213,29 @@ export function canOverridePriority(wo, currentUser) {
   if (!wo || !currentUser) return false;
   if (wo.status === "verified" || wo.status === "closed") return false;
   return hasRole(currentUser, ROLES.ADMIN);
+}
+
+/**
+ * May this person extend this work order's SLA? (migration 0071)
+ *
+ * Administrator, live work order, and the stage it is sitting in is either past
+ * its deadline or inside the last quarter of its own window — the same 25%
+ * si_sla_warning_sweep uses, so the button and the warning agree about "running
+ * out of time".
+ *
+ * DISPLAY ONLY, like every predicate in this file.
+ * si_extend_work_order_sla restates all three checks in its own body, so the
+ * two disagreeing produces an error rather than a silent success.
+ *
+ * Deliberately narrower than canOverridePriority: a re-grade is a judgement
+ * about what a work order IS and can be made at any time, an extension is a
+ * response to a clock and only means something while the clock is nearly out.
+ */
+export function canExtendSla(wo, currentUser) {
+  if (!wo || !currentUser) return false;
+  if (wo.status === "verified" || wo.status === "closed") return false;
+  if (!hasRole(currentUser, ROLES.ADMIN)) return false;
+  return isStageOverdue(wo) || isStageAtRisk(wo);
 }
 
 /** The statuses a work order's timeline can be corrected from. The first three

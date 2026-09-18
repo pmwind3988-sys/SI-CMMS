@@ -742,6 +742,35 @@ export async function overrideWorkOrderPriority(woId, priority, reason) {
 }
 
 /**
+ * Extend a work order's SLA by re-grading it to a less urgent priority
+ * (migration 0071).
+ *
+ * Not `updateWorkOrderFields` and not a transition: the priority is derived
+ * from the production impact and a trigger overwrites whatever the client sends
+ * (0036), and si_guard_priority_override refuses a direct PATCH of the override
+ * columns or of `sla_extension_count` from anybody at any rank. The RPC is the
+ * only door.
+ *
+ * Three things worth knowing at the call site:
+ *
+ *  - `priority` must be STRICTLY less urgent than the work order's current one.
+ *    The server refuses anything else, including the same priority — extending
+ *    can only grant time.
+ *  - No reason is passed. The server generates the remark, names both
+ *    priorities and the stage, and writes it to the timeline as `sla_extension`.
+ *  - The deadlines are recomputed from the raise time and the recorded stage
+ *    moments, not from now, so the countdown on screen can move the moment this
+ *    returns and an overdue badge clearing is the correct outcome.
+ */
+export async function extendWorkOrderSla(woId, priority) {
+  const { error } = await supabase.rpc("si_extend_work_order_sla", {
+    p_work_order_id: woId,
+    p_priority: priority,
+  });
+  if (error) throw error;
+}
+
+/**
  * Superuser fix for a work order abandoned mid-work (migration 0065).
  *
  * Forces it to completed, backdates the completion to `completedAt`, recomputes

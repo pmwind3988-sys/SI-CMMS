@@ -39,6 +39,11 @@ export function isTransition(row) {
 const EVENT_LABELS = {
   photo_replaced: "Photo replaced",
   priority_override: "Priority changed",
+  // Migration 0071 — an Administrator moved a work order to a less urgent
+  // priority to give the stage it is in more time. Distinct from
+  // priority_override on purpose: they are different events and one heading
+  // covering both would make it mean two things.
+  sla_extension: "SLA extended",
   verified: "Verified",
   // Migration 0065 — a Superuser forced a stuck work order to completed and
   // backdated its completion time.
