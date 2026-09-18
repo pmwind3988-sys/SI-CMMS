@@ -319,9 +319,15 @@ as $$
 declare
   v_changed boolean;
 begin
+  -- No JWT: a migration, a seed script, or the service role. Trusted, as
+  -- everywhere else in this schema.
   if auth.uid() is null then return new; end if;
   if si_priority_override() then return new; end if;
 
+  /* OLD is unassigned in a BEFORE INSERT trigger, so the two operations get
+     separate branches rather than one expression relying on `or` to short
+     circuit — the same shape si_guard_retired_reference uses. A work order
+     cannot arrive already overridden. */
   if tg_op = 'INSERT' then
     v_changed := new.priority_override        is not null
               or new.priority_override_reason is not null
@@ -378,7 +384,6 @@ declare
   v_resp_due    timestamptz;
   v_res_due     timestamptz;
   v_new_due     timestamptz;
-  v_breached    boolean;
   v_remark      text;
 begin
   if v_actor is null then
@@ -395,7 +400,7 @@ begin
     raise exception 'That work order no longer exists.' using errcode = 'no_data_found';
   end if;
 
-  if w.status in ('verified', 'closed') then
+  if w.status in ('completed', 'verified', 'closed') then
     raise exception 'This work order is finished, so its SLA is part of the record now and cannot be extended.'
       using errcode = 'check_violation';
   end if;
@@ -463,8 +468,6 @@ begin
   v_new_due := case v_stage when 'acknowledge' then v_ack_due
                             when 'response'    then v_resp_due
                             when 'resolution'  then v_res_due end;
-
-  v_breached := v_res_due is not null and v_res_due < now();
 
   select name into v_actor_name from users where id = v_actor;
 
