@@ -170,3 +170,91 @@ export function slaStages(wo, sla) {
     };
   });
 }
+
+/* ------------------------------------------------------------------
+   Which stage is open, and how it is doing — migration 0067.
+
+   Every priority is sequential now, so "the SLA" is no longer one
+   countdown: a work order is inside exactly one stage at a time and it is
+   that stage's deadline that can be missed. These five functions are the
+   client mirror of si_open_sla_stage / si_open_stage_started_at /
+   si_open_stage_due_at, and the pairing is the point — the dashboard's
+   Overdue card and the sweep that writes sla_stage_overdue have to put the
+   line in the same place, the way slaWindowMs() already mirrors
+   si_sla_warning_sweep()'s 25%.
+
+   `openSlaStage` tests the finished statuses FIRST, before the two
+   timestamps. A work order can reach `closed` with `acknowledged_at` never
+   stamped — 0062 found three of them on the test project — and asking
+   about its acknowledge stage would report a job finished in June as
+   currently late.
+   ------------------------------------------------------------------ */
+
+export const STAGE_LABELS = {
+  acknowledge: "Acknowledge",
+  response: "Response",
+  resolution: "Resolution",
+};
+
+const FINISHED = ["completed", "closed"];
+
+export function openSlaStage(wo) {
+  if (!wo) return null;
+  if (FINISHED.includes(wo.status)) return null;
+  if (!wo.acknowledged_at) return "acknowledge";
+  if (!wo.responded_at) return "response";
+  return "resolution";
+}
+
+export function openStageStartedAt(wo) {
+  switch (openSlaStage(wo)) {
+    case "acknowledge":
+      return wo.created_at ?? null;
+    case "response":
+      return wo.acknowledged_at ?? null;
+    case "resolution":
+      return wo.responded_at ?? null;
+    default:
+      return null;
+  }
+}
+
+export function openStageDueAt(wo) {
+  switch (openSlaStage(wo)) {
+    case "acknowledge":
+      return wo.sla_ack_due_at ?? null;
+    case "response":
+      return wo.sla_response_due_at ?? null;
+    case "resolution":
+      return wo.sla_resolution_due_at ?? null;
+    default:
+      return null;
+  }
+}
+
+/** Milliseconds left in the open stage. Null when there is no stage or no
+ *  deadline stored for it — which every caller renders as "—" and counts in
+ *  neither bucket. A deadline that has not started cannot be missed. */
+export function openStageRemainMs(wo, now = Date.now()) {
+  const due = at(openStageDueAt(wo));
+  return due == null ? null : due - now;
+}
+
+export function isStageOverdue(wo, now = Date.now()) {
+  const remain = openStageRemainMs(wo, now);
+  return remain != null && remain < 0;
+}
+
+/** The last quarter of the OPEN STAGE's own window, which is what
+ *  si_sla_warning_sweep measures after 0068. Overdue is excluded rather than
+ *  implied: the two dashboard buckets are shown side by side and a work order
+ *  counted in both would make them add up to more than the pile. */
+export function isStageAtRisk(wo, now = Date.now()) {
+  const remain = openStageRemainMs(wo, now);
+  if (remain == null || remain < 0) return false;
+  const started = at(openStageStartedAt(wo));
+  const due = at(openStageDueAt(wo));
+  if (started == null || due == null) return false;
+  const windowMs = due - started;
+  return windowMs > 0 && remain < windowMs * 0.25;
+}

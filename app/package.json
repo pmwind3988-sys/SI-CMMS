@@ -16,6 +16,7 @@
     "env:which": "node scripts/switchEnv.js which",
     "clone:config": "node scripts/cloneReferenceConfig.js",
     "check:env": "node scripts/checkEnv.js",
+    "check:units": "node scripts/checks/slaStages.check.mjs && node scripts/checks/slaExtension.check.mjs",
     "seed:demo": "node scripts/seedDemoWorkOrder.js",
     "bootstrap:users": "node scripts/bootstrapUsers.js",
     "apk:record": "node scripts/recordApkBuild.js",
