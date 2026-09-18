@@ -120,7 +120,11 @@ assert.equal(closed.suggested, null);
 // ---------------------------------------------------------------------------
 // A stage whose clock has not started has no deadline to move. It is still
 // offered, with dueAt null, and the dialog says so rather than inventing a
-// date — reachable on a P7 whose work has not begun.
+// date. Since migration 0070 the open stage is decided by STATUS, not by
+// which timestamp is null — so this work order is already `assigned` and
+// therefore sitting in the RESPONSE stage, whose clock (acknowledged_at) has
+// not started. That is the reachable gap: a row can carry a status ahead of
+// a stamp that was never backfilled for it.
 // ---------------------------------------------------------------------------
 const unstarted = {
   priority: "P7",
@@ -134,8 +138,8 @@ const unstarted = {
 };
 const u = extensionOptions(unstarted, PRIORITIES, slaFor, T0);
 assert.deepEqual(u.map((o) => o.id), ["P8"]);
-assert.equal(u[0].dueAt, T0 + 7200 * MIN, "P8's ack stage is also 5 days");
-assert.equal(u[0].gainMs, 0);
+assert.equal(u[0].dueAt, null, "the response stage's clock has not started, so there is no deadline to offer");
+assert.equal(u[0].gainMs, null, "with no deadline on either side, the gain is unknown rather than zero");
 
 // Null-safe.
 assert.deepEqual(extensionOptions(null, PRIORITIES, slaFor, T0), []);

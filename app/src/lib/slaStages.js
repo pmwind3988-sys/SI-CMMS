@@ -183,11 +183,16 @@ export function slaStages(wo, sla) {
    line in the same place, the way slaWindowMs() already mirrors
    si_sla_warning_sweep()'s 25%.
 
-   `openSlaStage` tests the finished statuses FIRST, before the two
-   timestamps. A work order can reach `closed` with `acknowledged_at` never
-   stamped — 0062 found three of them on the test project — and asking
-   about its acknowledge stage would report a job finished in June as
-   currently late.
+   `openSlaStage` keys on STATUS, not on the two timestamps (migration 0070).
+   The status is the work order's actual state and is never null; the two
+   stamps are denormalised conveniences that CAN be missing — 0062 found
+   three closed rows with neither, and re-deriving them from history missed
+   another: measured on the test project before this fix, 33 of 45 work
+   orders reported "acknowledge" as their open stage merely because
+   `acknowledged_at` was null, including rows sitting in `repairing` and
+   `testing` that had provably left that stage already. Falling back to the
+   timestamps would report a job in the middle of a repair as still waiting
+   to be assigned.
    ------------------------------------------------------------------ */
 
 export const STAGE_LABELS = {
@@ -196,13 +201,14 @@ export const STAGE_LABELS = {
   resolution: "Resolution",
 };
 
-const FINISHED = ["completed", "closed"];
+const FINISHED = ["completed", "verified", "closed"];
+const RESPONSE_STATUSES = ["assigned", "accepted", "on_the_way", "on_site"];
 
 export function openSlaStage(wo) {
   if (!wo) return null;
   if (FINISHED.includes(wo.status)) return null;
-  if (!wo.acknowledged_at) return "acknowledge";
-  if (!wo.responded_at) return "response";
+  if (wo.status === "open") return "acknowledge";
+  if (RESPONSE_STATUSES.includes(wo.status)) return "response";
   return "resolution";
 }
 

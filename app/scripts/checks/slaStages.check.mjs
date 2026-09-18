@@ -66,9 +66,26 @@ const repairing = {
 assert.equal(openSlaStage(repairing), "resolution");
 assert.equal(openStageStartedAt(repairing), repairing.responded_at);
 
+// The case that caused the fix (migration 0070): a work order sitting in
+// `repairing`, with `responded_at` stamped but `acknowledged_at` never
+// recorded, must report its open stage as `resolution` — not `acknowledge`
+// just because one of two timestamps is null. The status is what is true;
+// the timestamps are conveniences that can be missing.
+const repairingUnstamped = {
+  ...repairing,
+  acknowledged_at: null,
+};
+assert.equal(openSlaStage(repairingUnstamped), "resolution");
+
+// Retired mid-flow statuses still map to the response stage — rows can carry
+// them even though nothing assigns them any more.
+for (const status of ["on_the_way", "on_site"]) {
+  assert.equal(openSlaStage({ ...assigned, status }), "response");
+}
+
 // Finished work has no open stage and is never overdue or at risk, whatever
 // its deadlines say — a countdown on a finished job is a deadline for nothing.
-for (const status of ["completed", "closed"]) {
+for (const status of ["completed", "verified", "closed"]) {
   const done = { ...repairing, status, sla_resolution_due_at: iso(T0 - MIN) };
   assert.equal(openSlaStage(done), null);
   assert.equal(openStageDueAt(done), null);
