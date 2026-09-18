@@ -111,7 +111,7 @@ export type Database = {
           category: string | null
           created_at: string
           criticality: Database["public"]["Enums"]["si_criticality"] | null
-          department_id: string
+          department_id: string | null
           id: string
           install_date: string | null
           manufacturer: string | null
@@ -132,7 +132,7 @@ export type Database = {
           category?: string | null
           created_at?: string
           criticality?: Database["public"]["Enums"]["si_criticality"] | null
-          department_id: string
+          department_id?: string | null
           id: string
           install_date?: string | null
           manufacturer?: string | null
@@ -153,7 +153,7 @@ export type Database = {
           category?: string | null
           created_at?: string
           criticality?: Database["public"]["Enums"]["si_criticality"] | null
-          department_id?: string
+          department_id?: string | null
           id?: string
           install_date?: string | null
           manufacturer?: string | null
@@ -485,11 +485,15 @@ export type Database = {
           entity_label: string | null
           entity_type: Database["public"]["Enums"]["si_entity_type"]
           id: string
+          push_claimed_at: string | null
+          push_gave_up_at: string | null
+          pushed_at: string | null
           recipient_id: string
           recipient_role: Database["public"]["Enums"]["si_role"] | null
           status: Database["public"]["Enums"]["si_notif_status"]
           title: string
           type: string
+          wo_status: Database["public"]["Enums"]["si_wo_status"] | null
         }
         Insert: {
           body?: string | null
@@ -498,11 +502,15 @@ export type Database = {
           entity_label?: string | null
           entity_type?: Database["public"]["Enums"]["si_entity_type"]
           id?: string
+          push_claimed_at?: string | null
+          push_gave_up_at?: string | null
+          pushed_at?: string | null
           recipient_id: string
           recipient_role?: Database["public"]["Enums"]["si_role"] | null
           status?: Database["public"]["Enums"]["si_notif_status"]
           title: string
           type: string
+          wo_status?: Database["public"]["Enums"]["si_wo_status"] | null
         }
         Update: {
           body?: string | null
@@ -511,11 +519,15 @@ export type Database = {
           entity_label?: string | null
           entity_type?: Database["public"]["Enums"]["si_entity_type"]
           id?: string
+          push_claimed_at?: string | null
+          push_gave_up_at?: string | null
+          pushed_at?: string | null
           recipient_id?: string
           recipient_role?: Database["public"]["Enums"]["si_role"] | null
           status?: Database["public"]["Enums"]["si_notif_status"]
           title?: string
           type?: string
+          wo_status?: Database["public"]["Enums"]["si_wo_status"] | null
         }
         Relationships: [
           {
@@ -592,6 +604,53 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          failed_at: string | null
+          id: string
+          last_error: string | null
+          last_seen_at: string
+          p256dh: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          failed_at?: string | null
+          id?: string
+          last_error?: string | null
+          last_seen_at?: string
+          p256dh: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          failed_at?: string | null
+          id?: string
+          last_error?: string | null
+          last_seen_at?: string
+          p256dh?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_subscriptions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       role_permissions: {
         Row: {
@@ -672,6 +731,7 @@ export type Database = {
           resolution_target_minutes: number
           response_target_label: string | null
           response_target_minutes: number | null
+          targets_are_sequential: boolean
           updated_at: string
         }
         Insert: {
@@ -685,6 +745,7 @@ export type Database = {
           resolution_target_minutes: number
           response_target_label?: string | null
           response_target_minutes?: number | null
+          targets_are_sequential?: boolean
           updated_at?: string
         }
         Update: {
@@ -698,6 +759,7 @@ export type Database = {
           resolution_target_minutes?: number
           response_target_label?: string | null
           response_target_minutes?: number | null
+          targets_are_sequential?: boolean
           updated_at?: string
         }
         Relationships: [
@@ -713,6 +775,148 @@ export type Database = {
             columns: ["priority_id"]
             isOneToOne: false
             referencedRelation: "priorities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sla_backfill_0069: {
+        Row: {
+          acknowledged_at: string | null
+          captured_at: string
+          closed_at: string | null
+          created_at: string | null
+          priority: Database["public"]["Enums"]["si_priority"] | null
+          resolved_at: string | null
+          responded_at: string | null
+          sla_ack_due_at: string | null
+          sla_breached: boolean | null
+          sla_resolution_due_at: string | null
+          sla_response_due_at: string | null
+          sla_warning_sent: boolean | null
+          status: Database["public"]["Enums"]["si_wo_status"] | null
+          work_order_id: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          captured_at?: string
+          closed_at?: string | null
+          created_at?: string | null
+          priority?: Database["public"]["Enums"]["si_priority"] | null
+          resolved_at?: string | null
+          responded_at?: string | null
+          sla_ack_due_at?: string | null
+          sla_breached?: boolean | null
+          sla_resolution_due_at?: string | null
+          sla_response_due_at?: string | null
+          sla_warning_sent?: boolean | null
+          status?: Database["public"]["Enums"]["si_wo_status"] | null
+          work_order_id: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          captured_at?: string
+          closed_at?: string | null
+          created_at?: string | null
+          priority?: Database["public"]["Enums"]["si_priority"] | null
+          resolved_at?: string | null
+          responded_at?: string | null
+          sla_ack_due_at?: string | null
+          sla_breached?: boolean | null
+          sla_resolution_due_at?: string | null
+          sla_response_due_at?: string | null
+          sla_warning_sent?: boolean | null
+          status?: Database["public"]["Enums"]["si_wo_status"] | null
+          work_order_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sla_backfill_0069_work_order_id_fkey"
+            columns: ["work_order_id"]
+            isOneToOne: true
+            referencedRelation: "work_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sla_backfill_0070: {
+        Row: {
+          acknowledged_at: string | null
+          assigned_to_id: string | null
+          captured_at: string
+          closed_at: string | null
+          created_at: string | null
+          decline_count: number | null
+          priority: Database["public"]["Enums"]["si_priority"] | null
+          resolved_at: string | null
+          responded_at: string | null
+          sla_ack_breached: boolean | null
+          sla_ack_due_at: string | null
+          sla_breached: boolean | null
+          sla_resolution_breached: boolean | null
+          sla_resolution_due_at: string | null
+          sla_response_breached: boolean | null
+          sla_response_due_at: string | null
+          sla_stage_overdue: boolean | null
+          sla_warning_sent: boolean | null
+          status: Database["public"]["Enums"]["si_wo_status"] | null
+          verified_at: string | null
+          verified_by: string | null
+          work_order_id: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          assigned_to_id?: string | null
+          captured_at?: string
+          closed_at?: string | null
+          created_at?: string | null
+          decline_count?: number | null
+          priority?: Database["public"]["Enums"]["si_priority"] | null
+          resolved_at?: string | null
+          responded_at?: string | null
+          sla_ack_breached?: boolean | null
+          sla_ack_due_at?: string | null
+          sla_breached?: boolean | null
+          sla_resolution_breached?: boolean | null
+          sla_resolution_due_at?: string | null
+          sla_response_breached?: boolean | null
+          sla_response_due_at?: string | null
+          sla_stage_overdue?: boolean | null
+          sla_warning_sent?: boolean | null
+          status?: Database["public"]["Enums"]["si_wo_status"] | null
+          verified_at?: string | null
+          verified_by?: string | null
+          work_order_id: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          assigned_to_id?: string | null
+          captured_at?: string
+          closed_at?: string | null
+          created_at?: string | null
+          decline_count?: number | null
+          priority?: Database["public"]["Enums"]["si_priority"] | null
+          resolved_at?: string | null
+          responded_at?: string | null
+          sla_ack_breached?: boolean | null
+          sla_ack_due_at?: string | null
+          sla_breached?: boolean | null
+          sla_resolution_breached?: boolean | null
+          sla_resolution_due_at?: string | null
+          sla_response_breached?: boolean | null
+          sla_response_due_at?: string | null
+          sla_stage_overdue?: boolean | null
+          sla_warning_sent?: boolean | null
+          status?: Database["public"]["Enums"]["si_wo_status"] | null
+          verified_at?: string | null
+          verified_by?: string | null
+          work_order_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sla_backfill_0070_work_order_id_fkey"
+            columns: ["work_order_id"]
+            isOneToOne: true
+            referencedRelation: "work_orders"
             referencedColumns: ["id"]
           },
         ]
@@ -1098,6 +1302,7 @@ export type Database = {
       }
       work_orders: {
         Row: {
+          acknowledged_at: string | null
           area: string | null
           asset_id: string
           asset_name: string | null
@@ -1118,8 +1323,12 @@ export type Database = {
           id: string
           impact: Database["public"]["Enums"]["si_impact"] | null
           permit_required: boolean
-          plant_id: string | null
+          plant_id: string
           priority: Database["public"]["Enums"]["si_priority"]
+          priority_overridden_at: string | null
+          priority_overridden_by: string | null
+          priority_override: Database["public"]["Enums"]["si_priority"] | null
+          priority_override_reason: string | null
           priority_touched: boolean
           reopen_reason: string | null
           requester_id: string
@@ -1127,10 +1336,17 @@ export type Database = {
           requester_phone: string | null
           resolution_notes: string | null
           resolved_at: string | null
+          responded_at: string | null
           safety_risk: Json
+          sla_ack_breached: boolean
           sla_ack_due_at: string | null
           sla_breached: boolean
+          sla_extension_count: number
+          sla_resolution_breached: boolean
           sla_resolution_due_at: string | null
+          sla_response_breached: boolean
+          sla_response_due_at: string | null
+          sla_stage_overdue: boolean
           sla_warning_sent: boolean
           spare_part_reason: string | null
           status: Database["public"]["Enums"]["si_wo_status"]
@@ -1149,6 +1365,7 @@ export type Database = {
           wo_number: string | null
         }
         Insert: {
+          acknowledged_at?: string | null
           area?: string | null
           asset_id: string
           asset_name?: string | null
@@ -1169,8 +1386,12 @@ export type Database = {
           id?: string
           impact?: Database["public"]["Enums"]["si_impact"] | null
           permit_required?: boolean
-          plant_id?: string | null
+          plant_id: string
           priority: Database["public"]["Enums"]["si_priority"]
+          priority_overridden_at?: string | null
+          priority_overridden_by?: string | null
+          priority_override?: Database["public"]["Enums"]["si_priority"] | null
+          priority_override_reason?: string | null
           priority_touched?: boolean
           reopen_reason?: string | null
           requester_id: string
@@ -1178,10 +1399,17 @@ export type Database = {
           requester_phone?: string | null
           resolution_notes?: string | null
           resolved_at?: string | null
+          responded_at?: string | null
           safety_risk?: Json
+          sla_ack_breached?: boolean
           sla_ack_due_at?: string | null
           sla_breached?: boolean
+          sla_extension_count?: number
+          sla_resolution_breached?: boolean
           sla_resolution_due_at?: string | null
+          sla_response_breached?: boolean
+          sla_response_due_at?: string | null
+          sla_stage_overdue?: boolean
           sla_warning_sent?: boolean
           spare_part_reason?: string | null
           status?: Database["public"]["Enums"]["si_wo_status"]
@@ -1200,6 +1428,7 @@ export type Database = {
           wo_number?: string | null
         }
         Update: {
+          acknowledged_at?: string | null
           area?: string | null
           asset_id?: string
           asset_name?: string | null
@@ -1220,8 +1449,12 @@ export type Database = {
           id?: string
           impact?: Database["public"]["Enums"]["si_impact"] | null
           permit_required?: boolean
-          plant_id?: string | null
+          plant_id?: string
           priority?: Database["public"]["Enums"]["si_priority"]
+          priority_overridden_at?: string | null
+          priority_overridden_by?: string | null
+          priority_override?: Database["public"]["Enums"]["si_priority"] | null
+          priority_override_reason?: string | null
           priority_touched?: boolean
           reopen_reason?: string | null
           requester_id?: string
@@ -1229,10 +1462,17 @@ export type Database = {
           requester_phone?: string | null
           resolution_notes?: string | null
           resolved_at?: string | null
+          responded_at?: string | null
           safety_risk?: Json
+          sla_ack_breached?: boolean
           sla_ack_due_at?: string | null
           sla_breached?: boolean
+          sla_extension_count?: number
+          sla_resolution_breached?: boolean
           sla_resolution_due_at?: string | null
+          sla_response_breached?: boolean
+          sla_response_due_at?: string | null
+          sla_stage_overdue?: boolean
           sla_warning_sent?: boolean
           spare_part_reason?: string | null
           status?: Database["public"]["Enums"]["si_wo_status"]
@@ -1280,8 +1520,22 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "work_orders_priority_overridden_by_fkey"
+            columns: ["priority_overridden_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "work_orders_requester_id_fkey"
             columns: ["requester_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "work_orders_timeline_corrected_by_fkey"
+            columns: ["timeline_corrected_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -1301,13 +1555,15 @@ export type Database = {
     }
     Functions: {
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
-      si_account_rank: {
-        Args: {
-          p_is_protected: boolean
-          p_roles: Database["public"]["Enums"]["si_role"][]
-        }
-        Returns: number
-      }
+      si_account_rank:
+        | { Args: { p_is_protected: boolean; p_role: string }; Returns: number }
+        | {
+            Args: {
+              p_is_protected: boolean
+              p_roles: Database["public"]["Enums"]["si_role"][]
+            }
+            Returns: number
+          }
       si_admins: { Args: never; Returns: string[] }
       si_caller_rank: { Args: never; Returns: number }
       si_can_delete_work_orders: { Args: never; Returns: boolean }
@@ -1334,6 +1590,15 @@ export type Database = {
           subtitle: string
           title: string
         }[]
+      }
+      si_dashboard_charts_range: {
+        Args: {
+          p_bucket?: string
+          p_from: string
+          p_plant_id?: string
+          p_to: string
+        }
+        Returns: Json
       }
       si_decline_work_order: {
         Args: { p_reason: string; p_wo_id: string }
@@ -1364,9 +1629,22 @@ export type Database = {
         Args: { p_employee_id: string }
         Returns: string
       }
+      si_enqueue_push: {
+        Args: { p_notification_id: string }
+        Returns: undefined
+      }
+      si_extend_work_order_sla: {
+        Args: {
+          p_priority: Database["public"]["Enums"]["si_priority"]
+          p_work_order_id: string
+        }
+        Returns: undefined
+      }
       si_has_role: { Args: { p_role: string }; Returns: boolean }
+      si_hods: { Args: never; Returns: string[] }
       si_in_same_department: { Args: { dept: string }; Returns: boolean }
       si_is_admin: { Args: never; Returns: boolean }
+      si_is_hod: { Args: never; Returns: boolean }
       si_is_manager: { Args: never; Returns: boolean }
       si_is_manager_or_admin: { Args: never; Returns: boolean }
       si_is_placeholder_email: { Args: { p_email: string }; Returns: boolean }
@@ -1384,14 +1662,60 @@ export type Database = {
           p_recipient_role: Database["public"]["Enums"]["si_role"]
           p_title: string
           p_type: string
+          p_wo_status?: Database["public"]["Enums"]["si_wo_status"]
         }
         Returns: undefined
+      }
+      si_notify_assigners: {
+        Args: {
+          p_body: string
+          p_department_id: string
+          p_exclude?: string[]
+          p_title: string
+          p_type: string
+          p_wo_number: string
+          p_work_order_id: string
+        }
+        Returns: number
+      }
+      si_notify_hods: {
+        Args: {
+          p_body: string
+          p_exclude?: string[]
+          p_title: string
+          p_type: string
+          p_wo_number: string
+          p_work_order_id: string
+        }
+        Returns: number
+      }
+      si_open_sla_stage: {
+        Args: { w: Database["public"]["Tables"]["work_orders"]["Row"] }
+        Returns: string
+      }
+      si_open_stage_due_at: {
+        Args: { w: Database["public"]["Tables"]["work_orders"]["Row"] }
+        Returns: string
+      }
+      si_open_stage_started_at: {
+        Args: { w: Database["public"]["Tables"]["work_orders"]["Row"] }
+        Returns: string
       }
       si_open_statuses: {
         Args: never
         Returns: Database["public"]["Enums"]["si_wo_status"][]
       }
+      si_override_work_order_priority: {
+        Args: {
+          p_priority: Database["public"]["Enums"]["si_priority"]
+          p_reason: string
+          p_work_order_id: string
+        }
+        Returns: undefined
+      }
+      si_priority_override: { Args: never; Returns: boolean }
       si_protected_override: { Args: never; Returns: boolean }
+      si_push_retry_sweep: { Args: never; Returns: undefined }
       si_rank: {
         Args: {
           p_protected?: boolean
@@ -1404,6 +1728,15 @@ export type Database = {
         Returns: boolean
       }
       si_refresh_dashboard_stats: { Args: never; Returns: Json }
+      si_register_push_subscription: {
+        Args: {
+          p_auth: string
+          p_endpoint: string
+          p_p256dh: string
+          p_user_agent?: string
+        }
+        Returns: undefined
+      }
       si_replace_attachment: {
         Args: {
           p_attachment_id: string
@@ -1441,13 +1774,18 @@ export type Database = {
         Args: { p: Database["public"]["Enums"]["si_priority"] }
         Returns: Record<string, unknown>
       }
+      si_sla_targets: {
+        Args: { p: Database["public"]["Enums"]["si_priority"] }
+        Returns: Record<string, unknown>
+      }
       si_sla_warning_sweep: { Args: never; Returns: number }
+      si_storage_usage: { Args: never; Returns: Json }
       si_sweep_login_attempts: { Args: never; Returns: undefined }
-      si_timeline_correction: { Args: never; Returns: boolean }
       si_terminal_statuses: {
         Args: never
         Returns: Database["public"]["Enums"]["si_wo_status"][]
       }
+      si_timeline_correction: { Args: never; Returns: boolean }
       si_transition_work_order: {
         Args: {
           p_fields?: Json
@@ -1457,6 +1795,7 @@ export type Database = {
           p_wo_id: string
         }
         Returns: {
+          acknowledged_at: string | null
           area: string | null
           asset_id: string
           asset_name: string | null
@@ -1477,8 +1816,12 @@ export type Database = {
           id: string
           impact: Database["public"]["Enums"]["si_impact"] | null
           permit_required: boolean
-          plant_id: string | null
+          plant_id: string
           priority: Database["public"]["Enums"]["si_priority"]
+          priority_overridden_at: string | null
+          priority_overridden_by: string | null
+          priority_override: Database["public"]["Enums"]["si_priority"] | null
+          priority_override_reason: string | null
           priority_touched: boolean
           reopen_reason: string | null
           requester_id: string
@@ -1486,10 +1829,17 @@ export type Database = {
           requester_phone: string | null
           resolution_notes: string | null
           resolved_at: string | null
+          responded_at: string | null
           safety_risk: Json
+          sla_ack_breached: boolean
           sla_ack_due_at: string | null
           sla_breached: boolean
+          sla_extension_count: number
+          sla_resolution_breached: boolean
           sla_resolution_due_at: string | null
+          sla_response_breached: boolean
+          sla_response_due_at: string | null
+          sla_stage_overdue: boolean
           sla_warning_sent: boolean
           spare_part_reason: string | null
           status: Database["public"]["Enums"]["si_wo_status"]
@@ -1514,6 +1864,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      si_unregister_push_subscription: {
+        Args: { p_endpoint: string }
+        Returns: undefined
+      }
+      si_verify_work_order: {
+        Args: { p_remarks?: string; p_wo_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       si_asset_status:
@@ -1527,10 +1885,22 @@ export type Database = {
       si_downtime_unit: "hours" | "days"
       si_entity_type: "work_order" | "asset" | "comment"
       si_file_type: "photo" | "video" | "document"
-      si_impact: "full_stoppage" | "reduced_capacity" | "auxiliary" | "none"
+      si_impact:
+        | "full_stoppage"
+        | "reduced_capacity"
+        | "auxiliary"
+        | "none"
+        | "long_term"
+        | "scheduled"
       si_notif_status: "sent" | "read"
-      si_priority: "P1" | "P2" | "P3" | "P4"
-      si_role: "requester" | "technician" | "supervisor" | "manager" | "admin"
+      si_priority: "P1" | "P2" | "P3" | "P4" | "P7" | "P8"
+      si_role:
+        | "requester"
+        | "technician"
+        | "supervisor"
+        | "hod"
+        | "manager"
+        | "admin"
       si_user_status: "active" | "inactive"
       si_wo_status:
         | "open"
@@ -1560,12 +1930,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1589,11 +1959,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1614,11 +1984,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1639,11 +2009,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1656,11 +2026,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1687,10 +2057,24 @@ export const Constants = {
       si_downtime_unit: ["hours", "days"],
       si_entity_type: ["work_order", "asset", "comment"],
       si_file_type: ["photo", "video", "document"],
-      si_impact: ["full_stoppage", "reduced_capacity", "auxiliary", "none"],
+      si_impact: [
+        "full_stoppage",
+        "reduced_capacity",
+        "auxiliary",
+        "none",
+        "long_term",
+        "scheduled",
+      ],
       si_notif_status: ["sent", "read"],
-      si_priority: ["P1", "P2", "P3", "P4"],
-      si_role: ["requester", "technician", "supervisor", "manager", "admin"],
+      si_priority: ["P1", "P2", "P3", "P4", "P7", "P8"],
+      si_role: [
+        "requester",
+        "technician",
+        "supervisor",
+        "hod",
+        "manager",
+        "admin",
+      ],
       si_user_status: ["active", "inactive"],
       si_wo_status: [
         "open",
