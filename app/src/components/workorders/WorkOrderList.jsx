@@ -145,12 +145,18 @@ export default function WorkOrderList() {
 
   /* Advanced filters — hidden behind a toggle, closed by default, one control
      per column the always-visible row does not already cover (department,
-     plant, assignee, SLA band). They filter the loaded rows exactly like the
-     primary controls, so Export stays in step. "All" means the column is not
-     narrowing. */
+     plant, machine, assignee, SLA band). They filter the loaded rows exactly
+     like the primary controls, so Export stays in step. "All" means the column
+     is not narrowing. */
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fDepartment, setFDepartment] = useState("All");
   const [fPlant, setFPlant] = useState("All");
+  /* "All" | asset_name. Keyed on the NAME, not asset_id: every "Other (specify)"
+     work order points at its plant's shared `Other` asset row, so filtering by
+     id would collapse four different hand-typed machines into one option that
+     means nothing. asset_name is also what the list, the detail page and the
+     export all read, so the filter matches the text on the row. */
+  const [fMachine, setFMachine] = useState("All");
   const [fAssignee, setFAssignee] = useState("All"); // "All" | "unassigned" | assigned_to_id
   const [fSla, setFSla] = useState("All");
 
@@ -210,6 +216,7 @@ export default function WorkOrderList() {
       // nothing.
       if (fDepartment !== "All" && w.department_id !== fDepartment) return false;
       if (fPlant !== "All" && w.plant_id !== fPlant) return false;
+      if (fMachine !== "All" && w.asset_name !== fMachine) return false;
       if (fAssignee !== "All") {
         if (fAssignee === "unassigned" ? w.assigned_to_id != null : w.assigned_to_id !== fAssignee)
           return false;
@@ -225,7 +232,7 @@ export default function WorkOrderList() {
       }
       return true;
     },
-    [fPriority, fStatus, fDepartment, fPlant, fAssignee, fSla, q]
+    [fPriority, fStatus, fDepartment, fPlant, fMachine, fAssignee, fSla, q]
   );
 
   const filtered = useMemo(() => (workOrders ? workOrders.filter(matches) : []), [workOrders, matches]);
@@ -263,7 +270,7 @@ export default function WorkOrderList() {
 
   const pager = usePaged(sorted, {
     pageSize,
-    resetKey: `${fPriority}|${fStatus}|${fDepartment}|${fPlant}|${fAssignee}|${fSla}|${fSort}|${rangeKey}|${q}`,
+    resetKey: `${fPriority}|${fStatus}|${fDepartment}|${fPlant}|${fMachine}|${fAssignee}|${fSla}|${fSort}|${rangeKey}|${q}`,
   });
 
   /* The assignees actually present in the loaded rows, for the advanced
@@ -279,12 +286,26 @@ export default function WorkOrderList() {
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [workOrders]);
 
+  /* The machines actually present in the loaded rows, for the advanced machine
+     filter — built from the rows rather than from the 134-row asset register,
+     so every option returns something and the native picker on a phone stays a
+     short scroll rather than a wheel nobody can reach the end of. Deduped on
+     the name for the reason `fMachine` is keyed on it. */
+  const machineOptions = useMemo(() => {
+    const seen = new Set();
+    for (const w of workOrders || []) {
+      if (w.asset_name) seen.add(w.asset_name);
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [workOrders]);
+
   const advancedActive =
     (fPriority !== "All" ? 1 : 0) +
     (fStatus !== "All" ? 1 : 0) +
     (preset !== "all" ? 1 : 0) +
     (fDepartment !== "All" ? 1 : 0) +
     (fPlant !== "All" ? 1 : 0) +
+    (fMachine !== "All" ? 1 : 0) +
     (fAssignee !== "All" ? 1 : 0) +
     (fSla !== "All" ? 1 : 0);
 
@@ -296,6 +317,7 @@ export default function WorkOrderList() {
     setCustomTo("");
     setFDepartment("All");
     setFPlant("All");
+    setFMachine("All");
     setFAssignee("All");
     setFSla("All");
   }
@@ -316,6 +338,8 @@ export default function WorkOrderList() {
     if (fPriority !== "All") bits.push(`Priority: ${fPriority}`);
     if (fDepartment !== "All") bits.push(`Department: ${reference.departmentName(fDepartment)}`);
     if (fPlant !== "All") bits.push(`Plant: ${reference.plantName(fPlant)}`);
+    // The value IS the name, so nothing is resolved here — see `fMachine`.
+    if (fMachine !== "All") bits.push(`Machine: ${fMachine}`);
     if (fAssignee !== "All") {
       bits.push(
         `Assignee: ${
@@ -329,7 +353,7 @@ export default function WorkOrderList() {
     if (q) bits.push(`Search: "${q}"`);
     return bits.length ? bits.join(" · ") : "None";
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fStatus, fPriority, fDepartment, fPlant, fAssignee, fSla, q, assigneeOptions, reference.ready]);
+  }, [fStatus, fPriority, fDepartment, fPlant, fMachine, fAssignee, fSla, q, assigneeOptions, reference.ready]);
 
   async function handleExport() {
     setExporting(true);
@@ -551,6 +575,24 @@ export default function WorkOrderList() {
                 {activePlants.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {/* A plain <select>, like every other control here: that is what
+                opens as the OS picker on Android and iOS, so the machine list
+                is native on a phone without a component of its own. */}
+            <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-soft">
+              Machine
+              <select
+                value={fMachine}
+                onChange={(e) => setFMachine(e.target.value)}
+                className={`${inputClass} font-normal`}
+              >
+                <option value="All">All</option>
+                {machineOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
                   </option>
                 ))}
               </select>
