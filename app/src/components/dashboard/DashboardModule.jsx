@@ -14,6 +14,7 @@ import {
   Users,
   RefreshCw,
   CalendarClock,
+  CalendarCheck,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useReferenceData } from "../../lib/referenceData";
@@ -98,6 +99,17 @@ const CARDS = [
     color: "#7C3AED",
     title: "Open P7 — Long-term",
     blurb: "Planned long-term tasks. Measured in days, in stages, not from when they were raised.",
+  },
+  /* Migration 0072. Same reasoning as the P7 card three entries up: without
+     this a P8 would be counted in Total Open and in none of the priority
+     bands, so the bands would visibly stop adding up to the total. */
+  {
+    key: "p8_scheduled",
+    label: "P8 Scheduled",
+    icon: CalendarCheck,
+    color: "#0891B2",
+    title: "Open P8 — Scheduled",
+    blurb: "Scheduled maintenance. Measured in months, in stages, not from when they were raised.",
   },
   {
     key: "completed_today",

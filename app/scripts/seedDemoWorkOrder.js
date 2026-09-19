@@ -142,9 +142,13 @@ async function seed() {
     .update({
       created_at: t("08:15"),
       updated_at: t("09:16"),
-      sla_ack_due_at: t("08:30"),        // P2 ack target: 15 min after 08:15
-      sla_resolution_due_at: t("16:15"), // P2 resolution target: 8 hrs after 08:15
-      sla_breached: false,               // repaired by 09:10, well inside the 8hr SLA
+      sla_ack_due_at: t("08:30"),         // P2 ack target: 15 min after 08:15
+      sla_resolution_due_at: t("16:15"),  // stale, from-creation number (pre-0067); harmless —
+                                          // since 0067 P2 is sequential, so this column is only
+                                          // ever read once responded_at is set, and this status
+                                          // is unchanged so si_stamp_work_order does not run on
+                                          // this UPDATE to correct it either way
+      sla_breached: false,                // repaired by 09:10, well inside the SLA
       sla_warning_sent: false,
       resolved_at: t("09:10"),
       // The sign-off, written directly rather than through

@@ -743,7 +743,7 @@ export async function overrideWorkOrderPriority(woId, priority, reason) {
 
 /**
  * Extend a work order's SLA by re-grading it to a less urgent priority
- * (migration 0071).
+ * (migration 0072, corrected by 0073).
  *
  * Not `updateWorkOrderFields` and not a transition: the priority is derived
  * from the production impact and a trigger overwrites whatever the client sends

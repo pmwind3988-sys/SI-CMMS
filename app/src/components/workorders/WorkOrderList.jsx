@@ -695,8 +695,9 @@ export default function WorkOrderList() {
 }
 
 /* Reads the OPEN STAGE's own deadline (migrations 0067, 0068), not the
-   resolution one — see the note by slaRemainMs() in lib/constants.js for why
-   those two stopped being equivalent. Under the resolution-only reading this
+   resolution one — see lib/slaStages.js (openStageDueAt / openStageRemainMs)
+   for the current definition; lib/constants.js's slaRemainMs()/slaWindowMs()
+   were the from-creation predecessors and are gone. Under the resolution-only reading this
    column showed "—" for every work order still waiting to be assigned or
    started, which was most of the open queue; the stage label says which
    clock is actually counting, and a finished work order reads "—" as it

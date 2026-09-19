@@ -294,7 +294,7 @@ function workOrderColumns(labels, ctx) {
     { header: "Ack Stage Missed", width: 16, cell: (w) => textCell(yesNo(w.sla_ack_breached)) },
     { header: "Response Stage Missed", width: 20, cell: (w) => textCell(yesNo(w.sla_response_breached)) },
     { header: "Resolution Stage Missed", width: 22, cell: (w) => textCell(yesNo(w.sla_resolution_breached)) },
-    /* Migration 0071. Distinct from "Priority Overridden", which records the
+    /* Migration 0072, corrected by 0073. Distinct from "Priority Overridden", which records the
        requester overriding a suggestion and has read "No" for everything since
        0036 — folding them together would make one heading mean two things. */
     { header: "SLA Extensions", width: 14, cell: (w) => numCell(w.sla_extension_count ?? 0) },

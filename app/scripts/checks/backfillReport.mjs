@@ -191,4 +191,27 @@ const { rows: [ghost] } = await c.query(`
 `);
 console.log("4. finished work orders still marked overdue:", ghost.n, "(must be 0)");
 
+// 5. The exact regression 0070 corrected: 0069's arithmetic read
+//    `else now() > due` whenever a stage's own completion stamp was null,
+//    which is right for a stage the work order is still running and wrong
+//    for one it has moved past — a finished work order with no way to ever
+//    clear the flag again. 0070's rule is that an unstamped stage on a
+//    finished work order is unknowable, not missed, so none of the three
+//    sticky flags should be true where the stage's own stamp never landed.
+const { rows: [unstamped] } = await c.query(`
+  select count(*) as tested,
+         count(*) filter (
+           where (sla_ack_breached and acknowledged_at is null)
+              or (sla_response_breached and responded_at is null)
+              or (sla_resolution_breached and resolved_at is null and closed_at is null)
+         ) as disagree
+    from work_orders
+   where status in ('completed', 'verified', 'closed')
+`);
+console.log(
+  "5. finished work orders with a stage flagged breached but no completion stamp for that stage:",
+  unstamped.disagree,
+  `(must be 0; tested ${unstamped.tested} finished rows)`
+);
+
 await c.end();

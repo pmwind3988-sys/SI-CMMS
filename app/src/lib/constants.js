@@ -40,53 +40,17 @@ export function fmtDue(ms) {
   return sign < 0 ? `${out} overdue` : out;
 }
 
-/**
- * Milliseconds left against the resolution SLA, from the deadline the DATABASE
- * stored — not recomputed from the raise time.
- *
- * Every countdown in the app used to be `created_at + resolution_target_minutes`,
- * computed fresh in three separate places, on the reasoning that an admin
- * changing P2's target should change every countdown at once. Migration 0050
- * made that wrong in a way that cannot be papered over:
- *
- *  - **A sequential priority has no resolution deadline until work starts.** P7
- *    is assign-within-5-days, then start-within-3-days, then close-within-7-days,
- *    so `sla_resolution_due_at` is deliberately NULL until `responded_at` is
- *    stamped and is then measured from *that*, not from the fault. Computing it
- *    would have shown every open P7 a 7-day countdown from the raise time — a
- *    promise nothing in the database makes, on the one priority where the gap
- *    between the two is measured in days rather than minutes.
- *  - **An Administrator's re-grade moves the stored deadline** (migration 0051)
- *    and a computed countdown would ignore it, so the badge and the breach sweep
- *    would disagree about the same work order.
- *
- * Null means there is no deadline to report, which every caller already handles:
- * the countdown reads "—" and the row counts as neither overdue nor at risk. A
- * deadline that has not started cannot be missed.
- *
- * Trade-off, accepted: relabelling an SLA target in Admin -> Settings no longer
- * retroactively moves the countdowns of work orders already raised. That is the
- * FSD's rule rather than a regression — a deadline is a promise made when the
- * work order was raised.
+/* slaRemainMs() / slaWindowMs() — deleted (0074 fix wave). Both were written
+ * against the from-creation resolution deadline and had no callers left once
+ * 0067 made every priority sequential and openStageRemainMs() /
+ * openStageDueAt() / isStageAtRisk() in lib/slaStages.js took over reading
+ * the OPEN stage's own deadline instead of the resolution deadline alone.
+ * Their docblocks still described the superseded model and still claimed to
+ * mirror si_sla_warning_sweep()'s `(due - created_at) * 0.25`, which 0068
+ * replaced — a stale "this is the one definition" comment on dead code is
+ * exactly how a future change re-derives the model this branch removed. See
+ * lib/slaStages.js for the current definition.
  */
-export function slaRemainMs(wo) {
-  if (!wo?.sla_resolution_due_at) return null;
-  return new Date(wo.sla_resolution_due_at).getTime() - Date.now();
-}
-
-/**
- * The whole resolution window in milliseconds, for the "at risk" test.
- *
- * `due - created_at`, which mirrors si_sla_warning_sweep()'s
- * `(sla_resolution_due_at - created_at) * 0.25` exactly. Mirroring the sweep is
- * the point: on a sequential priority the window spans the stages that came
- * before it, so deriving it from `resolution_target_minutes` instead would put
- * the client's warning threshold and the server's in different places.
- */
-export function slaWindowMs(wo) {
-  if (!wo?.sla_resolution_due_at || !wo?.created_at) return null;
-  return new Date(wo.sla_resolution_due_at).getTime() - new Date(wo.created_at).getTime();
-}
 
 /* ------------------------------------------------------------------
    Client-side role predicates.
@@ -216,7 +180,7 @@ export function canOverridePriority(wo, currentUser) {
 }
 
 /**
- * May this person extend this work order's SLA? (migration 0071)
+ * May this person extend this work order's SLA? (migration 0072, corrected by 0073)
  *
  * Administrator, live work order, and the stage it is sitting in is either past
  * its deadline or inside the last quarter of its own window — the same 25%
