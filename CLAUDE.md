@@ -2354,6 +2354,24 @@ has happened on this project, and is what 0013 exists to fix.
 
 ## Known gaps
 
+- **Production is behind this branch by more than the SLA work, and 0042 is the proof.**
+  Measured in the production SQL editor on 2026-09-19: `select version from
+  supabase_migrations.schema_migrations where version = '0042'` returns **no rows**. Test has
+  it; production never did. So `db push` against production would apply `0042_web_push.sql`
+  in full — two tables, four columns on `notifications`, an AFTER INSERT trigger, an
+  amendment to 0002's `si_guard_notification_update()`, and a cron job that runs every
+  minute — shipping the entire web-push feature as a side effect of a change about SLA
+  stages. It is not dangerous (`si_enqueue_push()` returns early with no vault secrets, so
+  the trigger no-ops and the sweep pushes nothing) but it is not something this branch
+  asked for, and a per-minute job for a feature that is not running is not a thing to
+  install by accident.
+  **The gap is almost certainly wider than one file.** Nothing here has ever enumerated
+  production's applied versions; 0042 was found only because it blocks `db push` outright,
+  and a version that production is missing *without* a local file to trip over would not
+  announce itself at all. Before any production push, list what is actually applied there
+  and diff it against `supabase/migrations/` — do not infer it from this repository. Catching
+  production up is its own operation with its own review, not a step inside an SLA change.
+
 - **The security advisor has not been re-run after 0067-0073.** Four new functions are granted
   to `authenticated`: `si_open_sla_stage`, `si_open_stage_started_at` and `si_open_stage_due_at`
   are `immutable` SQL helpers over a row the caller can already read, and `si_extend_work_order_sla`

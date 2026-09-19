@@ -15,6 +15,34 @@
 -- schedules `cron.schedule('si-push-retry', …)` running EVERY MINUTE. Pushing
 -- this to a fresh project — or to any project where 0042 is not already
 -- applied — creates that cron job for real, not just the row saying it ran.
+--
+-- MEASURED ON PRODUCTION, 2026-09-19, in the SQL editor:
+--
+--   select version from supabase_migrations.schema_migrations
+--    where version = '0042';   ->  no rows
+--
+-- So production has NEVER had web push. `db push` would apply this file there
+-- in full: the two tables, the four columns on `notifications`, the AFTER
+-- INSERT trigger, the amendment to si_guard_notification_update() from 0002,
+-- and the per-minute cron job. That is a whole feature nobody asked this
+-- branch to ship, arriving as a side effect of a change about SLA stages.
+--
+-- Two things stop that from being a disaster and neither makes it acceptable.
+-- si_enqueue_push() returns early when `push_trigger_secret` and
+-- `push_function_url` are absent from the vault — "not configured yet is not
+-- an error" — so on a project with no secrets the trigger is a no-op and the
+-- sweep pushes nothing. The cost is a cheap query once a minute, forever, for
+-- a feature that is not running.
+--
+-- The cron scheduling below is deliberately NOT made conditional on those
+-- secrets existing. It looks like the obvious guard and it is the worse
+-- failure: the job would then be skipped at migration time and never created
+-- when somebody later set the secrets, so web push would be silently dead on
+-- exactly the project that had just been configured for it. A wasted tick is
+-- recoverable; a feature that cannot start is not.
+--
+-- What to do instead is an operational decision, not a code one — see the
+-- "Production is behind this branch" entry in CLAUDE.md's Known gaps.
 -- ===========================================================================
 -- lib/osNotifications.js can only present a notification while the app's
 -- Realtime websocket is alive. Once the browser is closed there is no process
