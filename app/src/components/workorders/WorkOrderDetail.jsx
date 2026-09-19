@@ -525,9 +525,9 @@ function PriorityDialog({ wo, onClose }) {
                 {targetSla?.targets_are_sequential ? (
                   <>
                     {" "}
-                    — a long-term task, measured in stages: {targetSla.ack_target_label} to assign,
-                    then {targetSla.response_target_label}, then{" "}
-                    {targetSla.resolution_target_label}.
+                    — measured in stages: {targetSla.ack_target_label} to assign, then{" "}
+                    {targetSla.response_target_label} once it is, then{" "}
+                    {targetSla.resolution_target_label} once work starts.
                   </>
                 ) : (
                   targetSla?.resolution_target_label && (

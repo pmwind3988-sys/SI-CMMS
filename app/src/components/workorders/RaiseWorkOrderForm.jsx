@@ -986,8 +986,12 @@ export default function RaiseWorkOrderForm({ existing }) {
                 </div>
                 {slaForPriority(effectivePriority)?.targets_are_sequential && (
                   <div className="mt-3 border-t border-[#2C5AA8] pt-3 text-[11px] text-[#B9C9E8]">
-                    A long-term task is measured in stages: each window starts when the one before it
-                    is met, not when the job is raised.
+                    {/* Wording, not the condition: `targets_are_sequential` is true on every
+                        priority since 0067, so this caption is no longer describing the P7
+                        exception it was written for. The test stays data-driven because the
+                        column is what decides the model (0050). */}
+                    Each window starts when the one before it is met, not when the job is raised —
+                    so the time to repair is measured from when the repair begins.
                   </div>
                 )}
                 {isEdit && (
