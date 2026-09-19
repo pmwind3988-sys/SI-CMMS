@@ -13,6 +13,12 @@ closed ones included. They snapshot the before-image into `sla_backfill_0069` an
 automatically. Step 4 is where you decide whether you believe the result, and it is the only
 gate that matters.
 
+**No test work order is ever raised on production, and nothing existing is deleted.** Step 7 is
+read-only for that reason, and the reason is in Step 7: work order numbers come from a counter
+that only ever increments, so a throwaway job burns its number permanently and leaves a gap in
+the sequence. The write path is exercised on staging instead, and then by the next real fault
+somebody reports.
+
 Set aside 30–45 minutes. Do not do this while people are raising work orders if you can avoid it.
 
 ---
@@ -200,20 +206,38 @@ the deploy finish before testing.
 
 ---
 
-## Step 7 — check it in the browser
+## Step 7 — check it in the browser, WITHOUT writing anything
 
-Sign in as an Administrator on the live site:
+**Nothing in this step creates, changes or deletes a work order.** No test work order is raised
+in production, for two reasons measured rather than assumed:
 
-- **The dashboard's Overdue card** reads a plausible number, and clicking it lists jobs whose
-  *current* stage is late.
+- **Work order numbers cannot be reused.** `si_before_work_order_insert` allocates from
+  `counters` with `on conflict do update set last_value = counters.last_value + 1`, and no
+  delete path winds that back. A throwaway job permanently burns its number and leaves an
+  unexplained gap in the sequence — which on a maintenance record is worse than the test data
+  it was meant to avoid.
+- **Extending or re-grading a real work order is a real change**: it moves a live priority,
+  rewrites SLA deadlines, writes an audit row and notifies the assigned technician and the
+  requester. It is not destructive, but it is not a test either.
+
+So: look, do not press. Sign in on the live site and confirm each of these by reading.
+
+- **The dashboard's Overdue card** reads a plausible number, and its drill-down lists jobs whose
+  *current* stage is late. Opening a card is a read.
 - **The work order list** shows a live countdown in the SLA column for jobs that have not
-  started yet. Before this change they would have shown "—".
-- **Open a work order.** Its SLA panel shows three stages, each marked Missed or Running where
-  appropriate.
-- **Raise a work order** and check the priority previews correctly. "Scheduled work
-  (month-scale)" should come out as a teal **P8**.
-- **On an overdue work order**, an **Extend SLA** button appears for an Administrator. It should
-  not appear on a job with plenty of time left.
+  started yet. Before this change those read "—", so this is the most visible single
+  improvement and the quickest thing to spot if it went wrong.
+- **Open several existing work orders** at different phases — one waiting to be assigned, one
+  being repaired, one finished. Each SLA panel should show three stages with sensible figures
+  and Missed / Running marks. What you are looking for is `null`, `NaN`, `Invalid Date`, a blank
+  grey priority badge, or an empty box.
+- **The Extend SLA button appears on an overdue work order and not on a fresh one.** Check that
+  it is there and that it is *absent* where it should be — then leave it alone. Do not press it
+  on a real work order.
+- **Open the raise form** and choose "Scheduled work (month-scale)" as the production impact.
+  The form previews the derived priority and its SLA targets before anything is submitted, so
+  you can confirm it shows a teal **P8** with month-scale targets — then **navigate away without
+  submitting.** Nothing is written until Submit.
 
 Then confirm the server and the screen agree:
 
@@ -223,6 +247,12 @@ select count(*) from work_orders
 ```
 
 That should match the Overdue card, within one five-minute sweep.
+
+**The end-to-end write test is the next genuine fault somebody reports.** A real work order, a
+real number, nothing to clean up afterwards. Watch it through assign → accept → repair → test →
+complete → sign-off and confirm the Overdue flag sets and clears as its stage advances. Until
+then, the full write path has been exercised on staging against the identical build and schema —
+see `docs/superpowers/evidence/2026-09-19-workflow-walkthrough.md`.
 
 ---
 
