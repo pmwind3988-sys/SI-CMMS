@@ -1,14 +1,21 @@
 "use client";
 
 /**
- * SI — Service Inside · Extending a work order's SLA (migration 0072, corrected by 0073)
+ * SI — Service Inside · Extending a work order's SLA
+ * (migration 0072, corrected by 0073, second mode added by 0075)
  *
  * A confirm dialog, not a form. The decision it collects is "yes, give this
  * work order more time", and the arithmetic behind it — which priority, how
  * much longer, and whether that is even enough — is worked out before the
  * dialog opens and shown rather than asked.
  *
- * Three things here are deliberate:
+ * Since 0075 the list holds two kinds of thing, and the labels say which
+ * rather than leaving the reader to infer it from a priority code: "Another 7
+ * days, still Long-term (P7)" tops the stage up in place, "Re-grade to
+ * Scheduled (P8)" moves the work order. The top-up leads, because it is the
+ * answer that changes least about a work order whose grading nobody disputes.
+ *
+ * Four things here are deliberate:
  *
  *  - **No reason field.** Every other deliberate act on this schema carries a
  *    typed reason, and this one does not, because it is a two-tap action on a
@@ -21,18 +28,31 @@
  *  - **Every option names its own deadline, not only a delta.** Stage windows
  *    differ in kind — P4's response stage is 22 hours, P8's is five days — so
  *    "+4d" without a date is an arithmetic problem rather than an answer.
+ *  - **A repeat top-up says which time it is, in red, above the button.**
+ *    Topping up is deliberately uncapped (0075 note 4), so this sentence and
+ *    the record it describes are the only things making a fourth one a
+ *    decision rather than a reflex. It is shown for a top-up alone: a re-grade
+ *    is a different act, and borrowing the warning for it would be false.
  */
 import { useMemo, useState } from "react";
-import { X, Clock } from "lucide-react";
+import { X, Clock, AlertTriangle } from "lucide-react";
 import { Card, ErrorBanner, ModalOverlay } from "../ui/Surfaces";
 import Button from "../ui/Button";
 import { useReferenceData } from "../../lib/referenceData";
 import { extendWorkOrderSla } from "../../lib/workOrders";
 import { describeError } from "../../lib/errors";
-import { suggestExtension } from "../../lib/slaExtension";
+import { suggestExtension, stageGrantedMs } from "../../lib/slaExtension";
 import { STAGE_LABELS, openStageDueAt, openStageRemainMs, fmtElapsed } from "../../lib/slaStages";
 import { fmtDue } from "../../lib/constants";
 import { fmtDateTimeMY } from "../../lib/datetime";
+
+/** 1st, 2nd, 3rd, 4th … 11th, 12th, 13th. The teens are the exception every
+ *  naive version gets wrong, and this one is read out loud in a warning. */
+function ordinal(n) {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] || "th"}`;
+}
 
 export function ExtendSlaDialog({ wo, onClose }) {
   const { priorities, priorityLabel, slaForPriority } = useReferenceData();
@@ -47,12 +67,23 @@ export function ExtendSlaDialog({ wo, onClose }) {
     [wo, priorities, slaForPriority]
   );
 
-  const [choice, setChoice] = useState(plan.suggested?.id ?? "");
-  const selected = plan.options.find((o) => o.id === choice) ?? null;
+  /* Keyed on `key`, never on `id`: a top-up's id is the work order's CURRENT
+     priority, so two options would answer to the same value and the radio
+     group would select the wrong one (migration 0075). */
+  const [choice, setChoice] = useState(plan.suggested?.key ?? "");
+  const selected = plan.options.find((o) => o.key === choice) ?? null;
 
   const stageLabel = plan.stage ? STAGE_LABELS[plan.stage] : null;
   const currentDue = openStageDueAt(wo);
   const remain = openStageRemainMs(wo);
+
+  const isTopUp = selected?.kind === "top-up";
+  /* Which top-up this would be. Counts top-ups alone, not `sla_extension_count`
+     — that one also counts re-grades, and announcing a "2nd time" because of an
+     unrelated priority change would be a disclaimer about something that never
+     happened. */
+  const nth = (Number(wo?.sla_top_up_count) || 0) + 1;
+  const grantedSoFarMs = stageGrantedMs(wo, plan.stage);
 
   async function submit(e) {
     e.preventDefault();
@@ -60,7 +91,7 @@ export function ExtendSlaDialog({ wo, onClose }) {
     setError(null);
     setBusy(true);
     try {
-      await extendWorkOrderSla(wo.id, selected.id);
+      await extendWorkOrderSla(wo.id, isTopUp ? null : selected.id, { topUp: isTopUp });
       onClose();
     } catch (err) {
       setError(describeError(err, "Couldn't extend the SLA."));
@@ -105,8 +136,7 @@ export function ExtendSlaDialog({ wo, onClose }) {
 
         {plan.options.length === 0 ? (
           <p className="mb-4 text-[12.5px] text-ink-soft">
-            There is no lower priority to move this work order to, so its SLA cannot be
-            extended any further.
+            This work order has no SLA stage running, so there is no deadline to extend.
           </p>
         ) : (
           <form onSubmit={submit}>
@@ -118,26 +148,36 @@ export function ExtendSlaDialog({ wo, onClose }) {
             )}
 
             <fieldset className="mb-4">
-              <legend className="mb-1.5 text-[12.5px] font-semibold text-ink">Extend to</legend>
+              <legend className="mb-1.5 text-[12.5px] font-semibold text-ink">
+                Give it more time
+              </legend>
               <div className="flex flex-col gap-1">
                 {plan.options.map((o) => (
                   <label
-                    key={o.id}
+                    key={o.key}
                     className="flex items-start gap-2.5 rounded px-2 py-2 text-[13px] text-ink hover:bg-canvas"
                   >
                     <input
                       type="radio"
                       name="extend-to"
-                      value={o.id}
-                      checked={choice === o.id}
-                      onChange={() => setChoice(o.id)}
+                      value={o.key}
+                      checked={choice === o.key}
+                      onChange={() => setChoice(o.key)}
                       className="mt-0.5"
                     />
                     <span className="min-w-0">
                       <span className="font-semibold">
-                        {o.label} ({o.id})
+                        {o.kind === "top-up" ? (
+                          <>
+                            Another {fmtElapsed(o.grantMs)}, still {o.label} ({o.id})
+                          </>
+                        ) : (
+                          <>
+                            Re-grade to {o.label} ({o.id})
+                          </>
+                        )}
                       </span>
-                      {o.id === plan.suggested?.id && (
+                      {o.key === plan.suggested?.key && (
                         <span className="ml-1.5 rounded bg-navy/[0.08] px-1.5 py-0.5 text-[10.5px] font-semibold text-navy">
                           Suggested
                         </span>
@@ -159,6 +199,34 @@ export function ExtendSlaDialog({ wo, onClose }) {
               </div>
             </fieldset>
 
+            {/* Friction on repeat use, which is the only thing standing in for a
+                cap — topping up is deliberately unlimited (migration 0075 note 4),
+                so the record and this sentence are what keep it deliberate. Shown
+                from the SECOND top-up onward, and only when a top-up is what is
+                actually selected: a re-grade is a different decision and borrowing
+                this warning for it would be false. */}
+            {isTopUp && nth > 1 && (
+              <div className="mb-4 rounded border border-danger/40 bg-danger/[0.06] px-2.5 py-2 text-[12px] leading-relaxed text-danger">
+                <AlertTriangle size={13} className="mr-1 inline align-[-2px]" />
+                <strong className="font-semibold">
+                  This would be the {ordinal(nth)} time this work order has been topped up.
+                </strong>{" "}
+                {/* Only stated when this STAGE has actually been given time. The count is
+                    per work order and the minutes are per stage, so a job topped up at
+                    acknowledge and now sitting in resolution would otherwise be told it
+                    had been given nothing — a sentence that reads as a bug. */}
+                {grantedSoFarMs > 0 && (
+                  <>
+                    Its {stageLabel ? stageLabel.toLowerCase() : "current"} stage has already
+                    been given {fmtElapsed(grantedSoFarMs)} beyond its original target.{" "}
+                  </>
+                )}
+                Every top-up is recorded with your name, and the stages it has already
+                missed stay missed — if the work keeps outrunning its deadline, the
+                priority or the plan is likely the thing to change.
+              </div>
+            )}
+
             <div className="mb-4 rounded border border-border bg-canvas px-2.5 py-2 text-[11.5px] leading-relaxed text-ink-soft">
               <Clock size={12} className="mr-1 inline align-[-1px]" />
               This is recorded on the work order&apos;s timeline with your name and the time,
@@ -172,7 +240,9 @@ export function ExtendSlaDialog({ wo, onClose }) {
                 No, leave it
               </Button>
               <Button type="submit" loading={busy} disabled={!selected}>
-                Yes, extend to {selected?.id ?? "…"}
+                {isTopUp
+                  ? `Yes, add ${fmtElapsed(selected.grantMs)}`
+                  : `Yes, extend to ${selected?.id ?? "…"}`}
               </Button>
             </div>
           </form>

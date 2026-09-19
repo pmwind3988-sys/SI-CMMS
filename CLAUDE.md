@@ -945,6 +945,83 @@ the extension's UPDATE, and the three sticky breach flags are **not** reset by a
 stage that was missed was missed, and granting more time afterwards does not un-miss it. Only
 `sla_stage_overdue` moves, because the stage may no longer be late.
 
+### Extending no longer has to move the priority (migration 0075)
+
+**0072's extension has a second mode: a TOP-UP adds one more of the work order's own
+priority's window to the stage it is sitting in, and moves nothing else.** Same button, same
+dialog, same at-risk gate, same Administrator. It exists because the re-grade primitive
+cannot say "this P7 overhaul needs another fortnight, it is still a P7", and because it runs
+out of road for reasons unrelated to the judgement: a P7 can be extended exactly once, to P8,
+and a P8 not at all — the dialog said so in as many words.
+
+**The granted time is three columns, not a pushed-out deadline, and that is the whole
+migration.** Both RPCs that touch an SLA recompute all three deadlines from scratch out of
+`si_sla_targets` plus the recorded stage moments (0051, 0072, 0074). A top-up written only
+into `sla_resolution_due_at` is therefore erased by the next priority re-grade — no error,
+nothing on the record saying the time was ever granted. `sla_ack_extra_mins`,
+`sla_response_extra_mins` and `sla_resolution_extra_mins` hold it instead, and every deadline
+computation in **both** RPCs adds the stage's own extra back on. Measured: two top-ups
+totalling 14 days, then a re-grade to P8, and the resolution deadline comes out at P8's 20-day
+window *plus* the 14 days — the re-grade preserves them, which is correct rather than
+incidental, because the two decisions are independent.
+
+Five more things worth not undoing:
+
+- **`si_stamp_work_order` needs no change, and that was checked rather than assumed.** It
+  writes the response and resolution deadlines only when they are null (0067) — it fills a
+  stage's deadline in as that stage starts and never recomputes one that exists. A stage can
+  only be topped up while it is open, and an open stage's deadline is by definition already
+  set, so the trigger and the extras can never contend for the same column. Loosen that `is
+  null` guard and this breaks.
+- **The time is added to the stage's existing deadline, never to `now()`** — it falls out of
+  the column design for free, since the extra is a term in the same arithmetic 0051 and 0072
+  already use. Consequence to expect rather than treat as a bug: a stage ten days past a
+  seven-day window is **still overdue after one top-up**. Measured on test — 16 days into a
+  P7 resolution stage, one top-up leaves `sla_stage_overdue` true and the second clears it,
+  while `sla_resolution_breached` stays true through both. The dialog marks exactly those
+  options "still overdue" before they are chosen.
+- **Uncapped, deliberately.** There is no limit on how many times a stage may be topped up.
+  The accepted cost is real and stated plainly: `sla_stage_overdue`, and with it the
+  dashboard's Overdue card, can be driven to zero by topping up rather than by fixing
+  anything. What keeps the record honest is that the three sticky flags are not reset (a
+  stage that was missed was missed), plus `sla_top_up_count` and the minutes themselves,
+  which the export reports as hours. **The friction is the client's job**: from the second
+  top-up onward the dialog says which time this is, in red, above the button, and names how
+  much that stage has already been given.
+- **`sla_top_up_count` is separate from `sla_extension_count`.** The latter counts extensions
+  of either kind; the former counts top-ups alone, because the disclaimer is a statement about
+  repeatedly buying time on one stage. Folded together, a single unrelated re-grade would
+  announce a "2nd top-up" that never happened — one heading meaning two things, the objection
+  0051 already raises against reusing `priority_touched`. The count is per work order and the
+  minutes are per stage, so the banner states the minutes only when that stage has actually
+  had some; otherwise it would read "given 0 mins", which reads as a bug.
+- **The two modes are mutually exclusive by argument, not by precedence.** A call naming both
+  a priority and a top-up is refused, because a caller that has not decided which thing it is
+  doing must not have one picked for it — that is how a re-grade ships wearing an extension's
+  audit trail. A top-up also leaves the four `priority_override` columns alone: it overrides
+  no priority, so writing its name and time there would file it as something it is not.
+
+The function is **dropped and recreated**, not `create or replace`d, because its argument list
+changes — 0056's lesson, and the failure is silent: an overload is created, every existing
+two-argument call keeps resolving to the old function, the migration pushes cleanly, the
+columns exist and the feature does not happen. One event type for both modes
+(`sla_extension`), because the timeline is being asked "did somebody buy this work order more
+time", and the remark says which kind. The four new columns join `sla_extension_count` in
+`si_guard_priority_override`'s protected set; measured, a direct PATCH of either the minutes
+or the count is refused from an Administrator's own token.
+
+On the client, `slaExtension.js` gains the top-up as the first option and `stageGrantedMs()`;
+options are keyed on **`key`, not `id`**, because a top-up's `id` is the work order's current
+priority and the radio group would otherwise select the wrong one. The re-grade options now
+carry the extras too — an option naming a date the server will not produce is worse than no
+option. `canExtendSla()` is unchanged. The export gains **SLA Top-Ups** and **SLA Time Added
+(hrs)**: a count and a quantity answer different questions, and a work order topped up once by
+a month is not the one topped up four times by an hour.
+
+`scripts/checks/sla0075TopUp.mjs` applies the migration on test inside one transaction, runs
+15 assertions and rolls back, leaving nothing behind. It is the only evidence the plpgsql
+bodies work — a successful `db push` is not that evidence.
+
 ### An Administrator may re-grade a priority (migration 0051)
 
 Since 0036 the priority was unchangeable by anybody. That is right for the requester, the
@@ -1478,7 +1555,7 @@ column that still sorts correctly and therefore never looks wrong.
 ### Exporting work orders
 
 `lib/exportWorkOrders.js` builds a four-sheet workbook — **Work Orders** (one row per work
-order, 57 columns), **Status History**, **Comments**, **Export Info** — via
+order, 59 columns), **Status History**, **Comments**, **Export Info** — via
 `write-excel-file`. Everything above `downloadWorkOrderExport()` is pure: plain data in, plain
 arrays out, no Supabase and no React, which is what makes it testable in Node, the only place
 this repo can run a test. Reference-data lookups arrive as a `labels` argument.
@@ -2391,6 +2468,20 @@ has happened on this project, and is what 0013 exists to fix.
   `si_guard_notification_update()` to let the service role stamp `pushed_at`, which is a
   widening of what may be written to a notification, by the service role only.
 
+- **0075 is applied to TEST and not to production.** Pushed on 2026-09-19; verified
+  afterwards on the live schema — the migration is recorded, the four columns exist,
+  `si_fmt_minutes(10080)` returns "7 days", and `pg_get_function_identity_arguments` shows
+  **one** `si_extend_work_order_sla` taking `(uuid, si_priority, boolean)`, which is the
+  direct evidence that the drop-and-recreate avoided 0056's overload trap. Production is
+  now behind by 0075 alone. `scripts/checks/sla0075TopUp.mjs` remains the behavioural
+  check: it re-applies the file inside a transaction, runs 15 assertions and rolls back, so
+  it is still safe to run against an already-migrated project.
+- **The security advisor has not been re-run after 0067-0075.** 0075 adds one function granted
+  to `authenticated` — `si_fmt_minutes`, an `immutable` text formatter over an integer that
+  reads nothing — and recreates `si_extend_work_order_sla` with a third argument, so its
+  existing *Signed-In Users Can Execute SECURITY DEFINER Function* row will reappear against
+  the new signature. `si_guard_priority_override` is replaced in place and re-issues its
+  revoke, which it has to.
 - **The security advisor has not been re-run after 0067-0074.** Four new functions are granted
   to `authenticated`: `si_open_sla_stage`, `si_open_stage_started_at` and `si_open_stage_due_at`
   are `immutable` SQL helpers over a row the caller can already read, and `si_extend_work_order_sla`

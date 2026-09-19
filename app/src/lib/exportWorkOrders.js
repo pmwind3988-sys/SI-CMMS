@@ -298,6 +298,28 @@ function workOrderColumns(labels, ctx) {
        requester overriding a suggestion and has read "No" for everything since
        0036 — folding them together would make one heading mean two things. */
     { header: "SLA Extensions", width: 14, cell: (w) => numCell(w.sla_extension_count ?? 0) },
+    /* Migration 0075. Two columns rather than one, for the same reason "SLA Extensions" is
+       not folded into "Priority Overridden": a count and a quantity answer different
+       questions, and a work order topped up once by a month is not the one topped up four
+       times by an hour. Hours as a number with the unit in the header, like every other
+       duration on this sheet, so it sums and pivots instead of merely looking numeric.
+       Topping up is uncapped, so this column is the honest reading of how much of an SLA
+       was promised and how much was granted afterwards. */
+    { header: "SLA Top-Ups", width: 13, cell: (w) => numCell(w.sla_top_up_count ?? 0) },
+    {
+      header: "SLA Time Added (hrs)",
+      width: 20,
+      cell: (w) =>
+        numCell(
+          Math.round(
+            (((w.sla_ack_extra_mins ?? 0) +
+              (w.sla_response_extra_mins ?? 0) +
+              (w.sla_resolution_extra_mins ?? 0)) /
+              60) *
+              100
+          ) / 100
+        ),
+    },
   ];
 
   // ---- Lifecycle, from the audit trail ----
