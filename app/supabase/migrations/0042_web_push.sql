@@ -1,6 +1,21 @@
 -- ===========================================================================
 -- 0042 — Web Push: an alert that arrives when the app is not running
 -- ===========================================================================
+-- RESTORATION NOTE (fix wave, 2026-09-19): this file is back on the branch
+-- only because `supabase db push` refuses to run at all while the remote
+-- project has a migration version recorded with no matching local file — it
+-- fails the whole push, not just this version, so every later migration on
+-- this branch would be blocked without it. It is NOT meant to apply anything
+-- on the SI-CMMS-test project: version 0042 is already recorded there (this
+-- restores the file, not the event), so `db push` sees it as already applied
+-- and skips it.
+--
+-- Read the rest of this file before ever applying it anywhere that does NOT
+-- already have version 0042 recorded: it installs the `pg_net` extension and
+-- schedules `cron.schedule('si-push-retry', …)` running EVERY MINUTE. Pushing
+-- this to a fresh project — or to any project where 0042 is not already
+-- applied — creates that cron job for real, not just the row saying it ran.
+-- ===========================================================================
 -- lib/osNotifications.js can only present a notification while the app's
 -- Realtime websocket is alive. Once the browser is closed there is no process
 -- to present anything, so the alert has to be pushed TO the device by a sender
