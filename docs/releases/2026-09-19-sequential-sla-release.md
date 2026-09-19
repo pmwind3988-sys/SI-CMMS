@@ -45,12 +45,36 @@ changed since that was measured.
 
 ### The route to try first
 
+**Run this from the worktree holding this branch, not from the main checkout.** Measured
+2026-09-19: the main checkout was sitting on an older branch that predated migrations 0064-0066,
+so the CLI found three versions applied on production with no local files and refused the whole
+push, reporting *"Remote migration versions not found in local migrations directory"* and
+offering `supabase migration repair --status reverted 0064 0065 0066` or `supabase db pull`.
+**Both are wrong answers to that message here.** Marking applied migrations as reverted puts
+production's ledger out of step with its own schema, which is the 0013 failure mode this
+repository has already paid for once; `db pull` overwrites the local files. The right answer is
+to run from a folder that has every migration.
+
 ```bash
-cd app
+cd <worktree>/app
 npm run env:prod
-npm run env:which          # must say PROD (SI-CMMS)
-npm run db:push
+npm run env:which                  # must say PROD (SI-CMMS)
+npm run db:push -- --include-all
 ```
+
+`--include-all` is required, and the `--` is what passes it through npm rather than consuming
+it. Without the flag the CLI stops with *"Found local migration files to be inserted before the
+last migration on remote database"* and names `0042`: it is numbered below migrations production
+already has, and the CLI will not slot an older file in behind newer ones unless told to.
+
+**Applying 0042 out of order was checked and is safe.** Every object it creates — the two push
+tables, `si_register_push_subscription`, `si_unregister_push_subscription`, `si_enqueue_push`,
+`si_after_notification_insert`, `si_push_retry_sweep`, the `z_push_notification` trigger and the
+three extra `notifications` columns — is touched by 0042 and by no other migration, so nothing
+later is overwritten by going back for it. The one function it shares,
+`si_guard_notification_update`, was last changed in 0038, which production has; 0042's version
+is 0038's plus the service-role `pushed_at` allowance, which is the intended end state. And 0042
+never calls `si_notify`, so 0056's signature change does not reach it.
 
 `db:push` applies the nine files in order **and records them in the migration ledger**, which
 matters more than it sounds — see the fallback below.
