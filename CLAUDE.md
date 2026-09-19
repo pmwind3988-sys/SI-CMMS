@@ -743,7 +743,7 @@ mis-assignment permanent and invisible.
 why: one flag would make Storage and Plant assignment move together the day either rule
 changes, silently granting or withdrawing the other.
 
-### Every SLA stage starts when the last one finished (0067-0073)
+### Every SLA stage starts when the last one finished (0067-0074)
 
 **Every priority is sequential now, not just P7 (migration 0067).** P1-P4's numbers had been
 authored as *cumulative* offsets from the raise time since 0006, and the split with P7 — which
@@ -2354,7 +2354,7 @@ has happened on this project, and is what 0013 exists to fix.
 
 ## Known gaps
 
-- **Production is behind this branch by more than the SLA work, and 0042 is the proof.**
+- **Production is behind this branch by exactly one file beyond the SLA work: 0042.**
   Measured in the production SQL editor on 2026-09-19: `select version from
   supabase_migrations.schema_migrations where version = '0042'` returns **no rows**. Test has
   it; production never did. So `db push` against production would apply `0042_web_push.sql`
@@ -2365,8 +2365,9 @@ has happened on this project, and is what 0013 exists to fix.
   the trigger no-ops and the sweep pushes nothing) but it is not something this branch
   asked for, and a per-minute job for a feature that is not running is not a thing to
   install by accident.
-  **Measured in full on 2026-09-19, and the gap is exactly one file — 0042 — plus this
-  branch.** Production's applied list was read from production
+
+  **The whole applied list was read, not just 0042, and nothing is hiding.** Production's
+  applied list was read from production
   (`select version from supabase_migrations.schema_migrations order by version`) and
   diffed against `supabase/migrations/`. In the repo and not on production: 0042 and
   0067-0074. On production and not in the repo: **nothing**. 0022, 0044 and 0045 are
@@ -2390,20 +2391,32 @@ has happened on this project, and is what 0013 exists to fix.
   `si_guard_notification_update()` to let the service role stamp `pushed_at`, which is a
   widening of what may be written to a notification, by the service role only.
 
-- **The security advisor has not been re-run after 0067-0073.** Four new functions are granted
+- **The security advisor has not been re-run after 0067-0074.** Four new functions are granted
   to `authenticated`: `si_open_sla_stage`, `si_open_stage_started_at` and `si_open_stage_due_at`
   are `immutable` SQL helpers over a row the caller can already read, and `si_extend_work_order_sla`
   will be reported under *Signed-In Users Can Execute SECURITY DEFINER Function* — correctly and
   deliberately, the same shape as `si_override_work_order_priority` and `si_replace_attachment`,
   because the browser calls it directly and it re-checks the caller (`si_is_admin()`, the status,
   the rank comparison) in its own body rather than leaning on the grant.
-- **The end-to-end walk on the test project, and the live client/server cross-check of the
-  Overdue count, were not run for this branch** — the session that wrote 0067-0073 and this
-  section had no outbound network to the Supabase pooler. Raising a work order through
-  `assigned → accepted → repairing → testing → completed`, checking `sla_stage_overdue` set and
-  cleared at each step, the breach sweep's idempotency, and raising a P8 from the form to confirm
-  the dashboard's priority bands still sum to `total_open`, are outstanding rather than exercised.
-  `npm run check:units` and `npm run build` pass; neither reaches the database.
+- ~~The end-to-end walk and the Overdue cross-check were not run.~~ **Run on 2026-09-19 once
+  the session regained network, and all of it passed** — evidence committed at
+  `docs/superpowers/evidence/2026-09-19-sla-verification-on-test.md`. The walk took a work
+  order from `open` to `closed` and `sla_stage_overdue` set while it sat past its acknowledge
+  deadline and cleared on the very next transition, while `sla_ack_breached` went true and
+  stayed true. 0074's two fixes were exercised against live rows: a re-grade of a work order
+  that had missed its ack stage kept `sla_breached` true (before 0074 it silently went false
+  while `sla_ack_breached` stayed true, so the export printed "Within target" beside "Ack
+  Stage Missed: Yes"), and a timeline correction on a stuck-in-`repairing` job recorded as
+  finished before its deadline now *assigns* `sla_resolution_breached = false` rather than
+  OR-ing the stamp trigger's clock-based `true`. A P8 raised from the form derived correctly
+  and the six priority bands summed to `total_open` (24 = 24). The dashboard's Overdue card
+  and `select count(*) … and sla_stage_overdue` both read 9.
+
+  What that run left behind, deliberately not tidied: **WO-2026-000040 is genuinely extended
+  from P3 to P8** (a real extension performed through the UI during the browser check), and
+  **WO-2026-000003 carries a stray mutation** from a verification script that wrote outside a
+  rolled-back transaction. Both are test data; `backfillReport.mjs` counters 1a and 2a each
+  report 1 because of them, and both trace to these two rows rather than to the migrations.
 - **`departments.plant_id` holds no information.** `createDepartment()` defaults it to
   `'PLT001'` and the raise form passes no plant, so every department on both projects —
   including the ones that clearly belong to one site — points at the retired plant. Worse
