@@ -743,112 +743,200 @@ mis-assignment permanent and invisible.
 why: one flag would make Storage and Plant assignment move together the day either rule
 changes, silently granting or withdrawing the other.
 
-### P7, and an SLA whose stages start when the last one finished (0048, 0050)
+### Every SLA stage starts when the last one finished (0067-0073)
 
-**P7 is a long-term task**: planned work with no immediate production impact, measured in days.
-It arrives with a production impact of its own — `impact_levels.long_term` → `P7` — because
-since 0036 nobody picks a priority, and a priority with no impact deriving it would be a value
-the raise form could never reach. The impact → priority mapping stays exactly 1:1.
-
-**Why P7 and not P5.** Rank 1 is most severe, and a long-term task sits well below "cosmetic or
-routine" rather than one step below it. Leaving 5 and 6 unused keeps room for a priority
-between P4 and P7 without renumbering, which matters because `priorities.rank` is what
-`si_derive_priority()` compares with `least()` and what every escalation ceiling resolves
-through.
-
-**Two migrations, and the order is forced.** 0048 adds the two enum labels (`si_priority.'P7'`,
-`si_impact.'long_term'`) and nothing else; 0050 seeds the rows that name them. Postgres refuses
-to let a transaction *use* an enum value the same transaction added and the CLI wraps each file
-in a transaction — the same trap 0035/0036 documents.
-
-**Its three targets are sequential: assigned within 5 days, `repairing` within 3 days of that,
-closed within 7 days of that.** So the numbers stored are *stage durations*, not offsets from
-the raise time.
-
-**P1-P4 are untouched.** Their numbers were authored as totals from creation — a P1 is 5
-minutes to acknowledge and 4 hours to resolve, both from the fault — and making them
-sequential would have made every one of them quietly more generous than it has been since
-0006. Which model applies is therefore **data, not code**: `sla.targets_are_sequential`, one
-code path with the row deciding, the way the permitted transitions are 22 rows in
-`wo_status_transitions`. An `if priority = 'P7'` in two trigger bodies would be a second
-definition of the same rule, which is what this file already complains that
-`suggestPriority()` vs `si_derive_priority()` costs.
-
-**"Acknowledge" and "response" now have to mean something exact.** The FSD defined acknowledge
-(creation → leaving `Open`) and resolution (creation → `Closed`) and never defined **response**:
-`sla.response_target_minutes` was added by 0009 as a third number the detail page prints, and
-nothing ever measured it. Now:
+**Every priority is sequential now, not just P7 (migration 0067).** P1-P4's numbers had been
+authored as *cumulative* offsets from the raise time since 0006, and the split with P7 — which
+0050 made sequential — was never a design, it was P7 arriving with a better model and the older
+four being left alone because converting them looked like a change to the promise. It is not:
+converting cumulative to incremental is `stage(n) = cumulative(n) - cumulative(n-1)`, and every
+priority's headline figure — the total from raise to resolution — is exactly the number it has
+had since 0006.
 
 ```
-acknowledged_at  <- first time the work order reaches 'assigned'
-responded_at     <- first time it reaches 'repairing' (work under way)
+P1  5 / 10  / 225   = 4 hrs         P4  120 / 1320 / 5760  = 5 days
+P2  15 / 45 / 420   = 8 hrs         P7  7200 / 7200 / 28800 = 30 days (unchanged, 0050)
+P3  30 / 210 / 1200 = 24 hrs        P8  7200 / 7200 / 28800 = 30 days (new, 0072)
 ```
 
-Both are `coalesce`d, so they record the FIRST arrival and never move. The trail is
-deliberately non-monotonic (0038): a decline sends `assigned` back to `open` and the next
-assignment must not restart the acknowledge clock, and `testing → repairing` on a second
-attempt must not restart the resolution one. `accepted` was the other candidate for response
-and is the weaker one — on a long-term task it would start the 7-day resolution window three
-days before anybody is at the machine.
+Each triple is *stage durations* now — acknowledge, response, resolution — not offsets from
+creation, and `sla.targets_are_sequential` is true on every row without exception rather than
+being data that only P7 and P8 set.
 
-Both columns are backfilled from `work_order_history`, first occurrence of each status,
-**filtered to `event_type = 'transition'`** — 0043's photo-replaced rows carry the work order's
-current status in `to_status`, so a photo swapped while a job was assigned would otherwise read
-as the moment it was assigned. Same trap `lib/historyEvents.js` exists for.
+**Accepted consequence, stated because it is the model rather than a rounding error: a team
+that beats a stage target finishes earlier too.** Respond to a P1 in two minutes and the repair
+is due at 3h47m from the fault, not 4h. It never works the other way — an overrunning stage
+does not shorten the next one, because the next one starts when the previous one actually
+completed.
 
-**A P7 has no resolution deadline until work starts, and that is correct.**
-`sla_resolution_due_at` stays NULL on a sequential priority until `responded_at` is stamped,
-and nothing had to change to make it safe: 0004's breach and warning sweeps both already guard
-on `sla_resolution_due_at is not null`, `si_dashboard_card_rows` already orders `nulls last`,
-and `si_stamp_work_order`'s `closed` branch already tests for null before setting
-`sla_breached`. A deadline that has not started cannot be missed, and inventing one from the
-raise time would be the from-creation model wearing the sequential model's numbers.
+**Per-stage breach and an overdue that clears, and they are two different facts kept in two
+different sets of columns.** `sla_breached` is a permanent record — the export reports it, the
+FSD forbids clearing it by the passage of time, and 0051 treats clearing it as an exception
+needing a named Administrator. The dashboard wants the opposite: a work order nine minutes
+late to be assigned should stop being "overdue" the moment it *is* assigned, because the card
+answers "what is late right now". So:
 
-`si_sla_targets(si_priority)` replaces `si_sla_target_minutes`'s two values with four. **It
-keeps EXECUTE for `authenticated`, and must**: `si_stamp_work_order` is SECURITY **INVOKER**,
-so a function it calls has its EXECUTE checked against the signed-in user — revoked, every
-status change in the app would fail with *"permission denied for function si_sla_targets"* for
-every role, exactly as `si_guard_protected_user` did before 0013. It discloses nothing
-`sla_select` does not already publish. The old function is left in place rather than dropped:
-nothing in this repository calls it, but it has been granted to PUBLIC since 0003 and dropping
-a function is not the way to find out what else reaches it.
+- `sla_ack_breached` / `sla_response_breached` / `sla_resolution_breached` — **sticky.** Set
+  when that stage's deadline passed with the stage unfinished, never cleared. This is what the
+  work order's own SLA card shows stage by stage and what the export reads.
+- `sla_stage_overdue` — **transient.** True only while the stage the work order is *currently*
+  in is past its deadline. This is what the dashboard's Overdue card counts.
+- `sla_breached` is kept and redefined as "any stage was ever missed" — the OR of the three
+  sticky flags — so every existing reader (the export's heading, the FSD's no-clearing rule,
+  0051's exception) keeps working unchanged.
 
-The sequential block in `si_stamp_work_order` sits **above** the `completed`/`closed` stamps,
-because the `closed` branch decides `sla_breached` by reading `sla_resolution_due_at` and has
-to read the value the same statement just computed.
+**`si_open_sla_stage(w)` states which stage is open once, and every reader — the sweeps, the
+dashboard, the extension RPC — calls it rather than restating it**, because two definitions of
+one rule is what `suggestPriority()` vs `si_derive_priority()` already costs this schema. It
+tests the *finished* statuses (`completed`, `verified`, `closed`) first, before either
+timestamp, and only then falls back to status ranges for `acknowledge` / `response` /
+`resolution`. That ordering, and testing status rather than the two timestamps at all, is
+migration 0070's correction — see below.
 
-**Every SLA countdown in the client now reads the stored deadline** instead of recomputing
-`created_at + resolution_target_minutes`. That arithmetic was duplicated in three places — the
-list, the detail header and `RoleDashboard`'s overdue/at-risk buckets — and 0050 made it wrong
-in a way that could not be papered over: an open P7 would have shown a 7-day countdown from the
-raise time, which is a promise nothing in the database makes, on the one priority where the gap
-between the two is measured in days. `slaRemainMs(wo)` and `slaWindowMs(wo)` in `constants.js`
-are the one definition now. Null means no deadline has started, and every caller already
-handled null — `fmtDue(null)` is "—" and both dashboard buckets test for it. Exercised against
-the real source: a P7 with no deadline reads "—" and counts as neither overdue nor at risk; a
-started one reads "6d 23h"; a breached P1 reads "2h 0m overdue".
+**`si_stamp_work_order` recomputes `sla_stage_overdue` on every relevant UPDATE rather than
+clearing it.** The obvious version — "if the stage advanced, set it false" — is wrong whenever
+a stage advances *into* one that is already late, which is reachable any time a stage target is
+shorter than the sweep's five minutes (P1's response stage is ten minutes). Recomputing from the
+new stage's own deadline needs no comparison of old to new and handles that case for free; the
+sweep then only has to handle the passage of time between transitions. The sticky flags are set
+on the stage being *left*, judged against that stage's own stored deadline and the moment it
+actually completed — never against `now()`, which would make a late assignment look punctual if
+the trigger happened to run later.
 
-`slaWindowMs` is `due - created_at`, which mirrors `si_sla_warning_sweep()`'s
-`(sla_resolution_due_at - created_at) * 0.25` exactly rather than deriving the window from
-`resolution_target_minutes` — on a sequential priority the window spans the stages before it,
-so the two would otherwise put the warning threshold in different places.
+**The breach sweep's guard moved from once-ever to once-per-stage (migration 0068), and that is
+what stops it renotifying every five minutes forever.** The old guard was `sla_breached =
+false`, which fired exactly once per work order for its entire life. Per stage that is wrong in
+both directions: a work order late to be assigned *and* later late to be fixed is two facts and
+two notifications, and a single flag conflates them; without a guard of its own, the same late
+stage would announce itself on every five-minute cron pass. The new guard is "this stage's own
+sticky flag is not set yet", which makes the sweep idempotent, caps the notification count per
+work order at three, and is why `sla_stage_overdue` has to be re-set on every pass of a stage
+that is still late — `si_stamp_work_order` only clears it on a transition, not on the sweep's
+own clock.
 
-The trade-off is accepted and is the FSD's rule rather than a regression: relabelling an SLA
-target in Admin → Settings no longer retroactively moves the countdown of a work order already
-raised. A deadline is a promise made when it was raised. An Administrator's re-grade is the one
-thing that moves one (0051), and it moves the stored column, so all three read it correctly.
+**The warning window is the stage's, not the work order's, and `sla_warning_sent` stays one
+flag per work order — deliberately not three.** `(due - created_at) * 0.25` described a window
+that no longer exists once the resolution deadline is measured from `responded_at` rather than
+`created_at`: subtracting `created_at` would include every stage before it and put the warning
+threshold somewhere nothing means. It becomes `(due - stage_start) * 0.25`, matching
+`isStageAtRisk()` on the client so the button, the banner and the notification agree. Staying
+at one flag is a deliberate non-change: it is a courtesy ping on a table (`notifications`) that
+still has no retention, and the accepted consequence is that a work order warned about its
+acknowledge stage is not warned again about its resolution stage.
 
-**The dashboard learns about P7 explicitly**, because its priority row is four hardcoded keys
-rather than a loop over the table. `si_compute_dashboard_stats` gains `p7_long_term` and
-`si_dashboard_card_rows` a branch; without them a P7 would be counted in `total_open` and in no
-band, so the four cards would visibly stop adding up — and long-term work, exactly the kind
-that sits unattended, would be the work with no figure watching it.
+**The Overdue card changed meaning, visibly and on purpose, and the figure moved in both
+directions on the day it landed.** It counted `sla_breached` — ever late; it counts
+`sla_stage_overdue` — late right now. Work stuck at an early stage appears that never did, and
+long-overdue work whose stage has since advanced leaves. The card is answering a better
+question, and "was ever late" still lives in the three per-stage sticky columns. The
+drill-down's `ORDER BY` moved from `sla_resolution_due_at` to `si_open_stage_due_at(w)` for the
+same reason: on a sequential priority the resolution deadline is NULL until work starts, so the
+old ordering sent every unstarted work order — exactly what an Overdue list is about — to the
+bottom under `nulls last`.
 
-**P7's colour is off-palette on purpose.** Every in-palette candidate collides: slate `#64748B`
-is what `priorityColor()` returns when a lookup *fails*, so a P7 badge would be
-indistinguishable from a broken one; both navies are P4's own family; green reads as completed.
-A priority badge has one job, which is to be told apart at a glance in a list, so P7 is violet
-— and it is a seed value in an editable table, so Admin → Settings can recolour it.
+**Migration 0070 is a correction, and it shipped as a new file because 0067 and 0069 were
+already applied to test** — an applied migration is never re-run, so a correction cannot edit
+the file that introduced the problem. Two rulings:
+
+- **The open stage is decided by STATUS, not by `acknowledged_at`/`responded_at` being null.**
+  Keying on the two stamps parked 33 of the 45 work orders on test at `acknowledge`, including
+  rows sitting in `repairing` and `testing` — which have provably left that stage, since a
+  status only moves forward through `wo_status_transitions`. The status is the work order's
+  actual state and is never null; the two stamps are denormalised conveniences that *can* be
+  missing (0062 found three closed rows with neither). One deliberate consequence: a declined
+  work order returns to `open` with `acknowledged_at` already set from its first assignment, so
+  it re-enters the acknowledge stage against its *original* deadline and reads as overdue until
+  somebody reassigns it — the deadline being held is the one that was actually missed, and
+  nothing clears that stamp on a decline.
+- **A stage with no completion stamp, on a work order that has moved past it, is unknowable
+  rather than missed.** 0069's arithmetic read `else now() > due` whenever a completion stamp
+  was null, which is right for a stage the work order is still running and wrong for a closed
+  one — it wrote `sla_breached = true` onto six closed work orders (WO-2026-000038, -000027,
+  -000016, -000014, -000046, -000008) that had no way to ever clear it again. The client already
+  read this correctly: `slaStages()` calls such a stage `unstamped` with `met: null`, not failed.
+  So the clock is consulted only for the stage the work order is *actually* sitting in right now
+  (by status); every other unstamped stage gets no verdict — false, same as "never started" —
+  because a row that has moved past a stage with no completion stamp is evidence of nothing
+  recorded, not evidence of a miss.
+
+**0069 recomputes every SLA under the sequential model — closed and signed-off work included —
+from recorded instants, never from `now()`.** A work order closed in June has its acknowledge
+stage judged by when it was actually assigned against when it was actually due, so the answer
+is a fact about June and will not drift again; `now()` appears only where a stage is genuinely
+still open. Sign-off is untouched — `verified_at`, `verified_by`, `status`, the assignee,
+`resolved_at`, `closed_at` and `decline_count` are named in no UPDATE, the omission being the
+mechanism as in 0051 and 0064. The stage moments are re-derived from `work_order_history` by
+0050's own rule (first occurrence of `assigned`/`repairing`, `event_type = 'transition'`), and a
+stage whose predecessor never happened gets no deadline and no verdict rather than falling back
+to `created_at`, which would be the from-creation reading the sequential model exists to remove.
+`sla_backfill_0069` (and 0070's own `sla_backfill_0070`, which additionally captures
+`verified_at`, `verified_by`, `assigned_to_id` and `decline_count` so the review gate's "did
+anything else move" check has something to check against) hold the before-image on `on conflict
+do nothing`, so the first run is the one kept and re-running either file is a no-op. Both tables
+are Superuser-only to read and grant `select` to `authenticated` alongside their RLS policy — a
+policy with no table grant fails closed with a permission error rather than returning rows.
+
+**P8 is a month, sequential like every priority since 0067, and a full priority rather than an
+extension-only value (migration 0071, 0072).** Five days to assign, five more to start, twenty
+to finish — thirty days. It arrives with an impact level of its own, `impact_levels.scheduled` →
+`P8`, for 0050's own reason: since 0036 nobody picks a priority, so a priority with no impact
+deriving it would be a value the raise form could never reach, and 0051's override sets an
+impact to match a priority and needs the map to stay 1:1. The accepted consequence is that
+requesters see "Scheduled work (month-scale)" in the impact list — the alternative,
+extension-only and reachable from nowhere else, was considered and declined. Teal `#0891B2`:
+violet is P7's, slate `#64748B` is what `priorityColor()` returns when a lookup *fails* so a P8
+badge would be indistinguishable from a broken one, and green reads as completed. The two enum
+labels (`si_priority.'P8'`, `si_impact.'scheduled'`) had to be their own file (0071) for the same
+transaction reason 0048/0050 and 0035/0036 needed a split; 0072 seeds the rows and adds the
+dashboard branch — `si_compute_dashboard_stats` gains `p8_scheduled` and `si_dashboard_card_rows`
+a branch, without which a P8 would be counted in `total_open` and in no band.
+
+**0073 is the other correction, and it is about the same 1:1-impact rule 0051 already has for
+P7.** 0051 moves the impact to `long_term` whenever an Administrator overrides a work order to
+P7, because P7 is not a severity, it is a *kind of work* — "Full production stoppage · P7" is a
+contradiction rather than a re-graded job. P8's `scheduled` is exactly the same kind of value for
+the same reason, but 0072 shipped enforcing the rule for only one of the two values it names in
+prose: overriding or extending *to* P8 stored `priority = 'P8'` next to whatever severity the
+requester had originally picked, producing the identical contradiction — "Full production
+stoppage · P8". 0073 widens the `case` in both `si_override_work_order_priority` (0051) and
+`si_extend_work_order_sla` (0072, which had never touched `impact` at all) to cover P7 and P8
+and nothing else — P1-P4 stay untouched because they *are* severities, an observation the
+requester made at the machine, and rewriting one would destroy the input `si_derive_priority` is
+computed from. The extension RPC has no `p_reason` column of its own, so the impact-change
+clause is appended to its generated remark instead, reading both labels out of `impact_levels`
+and falling back to the raw code the same way the priority labels already do.
+
+**Extending an SLA (migration 0072) is 0051's machinery behind a second door, and differs from
+it in exactly three ways — which is what earns it a separate function rather than a flag on
+`si_override_work_order_priority`.** Re-grading to a less urgent priority gives the *open stage*
+a longer window, which is what "extend" means once 0067 has made every stage sequential, so it
+reuses 0051's override columns, guard and session-local door (`si_priority_override()`,
+`set_config('si.allow_priority_override', ...)`, dying with the transaction) rather than
+duplicating them.
+
+- **The target's rank must strictly increase.** Rank ascending is severity descending, so
+  "less urgent" is a *greater* rank, and `si_extend_work_order_sla` refuses `v_new_rank <=
+  v_old_rank`. This is the one rule 0051 must *not* have — a re-grade legitimately moves in both
+  directions; extending can only ever grant time, so no client can turn "extend" into a covert
+  escalation.
+- **It generates its own remark instead of demanding a typed reason.** The action is a yes/no on
+  a phone, and a ten-character floor on a confirm dialog produces "asdfasdfasdf", which is worse
+  evidence than a generated sentence naming both priorities, the stage, and the time granted.
+- **It writes `event_type = 'sla_extension'`**, so the timeline tells an extension and a
+  re-grade apart, the same distinction 0043 drew between a transition and a photo replacement.
+
+The at-risk gate is restated in the RPC's own body because RLS does not apply inside it: the
+button appears when the open stage is overdue or in its last quarter, `canExtendSla()` decides
+what to *show*, and the RPC decides what is *allowed* — the two disagreeing must produce an
+error rather than a silent success. The 25% threshold is `si_sla_warning_sweep`'s own, measured
+over the stage's own window, not the work order's. `sla_extension_count` joins the four
+`priority_override` columns in `si_guard_priority_override`'s protected set, so a direct PATCH
+of it is refused from anybody at any rank — otherwise the count, the only thing on the row
+saying how many times this has happened, would be the one part of the record anyone could edit
+directly. And, restating 0051's own omission rule: `status` and the assignee are not named in
+the extension's UPDATE, and the three sticky breach flags are **not** reset by an extension — a
+stage that was missed was missed, and granting more time afterwards does not un-miss it. Only
+`sla_stage_overdue` moves, because the stage may no longer be late.
 
 ### An Administrator may re-grade a priority (migration 0051)
 
@@ -2259,6 +2347,20 @@ has happened on this project, and is what 0013 exists to fix.
 
 ## Known gaps
 
+- **The security advisor has not been re-run after 0067-0073.** Four new functions are granted
+  to `authenticated`: `si_open_sla_stage`, `si_open_stage_started_at` and `si_open_stage_due_at`
+  are `immutable` SQL helpers over a row the caller can already read, and `si_extend_work_order_sla`
+  will be reported under *Signed-In Users Can Execute SECURITY DEFINER Function* — correctly and
+  deliberately, the same shape as `si_override_work_order_priority` and `si_replace_attachment`,
+  because the browser calls it directly and it re-checks the caller (`si_is_admin()`, the status,
+  the rank comparison) in its own body rather than leaning on the grant.
+- **The end-to-end walk on the test project, and the live client/server cross-check of the
+  Overdue count, were not run for this branch** — the session that wrote 0067-0073 and this
+  section had no outbound network to the Supabase pooler. Raising a work order through
+  `assigned → accepted → repairing → testing → completed`, checking `sla_stage_overdue` set and
+  cleared at each step, the breach sweep's idempotency, and raising a P8 from the form to confirm
+  the dashboard's priority bands still sum to `total_open`, are outstanding rather than exercised.
+  `npm run check:units` and `npm run build` pass; neither reaches the database.
 - **`departments.plant_id` holds no information.** `createDepartment()` defaults it to
   `'PLT001'` and the raise form passes no plant, so every department on both projects —
   including the ones that clearly belong to one site — points at the retired plant. Worse
