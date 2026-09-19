@@ -763,6 +763,13 @@ Each triple is *stage durations* now — acknowledge, response, resolution — n
 creation, and `sla.targets_are_sequential` is true on every row without exception rather than
 being data that only P7 and P8 set.
 
+`si_sla_targets(si_priority)` is what every reader below calls for these numbers, and it **must
+keep `EXECUTE` for `authenticated`** — `si_stamp_work_order` is SECURITY INVOKER, so a function
+it calls has its EXECUTE checked against the signed-in user, and revoking it would make every
+status change fail, for every role, with *"permission denied for function si_sla_targets"*.
+
+
+
 **Accepted consequence, stated because it is the model rather than a rounding error: a team
 that beats a stage target finishes earlier too.** Respond to a P1 in two minutes and the repair
 is due at 3h47m from the fault, not 4h. It never works the other way — an overrunning stage
