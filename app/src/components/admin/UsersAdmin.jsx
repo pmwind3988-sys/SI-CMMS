@@ -238,30 +238,35 @@ export default function UsersAdmin() {
         )}
         {pager.visible.map((u) => (
           <Card key={u.id} className="p-3.5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-[14px] font-semibold text-ink">
-                  {u.name}
-                  {u.id === me?.uid && <span className="font-normal text-ink-soft"> · you</span>}
-                </div>
-                <div className="truncate text-[12px] text-ink-soft">
-                  {u.email}
-                  {u.employee_id && <span> · #{u.employee_id}</span>}
-                </div>
-                <div className="mt-1 text-[12px] text-ink-soft">{u.department_id || "No department"}</div>
-                {u.must_change_password && <MustChangePassword />}
+            {/* Identity takes the whole card width on a phone. Side by side
+                with the badge column it was squeezed to about half, so a work
+                address truncated mid-domain ("pmw.itsupport@pm…") and the one
+                line that identifies the account was the one line nobody could
+                read. The badges wrap under it instead — they are short, and
+                they are what there is room to compress. */}
+            <div className="min-w-0">
+              <div className="break-words text-[14px] font-semibold text-ink">
+                {u.name}
+                {u.id === me?.uid && <span className="font-normal text-ink-soft"> · you</span>}
               </div>
-              <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
-                <RoleBadges roles={u.roles} />
-                <StatusText status={u.status} />
+              <div className="break-words text-[12px] text-ink-soft">
+                {u.email}
+                {u.employee_id && <span> · #{u.employee_id}</span>}
               </div>
+              <div className="mt-1 break-words text-[12px] text-ink-soft">{u.department_id || "No department"}</div>
+              {u.must_change_password && <MustChangePassword />}
             </div>
-            <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[#F1F3F5] pt-3">
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+              <RoleBadges roles={u.roles} />
+              <StatusText status={u.status} />
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[#F1F3F5] pt-3">
               <UserActions
                 user={u}
                 me={me}
                 setPanel={setPanel}
                 onToggleStatus={handleToggleStatus}
+                iconOnly
               />
             </div>
           </Card>
@@ -395,10 +400,17 @@ function MustChangePassword() {
  * predicates only decide what to *show*; migration 0015's policies decide what
  * is allowed, and a disagreement surfaces as the database's own error message.
  */
-function UserActions({ user, me, setPanel, onToggleStatus }) {
+function UserActions({ user, me, setPanel, onToggleStatus, iconOnly = false }) {
   const editable = canEditUser(user, me);
   const isSelf = user.id === me?.uid;
   const maySetPassword = canSetUserPassword(user, me);
+  /* On a phone the three labelled buttons ate the width the name and the
+     address needed, so the card stack asks for glyphs only. The label does
+     not simply disappear — it becomes the accessible name, which is what the
+     two already-iconless buttons below have always done. Square, so the 44px
+     target survives losing its text. */
+  const square = iconOnly ? "w-11 justify-center px-0" : "whitespace-nowrap";
+  const named = (text) => (iconOnly ? { "aria-label": text, title: text } : {});
 
   if (!editable) {
     return (
@@ -430,28 +442,31 @@ function UserActions({ user, me, setPanel, onToggleStatus }) {
           size="sm"
           variant="ghost"
           icon={KeyRound}
-          className="whitespace-nowrap"
+          className={square}
+          aria-label={iconOnly ? "Set a temporary password" : undefined}
           title="Set a temporary password. They must change it the first time they sign in."
           onClick={() => setPanel({ kind: "password", user })}
         >
-          Password
+          {!iconOnly && "Password"}
         </Button>
       )}
       {/* Role and status both move someone within the hierarchy, so neither may
           be aimed at yourself — si_guard_user_self_update raises on both. */}
       {!isSelf && (
-        <Button size="sm" variant="ghost" icon={ShieldCheck} className="whitespace-nowrap" onClick={() => setPanel({ kind: "role", user })}>
-          Role
+        <Button size="sm" variant="ghost" icon={ShieldCheck} className={square} {...named("Change roles")} onClick={() => setPanel({ kind: "role", user })}>
+          {!iconOnly && "Role"}
         </Button>
       )}
-      <Button size="sm" variant="ghost" icon={Pencil} className="whitespace-nowrap" onClick={() => setPanel({ kind: "profile", user })}>
-        Edit
+      <Button size="sm" variant="ghost" icon={Pencil} className={square} {...named("Edit profile")} onClick={() => setPanel({ kind: "profile", user })}>
+        {!iconOnly && "Edit"}
       </Button>
       {!isSelf && (
         <Button
           size="sm"
           variant={user.status === "active" ? "danger" : "success"}
           icon={Power}
+          className={iconOnly ? "w-11 justify-center px-0" : undefined}
+          title={user.status === "active" ? "Deactivate account" : "Reactivate account"}
           aria-label={user.status === "active" ? "Deactivate account" : "Reactivate account"}
           onClick={() => onToggleStatus(user)}
         />
@@ -466,6 +481,7 @@ function UserActions({ user, me, setPanel, onToggleStatus }) {
           size="sm"
           variant="danger"
           icon={Trash2}
+          className={iconOnly ? "w-11 justify-center px-0" : undefined}
           aria-label="Delete account"
           title="Delete this account permanently. Refused if they have any work order history."
           onClick={() => setPanel({ kind: "delete", user })}

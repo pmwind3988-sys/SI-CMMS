@@ -222,8 +222,8 @@ export default function DashboardModule() {
       {/* Manager and Admin land here; a Manager+Supervisor reaches their other
           queue from this strip. Renders nothing for a single-role account. */}
       <RoleSwitcher current={user?.role} />
-      <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
-        <div>
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
+        <div className="min-w-0">
           <h1 className="text-xl font-bold text-ink mb-0.5">Dashboard</h1>
           <p className="text-[13px] text-ink-soft">
             {snapshotAt ? `Last updated ${snapshotAt} · tap any card for the records behind it` : "Loading…"}
@@ -233,7 +233,7 @@ export default function DashboardModule() {
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="flex min-h-[44px] items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[12.5px] font-semibold text-navy disabled:opacity-50"
+            className="flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[12.5px] font-semibold text-navy disabled:opacity-50 sm:w-auto sm:justify-start"
           >
             <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
             {refreshing ? "Refreshing…" : "Refresh now"}
