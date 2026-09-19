@@ -2365,12 +2365,30 @@ has happened on this project, and is what 0013 exists to fix.
   the trigger no-ops and the sweep pushes nothing) but it is not something this branch
   asked for, and a per-minute job for a feature that is not running is not a thing to
   install by accident.
-  **The gap is almost certainly wider than one file.** Nothing here has ever enumerated
-  production's applied versions; 0042 was found only because it blocks `db push` outright,
-  and a version that production is missing *without* a local file to trip over would not
-  announce itself at all. Before any production push, list what is actually applied there
-  and diff it against `supabase/migrations/` — do not infer it from this repository. Catching
-  production up is its own operation with its own review, not a step inside an SLA change.
+  **Measured in full on 2026-09-19, and the gap is exactly one file — 0042 — plus this
+  branch.** Production's applied list was read from production
+  (`select version from supabase_migrations.schema_migrations order by version`) and
+  diffed against `supabase/migrations/`. In the repo and not on production: 0042 and
+  0067-0074. On production and not in the repo: **nothing**. 0022, 0044 and 0045 are
+  absent from both, so they are gaps in the numbering rather than drift. Production is
+  otherwise complete through 0066.
+
+  That "nothing" is the reassuring half and it had to be measured rather than assumed: a
+  version applied remotely with no local file is what makes `supabase db push` fail the
+  *entire* push, and it is the only kind of drift that announces itself. There is none.
+
+  So a production push applies 0042 first, then this branch. **Let it**, rather than
+  recording 0042 as applied without running it: a database whose schema does not match
+  its own migration ledger is the 0013 failure mode, and this file already carries a long
+  note about what that cost. Afterwards, if the dormant per-minute job is not wanted,
+  `select cron.unschedule('si-push-retry');` removes it and the `cron.schedule` line at
+  the foot of 0042 re-creates it on the day push is actually configured.
+
+  Two costs of applying it, both small and both real: every `notifications` INSERT gains
+  two `vault.decrypted_secrets` lookups from the AFTER INSERT trigger, on the
+  fastest-growing table in the schema; and 0042 amends 0002's
+  `si_guard_notification_update()` to let the service role stamp `pushed_at`, which is a
+  widening of what may be written to a notification, by the service role only.
 
 - **The security advisor has not been re-run after 0067-0073.** Four new functions are granted
   to `authenticated`: `si_open_sla_stage`, `si_open_stage_started_at` and `si_open_stage_due_at`

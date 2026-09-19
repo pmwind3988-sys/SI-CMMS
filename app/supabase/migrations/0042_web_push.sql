@@ -41,8 +41,20 @@
 -- exactly the project that had just been configured for it. A wasted tick is
 -- recoverable; a feature that cannot start is not.
 --
--- What to do instead is an operational decision, not a code one — see the
--- "Production is behind this branch" entry in CLAUDE.md's Known gaps.
+-- Production's full applied list was read on 2026-09-19 and diffed against this
+-- directory. The drift is exactly this file plus the branch that restored it:
+-- in the repo and not on production, 0042 and 0067-0074; on production and not
+-- in the repo, NOTHING. Production is otherwise complete through 0066, and
+-- 0022/0044/0045 are absent from both, so they are numbering gaps rather than
+-- drift.
+--
+-- The standing recommendation is therefore to LET this apply when production is
+-- pushed, rather than inserting a 0042 row to make `db push` skip it. A database
+-- whose schema does not match its own migration ledger is exactly what 0013
+-- exists to clean up after. Afterwards, if the dormant per-minute job is not
+-- wanted, `select cron.unschedule('si-push-retry');` removes it, and the
+-- cron.schedule at the foot of this file re-creates it the day push is really
+-- configured.
 -- ===========================================================================
 -- lib/osNotifications.js can only present a notification while the app's
 -- Realtime websocket is alive. Once the browser is closed there is no process
