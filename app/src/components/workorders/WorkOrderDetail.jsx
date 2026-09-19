@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle, ArrowUpDown, UserCircle2, History } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrder, deleteWorkOrder, overrideWorkOrderPriority, correctWorkOrderTimeline } from "../../lib/workOrders";
-import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canCorrectWorkOrderTimeline, isFinishedForTimelineFix, canSeeVerification } from "../../lib/constants";
+import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canExtendSla, canCorrectWorkOrderTimeline, isFinishedForTimelineFix, canSeeVerification } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
 import { slaStages } from "../../lib/slaStages";
@@ -18,6 +18,7 @@ import CommentsPanel from "./CommentsPanel";
 import AttachmentsPanel from "./AttachmentsPanel";
 import StatusTimeline from "./StatusTimeline";
 import WorkflowPanel from "./WorkflowPanel";
+import { ExtendSlaDialog } from "./ExtendSlaDialog";
 import { nextStep } from "../../lib/nextStep";
 
 const TABS = [
@@ -43,6 +44,7 @@ export default function WorkOrderDetail({ woId }) {
   const [tab, setTab] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [changingPriority, setChangingPriority] = useState(false);
+  const [extendingSla, setExtendingSla] = useState(false);
   const [correctingTimeline, setCorrectingTimeline] = useState(false);
   /* Reported up from CommentsPanel, which owns the two listeners the count is
      derived from. Lifting them here instead would open the same subscriptions a
@@ -141,6 +143,10 @@ export default function WorkOrderDetail({ woId }) {
   // Administrator only, and only while the work order is live — the same two
   // tests si_override_work_order_priority makes in its own body (0051).
   const showPriority = canOverridePriority(wo, user);
+  // Administrator only, and only while the open stage is overdue or in its last
+  // quarter — the same 25% si_sla_warning_sweep uses, so the button and the
+  // warning agree about "running out of time" (migration 0071).
+  const showExtend = canExtendSla(wo, user);
   // Superuser only, and only while the work order is under way — the impromptu
   // fix for a job abandoned mid-work (migration 0065). Same two tests
   // si_correct_work_order_timeline makes in its own body.
@@ -170,6 +176,11 @@ export default function WorkOrderDetail({ woId }) {
           {showPriority && (
             <Button variant="ghost" icon={ArrowUpDown} onClick={() => setChangingPriority(true)}>
               Change priority
+            </Button>
+          )}
+          {showExtend && (
+            <Button variant="ghost" icon={Timer} onClick={() => setExtendingSla(true)}>
+              Extend SLA
             </Button>
           )}
           {showTimelineFix && (
@@ -341,6 +352,8 @@ export default function WorkOrderDetail({ woId }) {
       {changingPriority && (
         <PriorityDialog wo={wo} onClose={() => setChangingPriority(false)} />
       )}
+
+      {extendingSla && <ExtendSlaDialog wo={wo} onClose={() => setExtendingSla(false)} />}
 
       {correctingTimeline && (
         <TimelineCorrectionDialog wo={wo} onClose={() => setCorrectingTimeline(false)} />
