@@ -754,8 +754,8 @@ priority's headline figure — the total from raise to resolution — is exactly
 had since 0006.
 
 ```
-P1  5 / 10  / 225   = 4 hrs         P4  120 / 1320 / 5760  = 5 days
-P2  15 / 45 / 420   = 8 hrs         P7  7200 / 7200 / 28800 = 30 days (unchanged, 0050)
+P1  5 / 10  / 225   = 4 hrs         P4  120  / 1320 / 5760  = 5 days
+P2  15 / 45 / 420   = 8 hrs         P7  7200 / 4320 / 10080 = 15 days (unchanged, 0050)
 P3  30 / 210 / 1200 = 24 hrs        P8  7200 / 7200 / 28800 = 30 days (new, 0072)
 ```
 
