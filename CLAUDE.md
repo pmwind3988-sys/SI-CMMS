@@ -2468,14 +2468,28 @@ has happened on this project, and is what 0013 exists to fix.
   `si_guard_notification_update()` to let the service role stamp `pushed_at`, which is a
   widening of what may be written to a notification, by the service role only.
 
-- **0075 is applied to TEST and not to production.** Pushed on 2026-09-19; verified
-  afterwards on the live schema — the migration is recorded, the four columns exist,
-  `si_fmt_minutes(10080)` returns "7 days", and `pg_get_function_identity_arguments` shows
-  **one** `si_extend_work_order_sla` taking `(uuid, si_priority, boolean)`, which is the
-  direct evidence that the drop-and-recreate avoided 0056's overload trap. Production is
-  now behind by 0075 alone. `scripts/checks/sla0075TopUp.mjs` remains the behavioural
-  check: it re-applies the file inside a transaction, runs 15 assertions and rolls back, so
-  it is still safe to run against an already-migrated project.
+- **0075 is applied to BOTH projects (2026-09-19), but production got it through the SQL
+  Editor, so `supabase_migrations` does not record it there.** That self-corrects — the
+  next real `db push` re-applies the file harmlessly and records it then — and re-applying
+  is safe because the file drops **both** signatures of `si_extend_work_order_sla` before
+  creating it. It did not at first: dropping only the old two-argument form made the second
+  run fail with *"already exists with same argument types"*, which the check script caught
+  and which would otherwise have bitten on exactly this paste-into-the-editor path.
+
+  Verified on test from the live schema (migration recorded, four columns present,
+  `si_fmt_minutes(10080)` = "7 days", and `pg_get_function_identity_arguments` showing
+  **one** `si_extend_work_order_sla` at `(uuid, si_priority, boolean)` — direct evidence
+  the drop-and-recreate avoided 0056's overload trap). Verified on production with the anon
+  key plus a deliberately fake control function: the new shape moved from `PGRST202` to
+  `42501`, and `si_fmt_minutes` answers `42501` too, so both exist and are correctly closed
+  to anon.
+
+  **The ordering here is the thing to repeat, and it was measured rather than assumed.**
+  The client always sends `p_top_up`, and PostgREST resolves an RPC by argument-name set —
+  so deploying the web half first does not merely leave the top-up missing, it breaks
+  `si_extend_work_order_sla` outright with `PGRST202`, taking 0072's existing re-grade down
+  with it for every Administrator. Schema first, then main. Same trap this file's own
+  deployment notes describe from the other direction.
 - **The security advisor has not been re-run after 0067-0075.** 0075 adds one function granted
   to `authenticated` — `si_fmt_minutes`, an `immutable` text formatter over an integer that
   reads nothing — and recreates `si_extend_work_order_sla` with a third argument, so its
