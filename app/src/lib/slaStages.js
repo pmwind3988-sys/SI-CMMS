@@ -180,7 +180,7 @@ export function slaStages(wo, sla) {
    client mirror of si_open_sla_stage / si_open_stage_started_at /
    si_open_stage_due_at, and the pairing is the point — the dashboard's
    Overdue card and the sweep that writes sla_stage_overdue have to put the
-   line in the same place, the way slaWindowMs() already mirrors
+   line in the same place, the way isStageAtRisk() below already mirrors
    si_sla_warning_sweep()'s 25%.
 
    `openSlaStage` keys on STATUS, not on the two timestamps (migration 0070).

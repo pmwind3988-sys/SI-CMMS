@@ -6,7 +6,7 @@
 -- and made it sticky: once a stage's own flag is set, nothing clears it by
 -- the passage of time or by anything short of a named correction. 0068's two
 -- sweeps, 0069/0070's backfill, and `si_extend_work_order_sla` (0072/0073) all
--- honour that. Three writers did not, and each still carried the pre-0067
+-- honour that. Two writers did not, and each still carried the pre-0067
 -- line `sla_breached := <resolution deadline> < <some instant>` — a leftover
 -- from when the resolution deadline was the only one that existed.
 --
@@ -22,7 +22,7 @@
 -- prints "SLA Status: Within target" beside "Ack Stage Missed: Yes" on the
 -- same row.
 --
--- The three writers, and why each could only be fixed here:
+-- The two writers, and why each could only be fixed here:
 --
 --   si_override_work_order_priority (0051, last reproduced whole in 0073) —
 --     `v_breached` computed from the resolution deadline alone. 0073 is
@@ -48,15 +48,22 @@
 -- ---------------------------------------------------------------------------
 -- si_override_work_order_priority: also recomputes sla_stage_overdue
 -- ---------------------------------------------------------------------------
--- Reproduced from 0073 with two changes: `sla_breached` reads the OR of the
+-- Reproduced from 0073 with two changes. `sla_breached` reads the OR of the
 -- three sticky flags (bare column references in an UPDATE's SET list read the
 -- OLD row, which is exactly what is wanted — an override does not move the
 -- sticky flags, it only might close the gap that made one of them true going
--- forward). And `sla_stage_overdue` is recomputed from the open stage's new
--- deadline, the way `si_extend_work_order_sla` already does — without it the
--- dashboard's Overdue card would carry a stale verdict until the next sweep,
--- up to five minutes after an Administrator just changed the very deadline
--- that verdict is about.
+-- forward). And `sla_stage_overdue` / `sla_warning_sent` are both keyed on
+-- `v_new_due` — the OPEN STAGE's new deadline — rather than on the resolution
+-- deadline alone, the same shape `si_extend_work_order_sla` already uses for
+-- both. The old `v_breached := v_res_due is not null and v_res_due < now()`
+-- is deleted rather than kept beside the fix: it was the pre-0067 arithmetic
+-- this migration is named for, and left in place it would have reset
+-- `sla_warning_sent` to false on a work order overdue at ack with no
+-- resolution deadline yet — the flag two lines of comment above it says must
+-- not be reset. Without this, the dashboard's Overdue card and the warning
+-- sweep would both carry a stale verdict until the next 5-minute sweep, up to
+-- five minutes after an Administrator just changed the very deadline either
+-- verdict is about.
 -- ---------------------------------------------------------------------------
 
 create or replace function si_override_work_order_priority(
@@ -85,7 +92,6 @@ declare
   v_ack_due    timestamptz;
   v_resp_due   timestamptz;
   v_res_due    timestamptz;
-  v_breached   boolean;
   v_stage      text;
   v_new_due    timestamptz;
 begin
@@ -154,11 +160,12 @@ begin
     v_res_due  := w.created_at + make_interval(mins => v_res);
   end if;
 
-  v_breached := v_res_due is not null and v_res_due < now();
-
   -- Which stage is currently open (unaffected by this UPDATE — status,
   -- acknowledged_at and responded_at all stay put) and what it is now due,
-  -- under the recomputed deadlines above.
+  -- under the recomputed deadlines above. Both sla_stage_overdue and
+  -- sla_warning_sent below key on THIS — the open stage's new deadline — not
+  -- on the resolution deadline alone, the same pre-0067 shape 0074 exists to
+  -- remove. si_extend_work_order_sla uses the same v_new_due for both.
   v_stage := si_open_sla_stage(w);
   v_new_due := case v_stage when 'acknowledge' then v_ack_due
                             when 'response'    then v_resp_due
@@ -193,10 +200,14 @@ begin
          -- sweep, up to five minutes after the very deadline it is about just
          -- moved.
          sla_stage_overdue        = (v_new_due is not null and v_new_due < now()),
-         -- Only reset when the new deadline is still ahead: a work order that
-         -- is already past its recomputed deadline has nothing left to warn
-         -- about, and re-arming it there would send a warning after the breach.
-         sla_warning_sent         = case when v_breached then w.sla_warning_sent else false end
+         -- Only reset when the open stage's new deadline is still ahead: a
+         -- work order already past its recomputed deadline has nothing left
+         -- to warn about, and re-arming it there would send a warning after
+         -- the breach. Keyed on v_new_due (0074), not the resolution deadline
+         -- alone — a work order overdue at ack with no resolution deadline
+         -- yet must not have this reset to false.
+         sla_warning_sent         = case when v_new_due is not null and v_new_due < now()
+                                          then w.sla_warning_sent else false end
    where id = p_work_order_id;
 
   perform set_config('si.allow_priority_override', 'off', true);
@@ -249,18 +260,38 @@ grant execute on function si_override_work_order_priority(uuid, si_priority, tex
 --   FINISHED path (completed/closed, status unchanged) — was
 --     `sla_breached := (sla_resolution_due_at is not null
 --                        and sla_resolution_due_at < p_completed_at)`.
---   Now recomputes `sla_resolution_breached` against the corrected completion
---   time first (`or`'d with its own old value, since a correction can only
---   ever be discovering a breach that was missed or fixing one that was
---   wrongly recorded going forward from here — either way the stage's own
---   flag has to reflect the corrected instant), then derives `sla_breached`
---   from all three. `sla_ack_breached` / `sla_response_breached` are
---   untouched: this path never moves `acknowledged_at` or `responded_at`.
+--   Now ASSIGNS `sla_resolution_breached` from the same comparison against
+--   the corrected completion time, then derives `sla_breached` from all
+--   three. `sla_ack_breached` / `sla_response_breached` are untouched: this
+--   path never moves `acknowledged_at` or `responded_at`.
 --
 --   UNDER-WAY path's second UPDATE (forcing repairing/waiting_spare_part/
 --   testing through completed, then backdating) — same fix, same reasoning:
---   the resolution stage's own flag has to be recomputed against the
+--   the resolution stage's own flag is ASSIGNED, not OR'd, from the
 --   corrected `p_completed_at` before `sla_breached` reads it.
+--
+-- ASSIGNMENT, not OR — this is the one place in this migration where the two
+-- differ, and getting it wrong silences the whole function. The obvious fix
+-- (`sla_resolution_breached or (due < p_completed_at)`, matching the shape
+-- used everywhere else in 0074) is wrong here specifically because of what
+-- runs on the UNDER-WAY path's FIRST UPDATE, three lines above: setting
+-- `status = 'completed'` fires `si_stamp_work_order` (0067), whose own
+-- `completed` branch stamps `sla_resolution_breached := old value or (due is
+-- not null and now() > due)`. `p_completed_at` is checked above to never be
+-- in the future, so `now() > due` is at least as true as `p_completed_at >
+-- due` — the trigger's now()-based guess is never MORE true than the
+-- corrected one — but ORing it in means once the trigger has set the flag
+-- true (which it does on exactly the stuck, overdue-for-weeks work orders
+-- this RPC exists to rescue), no correction can ever clear it again. That
+-- defeats the function's entire purpose: 0065/0066 exist so a stuck job
+-- finished on time weeks ago can be recorded as such, and the history remark
+-- says "SLA recomputed" — a lie if the flag it is describing cannot move.
+-- The trigger's verdict is the value being corrected here, not evidence to
+-- preserve, so both sites ASSIGN the corrected verdict outright. The milder
+-- version of the same shape applies on the FINISHED path too: backdating a
+-- completion earlier can never correct a resolution breach that was
+-- recorded wrongly if the old `true` is kept no matter what the correction
+-- says.
 -- ---------------------------------------------------------------------------
 
 create or replace function si_correct_work_order_timeline(
@@ -337,22 +368,24 @@ begin
     update work_orders
        set resolved_at                = p_completed_at,
            closed_at                  = case when status = 'closed' then p_completed_at else closed_at end,
-           -- The resolution stage's own sticky flag, recomputed against the
-           -- corrected instant rather than now() (0074). `or`'d with its own
-           -- old value so a correction that moves the completion time earlier
-           -- never un-sticks a genuinely-missed stage it isn't touching.
-           sla_resolution_breached    = sla_resolution_breached
-             or (sla_resolution_due_at is not null and sla_resolution_due_at < p_completed_at),
+           -- The resolution stage's own sticky flag, ASSIGNED (not OR'd) from
+           -- the corrected instant (0074). This function exists to replace a
+           -- verdict computed from the clock with one computed from the
+           -- recorded completion time, so the old value is what is being
+           -- corrected, not evidence to preserve — a correction can turn a
+           -- true into a false as legitimately as the reverse.
+           sla_resolution_breached    = (sla_resolution_due_at is not null
+                                          and sla_resolution_due_at < p_completed_at),
            -- `sla_breached` is the OR of all three sticky flags (0074), not
            -- the resolution deadline alone — ack/response are untouched by
            -- this path. Every bare column reference on the right of a
            -- single-table UPDATE's SET list reads OLD regardless of what
            -- else the same statement assigns, so `sla_resolution_breached`
            -- here would still read the pre-correction value; the resolution
-           -- recomputation is restated in full rather than relying on the
-           -- sibling assignment above.
+           -- verdict is restated in full rather than relying on the sibling
+           -- assignment above.
            sla_breached               = sla_ack_breached or sla_response_breached
-             or (sla_resolution_breached or (sla_resolution_due_at is not null and sla_resolution_due_at < p_completed_at)),
+             or (sla_resolution_due_at is not null and sla_resolution_due_at < p_completed_at),
            timeline_corrected_by      = v_actor,
            timeline_corrected_at      = now(),
            timeline_correction_reason = v_reason,
@@ -389,16 +422,23 @@ begin
          timeline_original_status   = w.status
    where id = p_work_order_id;
 
+  /* This UPDATE runs after the one above set status = 'completed', which
+     fired si_stamp_work_order's `completed` branch and stamped
+     sla_resolution_breached := old value or (due is not null and now() >
+     due). p_completed_at is checked above to never be in the future, so an
+     OR here would keep that now()-based guess pinned true forever on
+     exactly the stuck, overdue-for-weeks work orders this path exists to
+     rescue — the correction could never clear it, defeating the point of
+     recording a job that was actually finished on time. ASSIGNED, not OR'd,
+     for the same reason as the FINISHED path above: the trigger's verdict
+     is what is being replaced, not evidence to keep. */
   update work_orders
      set resolved_at             = p_completed_at,
          closed_at               = p_completed_at,
-         -- Same fix as the FINISHED path: the resolution stage's own sticky
-         -- flag recomputed against the corrected instant, then sla_breached
-         -- read off all three (0074).
-         sla_resolution_breached = sla_resolution_breached
-           or (sla_resolution_due_at is not null and sla_resolution_due_at < p_completed_at),
+         sla_resolution_breached = (sla_resolution_due_at is not null
+                                     and sla_resolution_due_at < p_completed_at),
          sla_breached            = sla_ack_breached or sla_response_breached
-           or (sla_resolution_breached or (sla_resolution_due_at is not null and sla_resolution_due_at < p_completed_at))
+           or (sla_resolution_due_at is not null and sla_resolution_due_at < p_completed_at)
    where id = p_work_order_id;
 
   perform set_config('si.allow_timeline_correction', 'off', true);
@@ -436,4 +476,4 @@ revoke all on function si_correct_work_order_timeline(uuid, timestamptz, text) f
 grant execute on function si_correct_work_order_timeline(uuid, timestamptz, text) to authenticated;
 
 comment on function si_correct_work_order_timeline(uuid, timestamptz, text) is
-  'Superuser-only timeline fix. Under-way work orders (repairing/waiting/testing) are forced to completed then backdated (0065); finished ones (completed/closed, verified or not) are backdated in place with the per-stage breach recomputed and the status left where it is (0066); sla_breached is the OR of all three sticky stage flags rather than the resolution deadline alone (0074).';
+  'Superuser-only timeline fix. Under-way work orders (repairing/waiting/testing) are forced to completed then backdated (0065); finished ones (completed/closed, verified or not) are backdated in place with the resolution stage''s breach flag reassigned (not OR''d) against the corrected time and sla_breached read as the OR of all three sticky stage flags rather than the resolution deadline alone (0074).';

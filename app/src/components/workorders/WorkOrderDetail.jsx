@@ -152,7 +152,7 @@ export default function WorkOrderDetail({ woId }) {
   const showPriority = canOverridePriority(wo, user);
   // Administrator only, and only while the open stage is overdue or in its last
   // quarter — the same 25% si_sla_warning_sweep uses, so the button and the
-  // warning agree about "running out of time" (migration 0071).
+  // warning agree about "running out of time" (migration 0072, corrected by 0073).
   const showExtend = canExtendSla(wo, user);
   // Superuser only, and only while the work order is under way — the impromptu
   // fix for a job abandoned mid-work (migration 0065). Same two tests
