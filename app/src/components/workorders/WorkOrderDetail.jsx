@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Timer, PencilLine, Trash2, Loader2, X, AlertTriangle, ArrowUpDown, UserCircle2, History } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrder, deleteWorkOrder, overrideWorkOrderPriority, correctWorkOrderTimeline } from "../../lib/workOrders";
-import { fmtDue, slaRemainMs, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canExtendSla, canCorrectWorkOrderTimeline, isFinishedForTimelineFix, canSeeVerification } from "../../lib/constants";
+import { fmtDue, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canExtendSla, canCorrectWorkOrderTimeline, isFinishedForTimelineFix, canSeeVerification } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
-import { slaStages } from "../../lib/slaStages";
+import { slaStages, openSlaStage, openStageRemainMs, STAGE_LABELS } from "../../lib/slaStages";
 import { fmtDateTimeMY } from "../../lib/datetime";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, ModalOverlay } from "../ui/Surfaces";
@@ -128,11 +128,18 @@ export default function WorkOrderDetail({ woId }) {
     );
   }
 
-  /* The stored deadline, not one recomputed from the raise time — see
-     slaRemainMs(). On a P7 that has not reached `repairing` this is null, so the
-     header reads "—": the resolution window has not opened yet. */
-  const remain = slaRemainMs(wo);
-  const breached = remain != null && remain < 0 && wo.status !== "closed";
+  /* The OPEN STAGE's deadline, not the resolution one — migrations 0067,
+     0068. Every priority is sequential now, so at any moment exactly one
+     stage is running and that is the one whose clock this chip has to show;
+     reading sla_resolution_due_at here reported every work order still
+     waiting to be assigned or started as having no deadline at all, which is
+     most of the open queue. openSlaStage returns null once the work order is
+     finished, and openStageRemainMs then reads null too, which is what "—"
+     already meant for a P7 whose resolution clock had not started. */
+  const openStage = openSlaStage(wo);
+  const stageLabel = openStage ? STAGE_LABELS[openStage] : null;
+  const remain = openStageRemainMs(wo);
+  const breached = remain != null && remain < 0;
   const showEdit = wo.status === "open" && canEditWhileOpen(wo, user);
   // Deliberately not limited to a status. Closing is what "finishing" a work
   // order is; deletion is for records that should never have existed — a
@@ -216,9 +223,9 @@ export default function WorkOrderDetail({ woId }) {
           <div className="flex items-center gap-2 rounded px-3.5 py-2.5" style={{ background: breached ? "#FCE9E9" : "#F6F8FB" }}>
             <Timer size={15} className={breached ? "text-danger" : "text-ink-soft"} />
             <div>
-              <div className="text-[11px] text-ink-soft">Resolution SLA</div>
+              <div className="text-[11px] text-ink-soft">{stageLabel ? `${stageLabel} SLA` : "SLA"}</div>
               <div className="font-mono text-[13px] font-bold" style={{ color: breached ? "#EF4444" : "#101828" }}>
-                {wo.status === "closed" ? "Closed" : breached ? "Breached" : remain != null ? fmtDue(remain) + " left" : "—"}
+                {openStage == null ? (wo.status === "closed" ? "Closed" : "—") : breached ? "Breached" : remain != null ? fmtDue(remain) + " left" : "—"}
               </div>
             </div>
           </div>
@@ -828,6 +835,7 @@ function OverviewTab({ wo }) {
   const { departmentName, plantName, impactLabel, typeLabel, slaForPriority } = useReferenceData();
   const sla = wo.priority ? slaForPriority(wo.priority) : null;
   const stages = slaStages(wo, sla);
+  const openStage = openSlaStage(wo);
   // Area is omitted rather than shown as "—" when blank: every work order
   // raised before migration 0019 has none, and a column of dashes down an
   // otherwise complete overview reads as missing data rather than as a field
@@ -899,7 +907,20 @@ function OverviewTab({ wo }) {
               three different answers. A re-grade changes the targets and never
               the actuals: verified against the RPC on the test project, every
               stamp byte-identical after overriding to P1, P4, P7 and back. */}
-          {stages.map((st) => (
+          {stages.map((st) => {
+            /* The sticky verdict beside the elapsed time — migrations 0067,
+               0068. `missed` never clears once set (0068's sweep only sets
+               it true), so it is what keeps a cleared Overdue visible on a
+               work order whose stage has since advanced. `isOpen` is the
+               stage currently running, from the same mirror the dashboard's
+               buckets use — a finished work order has no open stage and
+               shows neither chip. */
+            const missed =
+              st.key === "acknowledge" ? wo.sla_ack_breached
+              : st.key === "response" ? wo.sla_response_breached
+              : wo.sla_resolution_breached;
+            const isOpen = openStage === st.key;
+            return (
             <div key={st.key} className="flex items-baseline justify-between gap-3 py-1 text-[12.5px]">
               <span className="flex-shrink-0 text-ink-soft">{st.label}</span>
               <span className="text-right">
@@ -928,9 +949,20 @@ function OverviewTab({ wo }) {
                     &middot;&middot;&middot;
                   </span>
                 )}
+                {missed && (
+                  <span className="ml-1.5 rounded bg-danger/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-danger">
+                    Missed
+                  </span>
+                )}
+                {isOpen && !missed && (
+                  <span className="ml-1.5 rounded bg-brand/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-brand">
+                    Running
+                  </span>
+                )}
               </span>
             </div>
-          ))}
+            );
+          })}
           {/* "n/r" explained in words, on the page rather than in a tooltip: a
               title attribute does not exist on a phone, and this is exactly the
               row somebody stops to query. Only rendered when a stage is actually

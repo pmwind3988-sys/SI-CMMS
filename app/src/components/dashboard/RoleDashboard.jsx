@@ -29,7 +29,8 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { useReferenceData } from "../../lib/referenceData";
 import { listenWorkOrderList } from "../../lib/workOrders";
-import { fmtDue, slaRemainMs, slaWindowMs } from "../../lib/constants";
+import { fmtDue } from "../../lib/constants";
+import { isStageOverdue, isStageAtRisk, openSlaStage, openStageRemainMs, STAGE_LABELS } from "../../lib/slaStages";
 import { fmtDateTimeMY } from "../../lib/datetime";
 import { ROLES, ROLE_LABELS } from "../../lib/roles";
 import RoleSwitcher from "./RoleSwitcher";
@@ -187,27 +188,18 @@ export default function RoleDashboard({ viewRole }) {
        Overdue and stay there. */
     const open = rows.filter((w) => !NOT_OPEN.includes(w.status));
 
-    /* The stored deadline, shared with the list and the detail page — see
-       slaRemainMs(). A P7 whose resolution clock has not started counts as
-       neither overdue nor at risk, which is correct: nothing has been promised
-       about it yet. */
-    const remainMs = slaRemainMs;
+    /* The open stage's clock, not the resolution one — migrations 0067, 0068.
+       Every priority is sequential now, so a work order has one stage running
+       at a time and it is that stage's deadline that can be missed. Reading
+       `sla_resolution_due_at` here would report every unstarted work order as
+       having no deadline at all, which is exactly the work an Overdue card
+       exists to surface.
 
-    const overdue = open.filter((w) => {
-      const r = remainMs(w);
-      return r != null && r < 0;
-    });
-
-    // "At risk" mirrors si_sla_warning_sweep(): under a quarter of the window
-    // left, where the window is `due - created_at` exactly as the sweep computes
-    // it — which is what keeps the two thresholds in the same place on a
-    // sequential priority, whose window spans the stages before it.
-    const atRisk = open.filter((w) => {
-      const r = remainMs(w);
-      if (r == null || r < 0) return false;
-      const windowMs = slaWindowMs(w);
-      return windowMs != null && r < windowMs * 0.25;
-    });
+       isStageOverdue / isStageAtRisk mirror si_sla_breach_sweep and
+       si_sla_warning_sweep, so this card and the notification somebody received
+       about the same work order cannot disagree. */
+    const overdue = open.filter((w) => isStageOverdue(w));
+    const atRisk = open.filter((w) => isStageAtRisk(w));
 
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -277,7 +269,10 @@ export default function RoleDashboard({ viewRole }) {
         (w) => w.verified_at && new Date(w.verified_at) >= startOfToday
       ),
       recent,
-      remainMs,
+      // Passed down to SlaCell/SlaText so the recent list and every drill-down
+      // row read the same open-stage clock the two buckets above are built
+      // from — see openStageRemainMs() in lib/slaStages.js.
+      remainMs: openStageRemainMs,
     };
   }, [workOrders, attention, user?.uid, statusFlow]);
 
@@ -658,8 +653,9 @@ function SlaCell({ w, remainMs }) {
  * equipment name on a phone where there is no room for a fifth column.
  */
 function SlaText({ w, remainMs }) {
-  const remain = w.status === "closed" ? null : remainMs(w);
-  if (w.status === "closed" || remain == null) {
+  const openStage = openSlaStage(w);
+  const remain = openStage == null ? null : remainMs(w);
+  if (openStage == null || remain == null) {
     return <span className="font-mono text-[11.5px] text-ink-soft">—</span>;
   }
   const late = remain < 0;
@@ -669,6 +665,7 @@ function SlaText({ w, remainMs }) {
       style={{ color: late ? "#EF4444" : "#64748B", fontWeight: late ? 700 : 400 }}
     >
       {late ? "Breached" : `${fmtDue(remain)} left`}
+      <span className="font-sans text-ink-soft"> · {STAGE_LABELS[openStage]}</span>
     </span>
   );
 }

@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { Plus, Search, Download, AlertTriangle, Loader2, SlidersHorizontal, X } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { listenWorkOrderList, fetchWorkOrdersForExport } from "../../lib/workOrders";
-import { fmtDue, slaRemainMs, slaWindowMs } from "../../lib/constants";
+import { fmtDue } from "../../lib/constants";
+import { openSlaStage, openStageRemainMs, isStageOverdue, isStageAtRisk, STAGE_LABELS } from "../../lib/slaStages";
 import { describeError } from "../../lib/errors";
 import {
   DATE_PRESETS,
@@ -63,22 +64,21 @@ const DISPLAY_LIMIT = 300;
 const Spinner = () => <Loader2 size={14} className="animate-spin" />;
 
 /**
- * Which SLA band a work order is in, for the advanced SLA filter. The thresholds
- * mirror the list's own SLA cell and si_sla_warning_sweep()'s 25%-of-window
- * warning point, so "At risk" here means exactly what the amber countdown means.
+ * Which SLA band a work order is in, for the advanced SLA filter. Keyed on
+ * the OPEN STAGE's own deadline (migrations 0067, 0068) rather than the
+ * resolution one, and isStageOverdue/isStageAtRisk mirror the same two sweeps
+ * that drive the dashboard's buckets, so "At risk" here means exactly what
+ * the amber countdown means everywhere else it appears.
  *
- *   overdue   deadline passed
- *   at_risk   under a quarter of the window left
+ *   overdue   the current stage's deadline passed
+ *   at_risk   under a quarter of that stage's window left
  *   on_track  more than a quarter left
- *   none      no deadline running (a P7 not yet started, or a closed job)
+ *   none      no open stage running (not yet started, or finished)
  */
 function slaState(w) {
-  const remain = slaRemainMs(w);
-  if (remain == null) return "none";
-  if (remain < 0) return "overdue";
-  const window = slaWindowMs(w);
-  if (window && remain < window * 0.25) return "at_risk";
-  return "on_track";
+  if (isStageOverdue(w)) return "overdue";
+  if (isStageAtRisk(w)) return "at_risk";
+  return openStageRemainMs(w) != null ? "on_track" : "none";
 }
 
 const SLA_STATES = [
@@ -114,7 +114,7 @@ function sortWorkOrders(rows, sort, priorityRank) {
       );
     case "sla": {
       const r = (w) => {
-        const ms = slaRemainMs(w);
+        const ms = openStageRemainMs(w);
         return ms == null ? Infinity : ms;
       };
       return by.sort((a, b) => (r(a) - r(b)) || (t(b) - t(a)));
@@ -694,10 +694,13 @@ export default function WorkOrderList() {
   );
 }
 
-/* Reads the deadline the database stored rather than recomputing one — see
-   slaRemainMs() in lib/constants.js for why that stopped being equivalent at
-   migration 0050. A P7 whose resolution clock has not started reads "—" here,
-   which is what it is. */
+/* Reads the OPEN STAGE's own deadline (migrations 0067, 0068), not the
+   resolution one — see the note by slaRemainMs() in lib/constants.js for why
+   those two stopped being equivalent. Under the resolution-only reading this
+   column showed "—" for every work order still waiting to be assigned or
+   started, which was most of the open queue; the stage label says which
+   clock is actually counting, and a finished work order reads "—" as it
+   always has. */
 
 function RaisedCell({ ts }) {
   return (
@@ -720,7 +723,8 @@ function RaisedCell({ ts }) {
  */
 function WorkOrderRow({ w, first, href }) {
   const { departmentName } = useReferenceData();
-  const remain = slaRemainMs(w);
+  const openStage = openSlaStage(w);
+  const remain = openStageRemainMs(w);
   return (
     <Link
       href={href}
@@ -751,7 +755,10 @@ function WorkOrderRow({ w, first, href }) {
       {/* #EF4444 measured 3.76:1 as text; #C1291F is the same red one step down
           and clears 4.5. The muted case moves with the ink-soft token. */}
       <div className="w-24 text-right font-mono text-[11.5px]" style={{ color: remain != null && remain < 0 ? "#C1291F" : "#5A6880", fontWeight: remain < 0 ? 700 : 400 }}>
-        {w.status === "closed" ? "—" : remain != null ? (remain < 0 ? "Breached" : fmtDue(remain) + " left") : "—"}
+        {openStage == null ? "—" : remain != null ? (remain < 0 ? "Breached" : fmtDue(remain) + " left") : "—"}
+        {openStage != null && (
+          <div className="text-[10px] font-sans font-normal text-ink-soft">{STAGE_LABELS[openStage]}</div>
+        )}
       </div>
     </Link>
   );
@@ -760,7 +767,8 @@ function WorkOrderRow({ w, first, href }) {
 /** The phone-width row. Same reasoning as WorkOrderRow — it is a link. */
 function WorkOrderCard({ w, href }) {
   const { departmentName } = useReferenceData();
-  const remain = slaRemainMs(w);
+  const openStage = openSlaStage(w);
+  const remain = openStageRemainMs(w);
   return (
     <Link
       href={href}
@@ -783,8 +791,9 @@ function WorkOrderCard({ w, href }) {
       </div>
       <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-[#F1F3F5]">
         <span className="text-[12px] text-ink-soft">{w.assigned_to_name || "Unassigned"}</span>
-        <span className="font-mono text-[11px]" style={{ color: remain < 0 ? "#C1291F" : "#5A6880" }}>
-          {w.status === "closed" ? "—" : remain != null ? (remain < 0 ? "Breached" : fmtDue(remain) + " left") : "—"}
+        <span className="font-mono text-[11px]" style={{ color: remain != null && remain < 0 ? "#C1291F" : "#5A6880" }}>
+          {openStage == null ? "—" : remain != null ? (remain < 0 ? "Breached" : fmtDue(remain) + " left") : "—"}
+          {openStage != null && <span className="font-sans text-ink-soft"> · {STAGE_LABELS[openStage]}</span>}
         </span>
         </div>
         <div className="mt-1.5 text-[11.5px] text-ink-soft">Raised {fmtDateMY(w.created_at)} · {fmtTimeMY(w.created_at)}</div>
