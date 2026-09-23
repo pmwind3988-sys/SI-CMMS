@@ -104,6 +104,18 @@ export function canAssign(currentUser) {
 }
 
 /**
+ * The statuses at which a work order's technician is fixed (migration 0076).
+ * Mirrors si_guard_finished_assignee — change the two together. The trigger
+ * holds for every role, Administrators included, so this has no role half.
+ */
+export const ASSIGNMENT_LOCKED_STATUSES = ["completed", "verified", "closed"];
+
+/** Is this work order finished, so its technician can no longer be changed? */
+export function isAssignmentLocked(wo) {
+  return ASSIGNMENT_LOCKED_STATUSES.includes(wo?.status);
+}
+
+/**
  * May this person sign off a completed work order? (migration 0059)
  *
  * HOD and only HOD, Administrators included — which makes it the one capability

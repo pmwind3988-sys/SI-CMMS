@@ -1469,6 +1469,21 @@ is no acceptance step. `PRE_ACCEPTANCE` in `AssignPanel` mirrors `PRE_ACCEPTANCE
 The landed-on status is computed from the row already in hand rather than awaited from Realtime,
 so the dialog is right the moment it opens.
 
+### A finished work order keeps its technician (migration 0076)
+
+**The Assignment tab hid its buttons on completed/closed work orders and the database did
+not agree.** The matrix happened to refuse Supervisors and Managers (the only
+`closed → closed` row is the HOD sign-off), but 0023's admin bypass let an Administrator
+reassign a closed job through the RPC or a direct PATCH — history row, handover
+notification and all. `a00000_guard_finished_assignee` refuses any change to
+`assigned_to_id` while `OLD.status` is `completed`/`verified`/`closed`, for every role and
+with no null-uid exemption. Rework (`closed → repairing`) keeps the assignee and passes, so
+"needs someone else" is rework first, then reassign. `ASSIGNMENT_LOCKED_STATUSES` in
+`lib/constants.js` mirrors it — change them together. The panel now shows the roster with
+the buttons disabled and a sentence saying why, rather than silently dropping the buttons.
+`scripts/checks/assign0076Finished.mjs` proves the hole before and the fix after, on test,
+rolled back.
+
 ### The work order detail page: what it says about itself
 
 Four changes, all on `WorkOrderDetail` and the panels under it.

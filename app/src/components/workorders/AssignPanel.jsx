@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, UserCheck, Send, X } from "lucide-react";
+import { CheckCircle2, Lock, UserCheck, Send, X } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { assignTechnician, reassignTechnician, listenTechnicians } from "../../lib/workOrders";
-import { canAssign } from "../../lib/constants";
+import { canAssign, isAssignmentLocked } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
 import Button from "../ui/Button";
@@ -108,7 +108,12 @@ export default function AssignPanel({ wo }) {
     }
   }
 
-  const disabledForStatus = ["completed", "verified", "closed"].includes(wo.status);
+  /* A finished work order keeps its technician. The buttons stay on screen but
+     disabled, with the reason above them, rather than vanishing — a roster with
+     no buttons reads as a page that failed to load. The database refuses the
+     change for every role, Administrator included (migration 0076), so this is
+     the visible half of a rule, not the rule. */
+  const locked = isAssignmentLocked(wo);
 
   return (
     <div>
@@ -123,6 +128,15 @@ export default function AssignPanel({ wo }) {
       {!allowed && (
         <div className="bg-canvas rounded px-3.5 py-2.5 text-[12.5px] text-ink-soft mb-3.5">
           Only a Supervisor (within their department), Manager, or Admin can assign or reassign a technician.
+        </div>
+      )}
+      {allowed && locked && (
+        <div className="flex items-start gap-2 bg-canvas rounded px-3.5 py-2.5 text-[12.5px] text-ink-soft mb-3.5">
+          <Lock size={14} className="mt-0.5 flex-shrink-0" />
+          <span>
+            This work order is {statusLabel(wo.status).toLowerCase()}, so its technician can no
+            longer be changed. If the job needs someone else, send it back for rework first.
+          </span>
         </div>
       )}
       {error && <div className="text-danger-text text-[12.5px] mb-3">{error}</div>}
@@ -172,7 +186,7 @@ export default function AssignPanel({ wo }) {
                   </div>
                 </div>
               </div>
-              {allowed && !disabledForStatus && (
+              {allowed && (
                 <Button
                   size="sm"
                   variant={isAssigned ? "success" : "ghost"}
@@ -186,7 +200,7 @@ export default function AssignPanel({ wo }) {
                   // assigned row permits it (requires_assignee_change is false
                   // pre-acceptance), so the database accepted a no-op that still
                   // wrote a history row and re-notified the technician.
-                  disabled={busy || isAssigned}
+                  disabled={busy || isAssigned || locked}
                   onClick={() => handleAssign(t)}
                 >
                   {pendingId === t.user_id
