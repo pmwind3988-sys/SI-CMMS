@@ -118,12 +118,21 @@ export default function UsersAdmin() {
   // cannot deactivate yourself — so the check could never fire. Worse, it had
   // become unreliable: protected accounts are hidden from this list, so counting
   // visible admins would have under-reported them.
+  //
+  // Deactivating asks first; reactivating does not. Deactivation locks a person
+  // out of the app on one click of an icon that sits between Edit and Delete, and
+  // it happened by accident while documenting this screen. Reactivating is the
+  // undo for exactly that mistake, so putting a dialog in front of it would slow
+  // the recovery down for no protection.
   async function handleToggleStatus(u) {
-    const next = u.status === "active" ? "inactive" : "active";
+    if (u.status === "active") {
+      setPanel({ kind: "deactivate", user: u });
+      return;
+    }
     setError(null);
     try {
-      await setUserStatus(u.id, next);
-      flash(`${u.name} is now ${next}.`);
+      await setUserStatus(u.id, "active");
+      flash(`${u.name} is now active.`);
     } catch (e) {
       setError(describeError(e, "Couldn't change that account's status."));
     }
@@ -308,6 +317,16 @@ export default function UsersAdmin() {
         <ProfileDialog
           user={panel.user}
           me={me}
+          onClose={() => setPanel(null)}
+          onDone={(msg) => {
+            setPanel(null);
+            flash(msg);
+          }}
+        />
+      )}
+      {panel?.kind === "deactivate" && (
+        <DeactivateDialog
+          user={panel.user}
           onClose={() => setPanel(null)}
           onDone={(msg) => {
             setPanel(null);
@@ -517,6 +536,53 @@ function Modal({ title, subtitle, children, onClose }) {
   );
 }
 
+
+/**
+ * Confirming a deactivation.
+ *
+ * A plain confirm, not type-the-name like deletion: this is reversible from the
+ * same button, so the gate only has to stop a misclick, not a deliberate act.
+ * The copy states the hour of latency because an administrator deactivating
+ * somebody who has just left will otherwise assume they are locked out now.
+ */
+function DeactivateDialog({ user, onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function confirm() {
+    setError(null);
+    setBusy(true);
+    try {
+      await setUserStatus(user.id, "inactive");
+      onDone(`${user.name} is now inactive.`);
+    } catch (e) {
+      setError(describeError(e, "Couldn't change that account's status."));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Deactivate this account?" subtitle={`${user.name} · ${user.email}`} onClose={onClose}>
+      {error && <ErrorBanner message={error} />}
+      <p className="text-[13px] text-ink mb-3">
+        {user.name} will no longer be able to use SI. Everything they have raised, worked on or
+        commented on stays on the record.
+      </p>
+      <p className="text-[12px] text-ink-soft mb-4">
+        If they are signed in right now, it can take up to an hour to reach them. You can
+        reactivate the account at any time with the same button.
+      </p>
+      <div className="flex gap-2 justify-end">
+        <Button variant="ghost" onClick={onClose} type="button">
+          Cancel
+        </Button>
+        <Button variant="danger" icon={Power} loading={busy} onClick={confirm}>
+          {busy ? "Deactivating…" : "Deactivate"}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
 
 /**
  * Confirming a deletion.
