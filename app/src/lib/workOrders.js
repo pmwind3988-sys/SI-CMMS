@@ -150,7 +150,7 @@ export async function deleteWorkOrder(woId) {
   if (!data?.length) {
     throw new Error(
       "That work order was not deleted. Either your role has not been granted deletion, " +
-        "or this record is outside what your role can see. A Superuser grants deletion in " +
+        "or this record is outside what your role can see. The app developer grants deletion in " +
         "Administration → Settings → Permissions."
     );
   }
@@ -957,8 +957,8 @@ export async function setWorkOrderPlant(woIds, plantId) {
   if (error) throw error;
   if ((data?.length ?? 0) !== ids.length) {
     throw new Error(
-      `Moved ${data?.length ?? 0} of ${ids.length}. The rest were refused — only a ` +
-        "Superuser can change the plant of a work order that has left Open."
+      `Moved ${data?.length ?? 0} of ${ids.length}. The rest were refused — only ` +
+        "the app developer can change the plant of a work order that has left Open."
     );
   }
   return data.length;

@@ -644,7 +644,7 @@ function PermissionsPanel({ rows, onFlash, onError }) {
         <span>
           {mayEdit
             ? "Granting a capability here gives it to every account holding that role. It does not widen which work orders they can see. Administrators can always assign technicians. A Superuser always holds every capability and is not listed."
-            : "Only a Superuser can change these. They are shown so you can see what your role currently holds."}
+            : "Only the app developer can change these. They are shown so you can see what your role currently holds."}
         </span>
       </div>
 

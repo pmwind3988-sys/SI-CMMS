@@ -127,7 +127,7 @@ export default function AssignPanel({ wo }) {
       </div>
       {!allowed && (
         <div className="bg-canvas rounded px-3.5 py-2.5 text-[12.5px] text-ink-soft mb-3.5">
-          Your role can't assign or reassign a technician. Which roles can is set by the Superuser
+          Your role can't assign or reassign a technician. Which roles can is set by the app developer
           in Admin → Settings → Permissions.
         </div>
       )}

@@ -476,7 +476,7 @@ export async function setReferenceRowActive(table, keyValue, active) {
   // RLS refusing an UPDATE changes no rows and raises nothing, so the absence of
   // a returned row is the refusal. Same pattern as deleteWorkOrder().
   if (!data?.length) {
-    throw new Error("Only the Superuser can retire or restore reference data.");
+    throw new Error("Only the app developer can retire or restore reference data.");
   }
 }
 
