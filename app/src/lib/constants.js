@@ -99,8 +99,21 @@ export function isSupervisor(wo, currentUser) {
 export function isManagerOrAdmin(currentUser) {
   return hasRole(currentUser, ROLES.MANAGER) || hasRole(currentUser, ROLES.ADMIN);
 }
-export function canAssign(currentUser) {
-  return hasRole(currentUser, ROLES.SUPERVISOR) || isManagerOrAdmin(currentUser);
+/**
+ * May this account assign or reassign a technician? (migration 0077)
+ *
+ * Mirrors si_can_assign_technicians(): an Administrator always — the guard's
+ * admin bypass lets them regardless, and the stamp trigger refuses switching it
+ * off — and otherwise whatever role_permissions.can_assign_technicians says for
+ * any role held. Ships as HOD + Admin; only a Superuser changes it. `roleCan`
+ * comes from useReferenceData(), which keeps that table live.
+ */
+export function canAssign(currentUser, roleCan) {
+  if (!currentUser) return false;
+  if (hasRole(currentUser, ROLES.ADMIN)) return true;
+  return (currentUser.roles ?? []).some(
+    (r) => roleCan?.(r, "can_assign_technicians") === true
+  );
 }
 
 /**

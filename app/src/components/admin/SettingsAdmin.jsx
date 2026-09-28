@@ -557,7 +557,7 @@ export default function SettingsAdmin() {
 }
 
 /* ------------------------------------------------------------------
-   Permissions — who may delete work orders.
+   Permissions — who may assign technicians (0077) and delete work orders (0018).
 
    Every other tab on this screen is Admin-editable. This one is not: only a
    Superuser writes role_permissions (migration 0018), because a capability an
@@ -571,6 +571,16 @@ export default function SettingsAdmin() {
 -------------------------------------------------------------------*/
 
 const CAPABILITIES = [
+  {
+    key: "can_assign_technicians",
+    label: "Assign technicians",
+    detail:
+      "Assign a technician to a work order, or hand it to a different one. Also decides who is told when a work order is raised, accepted, declined or waiting for a part.",
+    // Administrators always can (migration 0077): the transition guard lets
+    // them regardless, and the database refuses switching it off, so an
+    // editable box here would be a switch that decides nothing.
+    alwaysOn: ["admin"],
+  },
   {
     key: "can_delete_work_orders",
     label: "Delete work orders",
@@ -633,8 +643,8 @@ function PermissionsPanel({ rows, onFlash, onError }) {
         <Info size={14} className="mt-0.5 flex-shrink-0" />
         <span>
           {mayEdit
-            ? "Granting a capability here gives it to every account holding that role. It does not widen what they can see — a Supervisor granted deletion reaches their own department, not the plant. A Superuser always holds every capability and is not listed."
-            : "Only a Superuser can change these. They are shown so you can see what your role currently holds."}
+            ? "Granting a capability here gives it to every account holding that role. It does not widen which work orders they can see. Administrators can always assign technicians. A Superuser always holds every capability and is not listed."
+            : "Only the app developer can change these. They are shown so you can see what your role currently holds."}
         </span>
       </div>
 
@@ -686,26 +696,27 @@ function PermissionsPanel({ rows, onFlash, onError }) {
                   </div>
                   {CAPABILITIES.map((c) => {
                     const id = `${role}.${c.key}`;
-                    const checked = draft[id] === true;
+                    const fixed = c.alwaysOn?.includes(role) === true;
+                    const checked = fixed || draft[id] === true;
                     return (
                       <label
                         key={c.key}
-                        title={c.detail}
+                        title={fixed ? "Administrators always can. This cannot be switched off." : c.detail}
                         className={`flex w-56 items-center gap-2 text-[13px] ${
-                          mayEdit ? "cursor-pointer text-ink" : "cursor-default text-ink-soft"
+                          mayEdit && !fixed ? "cursor-pointer text-ink" : "cursor-default text-ink-soft"
                         }`}
                       >
                         <input
                           type="checkbox"
                           className="h-4 w-4 accent-amber"
                           checked={checked}
-                          disabled={!mayEdit || !row}
+                          disabled={!mayEdit || !row || fixed}
                           onChange={(e) =>
                             setDraft((d) => ({ ...d, [id]: e.target.checked }))
                           }
                         />
-                        {checked ? "Allowed" : "Not allowed"}
-                        {!mayEdit && <Lock size={12} className="text-ink-soft" />}
+                        {fixed ? "Always" : checked ? "Allowed" : "Not allowed"}
+                        {(!mayEdit || fixed) && <Lock size={12} className="text-ink-soft" />}
                       </label>
                     );
                   })}

@@ -25,11 +25,12 @@ import {
   UserCheck,
   ArrowRight,
   Inbox,
+  UserPlus,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useReferenceData } from "../../lib/referenceData";
 import { listenWorkOrderList } from "../../lib/workOrders";
-import { fmtDue } from "../../lib/constants";
+import { fmtDue, canAssign } from "../../lib/constants";
 import { isStageOverdue, isStageAtRisk, openSlaStage, openStageRemainMs, STAGE_LABELS } from "../../lib/slaStages";
 import { fmtDateTimeMY } from "../../lib/datetime";
 import { ROLES, ROLE_LABELS } from "../../lib/roles";
@@ -82,7 +83,7 @@ const ATTENTION = {
     status: "assigned",
     scope: (w, uid) => w.assigned_to_id === uid,
     heading: "Waiting for you to accept",
-    blurb: "Accept to start, or decline with a reason so the Supervisor can reassign.",
+    blurb: "Accept to start, or decline with a reason so it can be reassigned.",
     cta: "Open",
   },
   [ROLES.SUPERVISOR]: {
@@ -156,7 +157,7 @@ const NOT_OPEN = ["closed", "verified", "completed"];
  */
 export default function RoleDashboard({ viewRole }) {
   const { user } = useAuth();
-  const { ready, statusFlow, statusLabel, statusColor } = useReferenceData();
+  const { ready, statusFlow, statusLabel, statusColor, roleCan } = useReferenceData();
   const router = useRouter();
   const [workOrders, setWorkOrders] = useState(null);
   const [error, setError] = useState(null);
@@ -175,6 +176,17 @@ export default function RoleDashboard({ viewRole }) {
   const view = viewRole ?? user?.role;
   const attention = ATTENTION[view] ?? ATTENTION[ROLES.REQUESTER];
   const headings = HEADINGS[view] ?? HEADINGS[ROLES.REQUESTER];
+
+  /* Who may assign is a Superuser setting (migration 0077), so it decides two
+     things here. An HOD who holds it gets a second queue card for the work
+     nobody has been given yet — their main queue is sign-off, and without this
+     the job they are now expected to assign is visible only in the list. And a
+     Supervisor who does NOT hold it still sees the unassigned queue (it is still
+     the plant's queue), but the row's call to action stops promising "Assign".
+     Display only: the database decides who can actually assign. */
+  const mayAssign = canAssign(user, roleCan);
+  const showAssignCard = view === ROLES.HOD && mayAssign;
+  const ctaLabel = view === ROLES.SUPERVISOR && !mayAssign ? "Open" : attention.cta;
 
   const stats = useMemo(() => {
     // Scoped to the role being viewed, not to everything this account may read.
@@ -250,6 +262,7 @@ export default function RoleDashboard({ viewRole }) {
         (w) => w.status === attention.status && (!attention.unverified || !w.verified_at)
       ),
       byStatus,
+      unassigned: rows.filter((w) => w.status === "open" && !w.assigned_to_id),
       overdue,
       atRisk,
       /* Counted on the SIGN-OFF, not on the closure (migrations 0059, 0061).
@@ -314,6 +327,19 @@ export default function RoleDashboard({ viewRole }) {
       rows: stats.needsMe,
       blurb: attention.blurb,
     },
+    ...(showAssignCard
+      ? [
+          {
+            key: "unassigned",
+            icon: UserPlus,
+            label: "Waiting for assignment",
+            color: "#3B82F6",
+            rows: stats.unassigned,
+            title: "Waiting for assignment",
+            blurb: "These have no technician yet. Open one to assign it.",
+          },
+        ]
+      : []),
     {
       key: "closedToday",
       icon: CheckCircle2,
@@ -502,7 +528,7 @@ export default function RoleDashboard({ viewRole }) {
                 <SlaCell w={w} remainMs={stats.remainMs} />
               </div>
               <span className="text-accent-text font-semibold text-[12.5px] flex flex-shrink-0 items-center gap-1 whitespace-nowrap">
-                <span className="hidden xs:inline">{attention.cta}</span> <ArrowRight size={13} />
+                <span className="hidden xs:inline">{ctaLabel}</span> <ArrowRight size={13} />
               </span>
             </button>
           ))}

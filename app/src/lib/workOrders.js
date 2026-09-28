@@ -150,7 +150,7 @@ export async function deleteWorkOrder(woId) {
   if (!data?.length) {
     throw new Error(
       "That work order was not deleted. Either your role has not been granted deletion, " +
-        "or this record is outside what your role can see. A Superuser grants deletion in " +
+        "or this record is outside what your role can see. The app developer grants deletion in " +
         "Administration → Settings → Permissions."
     );
   }
@@ -661,7 +661,7 @@ async function transition(woId, toStatus, { fields = {}, remarks = null, viaStat
 
 const PRE_ACCEPTANCE_STATUSES = ["open", "assigned"];
 
-/** matrix: open -> assigned, roles {supervisor, manager, admin} */
+/** matrix: open -> assigned, roles from role_permissions.can_assign_technicians (0077) */
 export async function assignTechnician(woId, technician) {
   await transition(woId, "assigned", {
     fields: { assigned_to_id: technician.id, assigned_to_name: technician.name },
@@ -957,8 +957,8 @@ export async function setWorkOrderPlant(woIds, plantId) {
   if (error) throw error;
   if ((data?.length ?? 0) !== ids.length) {
     throw new Error(
-      `Moved ${data?.length ?? 0} of ${ids.length}. The rest were refused — only a ` +
-        "Superuser can change the plant of a work order that has left Open."
+      `Moved ${data?.length ?? 0} of ${ids.length}. The rest were refused — only ` +
+        "the app developer can change the plant of a work order that has left Open."
     );
   }
   return data.length;

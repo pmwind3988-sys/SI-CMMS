@@ -654,18 +654,21 @@ export type Database = {
       }
       role_permissions: {
         Row: {
+          can_assign_technicians: boolean
           can_delete_work_orders: boolean
           role: Database["public"]["Enums"]["si_role"]
           updated_at: string
           updated_by: string | null
         }
         Insert: {
+          can_assign_technicians?: boolean
           can_delete_work_orders?: boolean
           role: Database["public"]["Enums"]["si_role"]
           updated_at?: string
           updated_by?: string | null
         }
         Update: {
+          can_assign_technicians?: boolean
           can_delete_work_orders?: boolean
           role?: Database["public"]["Enums"]["si_role"]
           updated_at?: string
@@ -1578,6 +1581,7 @@ export type Database = {
           }
       si_admins: { Args: never; Returns: string[] }
       si_caller_rank: { Args: never; Returns: number }
+      si_can_assign_technicians: { Args: never; Returns: boolean }
       si_can_delete_work_orders: { Args: never; Returns: boolean }
       si_compute_dashboard_stats: { Args: never; Returns: undefined }
       si_correct_work_order_timeline: {

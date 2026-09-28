@@ -243,7 +243,7 @@ export async function setRolePermission(role, capability, value) {
     .select("role");
   if (error) throw error;
   if (!data?.length) {
-    throw new Error("Only a Superuser can change role permissions.");
+    throw new Error("Only the app developer can change role permissions.");
   }
 }
 

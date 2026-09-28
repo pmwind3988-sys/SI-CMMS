@@ -918,7 +918,7 @@ function ProfileDialog({ user, me, onClose, onDone }) {
         </Field>
         <p id="email-note" className="text-[12px] text-ink-soft mb-4">
           {!mayChangeEmail
-            ? "Only the Superuser can change someone else's sign-in address — an address pointed at a mailbox you control, plus the self-service reset, is a password reset. You can change your own."
+            ? "Only the app developer can change someone else's sign-in address — an address pointed at a mailbox you control, plus the self-service reset, is a password reset. You can change your own."
             : emailChanged
               ? `This is how they sign in. From now on they will use ${nextEmail}, not ${originalEmail} — tell them, and their existing sessions stay signed in until the token expires.`
               : "This is how they sign in. Changing it takes effect immediately; the new address is marked confirmed, so there is no email to click."}

@@ -1484,6 +1484,39 @@ the buttons disabled and a sentence saying why, rather than silently dropping th
 `scripts/checks/assign0076Finished.mjs` proves the hole before and the fix after, on test,
 rolled back.
 
+### Who may assign a technician is a Superuser setting (migration 0077)
+
+**`role_permissions.can_assign_technicians`, beside 0018's delete toggle, ships as HOD +
+Administrator and nothing else.** Supervisors and Managers lost the ability on the day it
+landed; a Superuser gives it back in Admin → Settings → Permissions. Administrator is always
+on: the guard's admin bypass lets them anyway, so the stamp trigger refuses switching it off
+(*"Administrators can always assign technicians…"*) and the screen locks that box.
+
+**The matrix follows the toggle rather than the guard reading the toggle.** An AFTER trigger
+on `role_permissions` rewrites `roles` on every `wo_status_transitions` row whose `requires`
+holds `assigned_to_id` (six rows since 0039), so the guard, `si_eligible_roles`, `nextStep.js`
+and the fan-out all keep reading one thing. Do not hand-edit those six rows' `roles` in a
+migration — the next toggle overwrites them. `wo_status_transitions` joined the realtime
+publication so "whose move" updates live.
+
+Three things had to move with it or a grant would not work: `users_select` gained
+`si_can_assign_technicians()` (the roster is an inner join onto `users`, which an HOD could
+not read — an empty roster reading "nobody available"); `si_notify_assigners` now fans out to
+granted roles (Supervisors still by department, everyone else plant-wide, Admins always), so
+**with the defaults Managers and Supervisors no longer get needs-assignment, accept, decline
+or waiting-for-a-part**; and the self-assignment sentence stopped naming Supervisor/Manager.
+The client mirror is `canAssign(user, roleCan)`; `WorkflowPanel` uses it too, and so does
+`RoleDashboard`: an HOD who holds the grant gets a **Waiting for assignment** card beside
+their sign-off queue, and a Supervisor who does not keeps the unassigned queue but its rows
+say "Open" rather than "Assign". `scripts/checks/assign0077Setting.mjs` runs 13 assertions
+on test and rolls back.
+
+Applied to test by `db push` and to production through the SQL Editor on 2026-09-28, so
+production's `supabase_migrations` does not record 0077 — the same self-correcting gap 0075
+has. Verified with production's anon key: `role_permissions?select=can_assign_technicians`
+returns 200 where a fake column returns `42703`, and `si_can_assign_technicians` answers
+`42501` where a fake function answers `PGRST202`.
+
 ### The work order detail page: what it says about itself
 
 Four changes, all on `WorkOrderDetail` and the panels under it.

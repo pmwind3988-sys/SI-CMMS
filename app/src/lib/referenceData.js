@@ -118,7 +118,10 @@ const SOURCES = {
   //
   // What is read here decides what to *show*. si_can_delete_work_orders() and
   // the work_orders_delete policy decide what is allowed.
-  role_permissions: { select: "role, can_delete_work_orders, updated_at", order: "role" },
+  role_permissions: {
+    select: "role, can_delete_work_orders, can_assign_technicians, updated_at",
+    order: "role",
+  },
   // Also not labels: this is the workflow itself — which moves are legal, who
   // may make each, and what each is called (migration 0003). It rides here for
   // the same reason as role_permissions, and because reading it is what lets
@@ -473,7 +476,7 @@ export async function setReferenceRowActive(table, keyValue, active) {
   // RLS refusing an UPDATE changes no rows and raises nothing, so the absence of
   // a returned row is the refusal. Same pattern as deleteWorkOrder().
   if (!data?.length) {
-    throw new Error("Only the Superuser can retire or restore reference data.");
+    throw new Error("Only the app developer can retire or restore reference data.");
   }
 }
 
