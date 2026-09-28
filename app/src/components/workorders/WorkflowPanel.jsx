@@ -70,7 +70,7 @@ function InfoBox({ children }) {
  */
 function NextStepLine({ wo }) {
   const { user } = useAuth();
-  const { transitions, statuses, roleCan } = useReferenceData();
+  const { transitions, statuses } = useReferenceData();
   const statusOrder = useMemo(
     () => new Map(statuses.map((s) => [s.code, s.sort_order])),
     [statuses]
@@ -101,6 +101,7 @@ export default function WorkflowPanel(props) {
 
 function WorkflowActions({ wo, onGotoAssign }) {
   const { user } = useAuth();
+  const { roleCan } = useReferenceData();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
