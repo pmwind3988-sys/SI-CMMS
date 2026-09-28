@@ -118,7 +118,10 @@ const SOURCES = {
   //
   // What is read here decides what to *show*. si_can_delete_work_orders() and
   // the work_orders_delete policy decide what is allowed.
-  role_permissions: { select: "role, can_delete_work_orders, updated_at", order: "role" },
+  role_permissions: {
+    select: "role, can_delete_work_orders, can_assign_technicians, updated_at",
+    order: "role",
+  },
   // Also not labels: this is the workflow itself — which moves are legal, who
   // may make each, and what each is called (migration 0003). It rides here for
   // the same reason as role_permissions, and because reading it is what lets

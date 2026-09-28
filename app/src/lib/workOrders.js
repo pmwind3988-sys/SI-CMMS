@@ -661,7 +661,7 @@ async function transition(woId, toStatus, { fields = {}, remarks = null, viaStat
 
 const PRE_ACCEPTANCE_STATUSES = ["open", "assigned"];
 
-/** matrix: open -> assigned, roles {supervisor, manager, admin} */
+/** matrix: open -> assigned, roles from role_permissions.can_assign_technicians (0077) */
 export async function assignTechnician(woId, technician) {
   await transition(woId, "assigned", {
     fields: { assigned_to_id: technician.id, assigned_to_name: technician.name },

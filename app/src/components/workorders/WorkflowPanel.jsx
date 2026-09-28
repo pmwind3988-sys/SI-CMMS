@@ -29,7 +29,7 @@ import {
 } from "../../lib/workOrders";
 import {
   isAssigneeOf,
-  isManagerOrAdmin,
+  canAssign,
   canVerify,
   canSeeVerification,
   canSendBackForRework,
@@ -37,7 +37,6 @@ import {
 import { useReferenceData } from "../../lib/referenceData";
 import { nextStep } from "../../lib/nextStep";
 import { describeError } from "../../lib/errors";
-import { ROLES, hasRole } from "../../lib/roles";
 import { handoffToast } from "../../lib/toastHandoff";
 import Button from "../ui/Button";
 import { ModalOverlay, Toast } from "../ui/Surfaces";
@@ -71,7 +70,7 @@ function InfoBox({ children }) {
  */
 function NextStepLine({ wo }) {
   const { user } = useAuth();
-  const { transitions, statuses } = useReferenceData();
+  const { transitions, statuses, roleCan } = useReferenceData();
   const statusOrder = useMemo(
     () => new Map(statuses.map((s) => [s.code, s.sort_order])),
     [statuses]
@@ -122,7 +121,8 @@ function WorkflowActions({ wo, onGotoAssign }) {
   const [verifyNote, setVerifyNote] = useState("");
 
   const assignee = isAssigneeOf(wo, user);
-  const isSupervisorLike = hasRole(user, ROLES.SUPERVISOR) || isManagerOrAdmin(user);
+  // Who may assign is a Superuser setting (migration 0077), not a role list.
+  const mayAssign = canAssign(user, roleCan);
   const actor = { uid: user.uid, name: user.name, role: user.role };
 
   /** Returns whether the transition went through, for the callers that have to
@@ -155,21 +155,21 @@ function WorkflowActions({ wo, onGotoAssign }) {
   }
 
   if (wo.status === "open") {
-    if (isSupervisorLike)
+    if (mayAssign)
       return (
         <div>
           <InfoBox>This work order needs a technician. Go to the Assignment tab to assign one.</InfoBox>
           <Button variant="amber" icon={UserCheck} onClick={onGotoAssign}>Assign a technician</Button>
         </div>
       );
-    return <InfoBox>Waiting for a Supervisor to assign a technician.</InfoBox>;
+    return <InfoBox>Waiting for a technician to be assigned.</InfoBox>;
   }
 
   if (wo.status === "assigned") {
     if (assignee) {
       return (
         <div>
-          <InfoBox>You've been assigned this work order. Accept it to start, or decline with a reason so the Supervisor can reassign.</InfoBox>
+          <InfoBox>You've been assigned this work order. Accept it to start, or decline with a reason so it can be reassigned.</InfoBox>
           <ErrorLine />
           {/* Accept and Decline are NOT a matched pair, and they used to be
               drawn as one: same size (99x40 and 101x40), same tinted
@@ -231,7 +231,7 @@ function WorkflowActions({ wo, onGotoAssign }) {
               <div className="bg-white rounded-t-xl sm:rounded-xl w-full sm:max-w-sm p-5">
                 <h2 className="text-[15px] font-bold text-ink mb-1.5">Decline {wo.wo_number}?</h2>
                 <p className="text-[12.5px] text-ink-soft mb-3">
-                  It goes back to the queue for a Supervisor to reassign, and leaves your list. Your Supervisor, the Managers and the Administrators are told, with your reason.
+                  It goes back to the queue to be reassigned, and leaves your list. Everyone who assigns technicians is told, with your reason.
                 </p>
                 <div className="bg-canvas rounded px-3 py-2 mb-4 text-[12.5px] text-ink italic">“{declineReason.trim()}”</div>
                 <div className="flex gap-2 justify-end">
@@ -266,7 +266,7 @@ function WorkflowActions({ wo, onGotoAssign }) {
         </div>
       );
     }
-    if (isSupervisorLike)
+    if (mayAssign)
       return (
         <div>
           <InfoBox>Waiting for {wo.assigned_to_name || "the technician"} to accept.</InfoBox>

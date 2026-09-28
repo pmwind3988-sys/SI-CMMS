@@ -27,7 +27,7 @@ const PRE_ACCEPTANCE = ["open", "assigned"];
 
 export default function AssignPanel({ wo }) {
   const { user } = useAuth();
-  const { statusLabel } = useReferenceData();
+  const { statusLabel, roleCan } = useReferenceData();
   const [technicians, setTechnicians] = useState(null);
   /**
    * WHICH technician is being assigned, not merely that one is.
@@ -43,7 +43,7 @@ export default function AssignPanel({ wo }) {
   const [error, setError] = useState(null);
   /** Set on success: { name, status } — the receipt dialog below. */
   const [sent, setSent] = useState(null);
-  const allowed = canAssign(user);
+  const allowed = canAssign(user, roleCan);
   const busy = pendingId !== null;
 
   useEffect(() => {
@@ -122,12 +122,13 @@ export default function AssignPanel({ wo }) {
         {wo.assigned_to_name ? (
           <strong className="text-ink">{wo.assigned_to_name}</strong>
         ) : (
-          "Unassigned — waiting on Supervisor"
+          "Unassigned — waiting to be assigned"
         )}
       </div>
       {!allowed && (
         <div className="bg-canvas rounded px-3.5 py-2.5 text-[12.5px] text-ink-soft mb-3.5">
-          Only a Supervisor (within their department), Manager, or Admin can assign or reassign a technician.
+          Your role can't assign or reassign a technician. Which roles can is set by the Superuser
+          in Admin → Settings → Permissions.
         </div>
       )}
       {allowed && locked && (
