@@ -108,11 +108,11 @@ export default function AssignPanel({ wo }) {
     }
   }
 
-  /* A finished work order keeps its technician. The buttons are hidden for every
-     role, and the sentence above the roster says why, so a list with no buttons
-     does not read as a page that failed to load. The database refuses the change
-     for every role, Administrator included (migration 0076), so this is the
-     visible half of a rule, not the rule. */
+  /* A finished work order keeps its technician. The buttons stay on screen but
+     disabled, with the reason above them, rather than vanishing — a roster with
+     no buttons reads as a page that failed to load. The database refuses the
+     change for every role, Administrator included (migration 0076), so this is
+     the visible half of a rule, not the rule. */
   const locked = isAssignmentLocked(wo);
 
   return (
@@ -125,12 +125,12 @@ export default function AssignPanel({ wo }) {
           "Unassigned — waiting on Supervisor"
         )}
       </div>
-      {!allowed && !locked && (
+      {!allowed && (
         <div className="bg-canvas rounded px-3.5 py-2.5 text-[12.5px] text-ink-soft mb-3.5">
           Only a Supervisor (within their department), Manager, or Admin can assign or reassign a technician.
         </div>
       )}
-      {locked && (
+      {allowed && locked && (
         <div className="flex items-start gap-2 bg-canvas rounded px-3.5 py-2.5 text-[12.5px] text-ink-soft mb-3.5">
           <Lock size={14} className="mt-0.5 flex-shrink-0" />
           <span>
@@ -186,7 +186,7 @@ export default function AssignPanel({ wo }) {
                   </div>
                 </div>
               </div>
-              {allowed && !locked && (
+              {allowed && (
                 <Button
                   size="sm"
                   variant={isAssigned ? "success" : "ghost"}
@@ -200,7 +200,7 @@ export default function AssignPanel({ wo }) {
                   // assigned row permits it (requires_assignee_change is false
                   // pre-acceptance), so the database accepted a no-op that still
                   // wrote a history row and re-notified the technician.
-                  disabled={busy || isAssigned}
+                  disabled={busy || isAssigned || locked}
                   onClick={() => handleAssign(t)}
                 >
                   {pendingId === t.user_id
