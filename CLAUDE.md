@@ -1479,8 +1479,8 @@ notification and all. `a00000_guard_finished_assignee` refuses any change to
 `assigned_to_id` while `OLD.status` is `completed`/`verified`/`closed`, for every role and
 with no null-uid exemption. Rework (`closed → repairing`) keeps the assignee and passes, so
 "needs someone else" is rework first, then reassign. `ASSIGNMENT_LOCKED_STATUSES` in
-`lib/constants.js` mirrors it — change them together. The panel now shows the roster with
-the buttons disabled and a sentence saying why, rather than silently dropping the buttons.
+`lib/constants.js` mirrors it — change them together. The panel hides the Assign buttons for every
+role and shows everyone a sentence saying why, rather than dropping them silently.
 `scripts/checks/assign0076Finished.mjs` proves the hole before and the fix after, on test,
 rolled back.
 
