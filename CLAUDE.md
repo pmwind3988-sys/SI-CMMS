@@ -962,7 +962,7 @@ which the export reports as **SLA Overdue Absorbed (hrs)** (already inside "SLA 
 Added"). That reverses 0075 note 3's "never from now" on purpose: the Administrator
 should get the amount they chose, not have to subtract the lateness first. What keeps the
 record honest is unchanged — the sticky breach flags are never reset, the timeline remark
-names the overdue time absorbed, and `sla_top_up_count` drives the "Nth time" warning.
+names the overdue time absorbed, and `sla_extension_count` drives the "Nth time" warning — every extension, including the old re-grade mode, not top-ups alone.
 
 **`si_extend_work_order_sla` (0075) is deliberately still on the database.** PostgREST
 resolves an RPC by argument-name set, so altering it would have broken every tab open
