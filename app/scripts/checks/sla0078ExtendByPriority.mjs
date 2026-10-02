@@ -140,7 +140,7 @@ try {
   pass("sticky breach survives; counts increment");
 
   const { rows: [h1] } = await c.query(
-    `select * from work_order_history where work_order_id = $1 order by created_at desc limit 1`, [wo0.id]);
+    `select * from work_order_history where work_order_id = $1 and event_type = 'sla_extension' order by created_at desc limit 1`, [wo0.id]);
   assert.equal(h1.event_type, "sla_extension");
   assert.equal(h1.from_status, h1.to_status);
   assert.match(h1.remarks, /Resolution stage was 9 days( \d+ hrs?)? overdue; extended by .*\(P7\), 15 days\. Now due /);

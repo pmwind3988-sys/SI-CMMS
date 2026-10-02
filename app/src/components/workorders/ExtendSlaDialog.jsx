@@ -52,7 +52,7 @@ export function ExtendSlaDialog({ wo, onClose }) {
   const stageLabel = plan.stage ? STAGE_LABELS[plan.stage] : null;
   const currentDue = openStageDueAt(wo);
   const remain = openStageRemainMs(wo);
-  const nth = (Number(wo?.sla_top_up_count) || 0) + 1;
+  const nth = (Number(wo?.sla_extension_count) || 0) + 1;
   const grantedSoFarMs = stageGrantedMs(wo, plan.stage);
 
   async function submit(e) {

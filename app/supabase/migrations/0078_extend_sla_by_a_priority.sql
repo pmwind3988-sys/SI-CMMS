@@ -209,7 +209,7 @@ begin
   select label into v_own_label from priorities where id = w.priority;
   select label into v_by_label  from priorities where id = p_by_priority;
   select name  into v_actor_name from users where id = v_actor;
-  v_nth := coalesce(w.sla_top_up_count, 0) + 1;
+  v_nth := coalesce(w.sla_extension_count, 0) + 1;
 
   v_remark := 'SLA extended (#' || v_nth || ' for this work order): ' || initcap(v_stage) || ' stage ' ||
               case when v_absorbed > 0

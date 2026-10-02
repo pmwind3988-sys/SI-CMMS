@@ -205,7 +205,7 @@ export function canOverridePriority(wo, currentUser) {
 }
 
 /**
- * May this person extend this work order's SLA? (migration 0072, corrected by 0073)
+ * May this person extend this work order's SLA? (migration 0072, corrected by 0073, replaced by 0078's si_extend_sla_stage)
  *
  * Administrator, live work order, and the stage it is sitting in is either past
  * its deadline or inside the last quarter of its own window — the same 25%
@@ -213,7 +213,7 @@ export function canOverridePriority(wo, currentUser) {
  * out of time".
  *
  * DISPLAY ONLY, like every predicate in this file.
- * si_extend_work_order_sla restates all three checks in its own body, so the
+ * si_extend_sla_stage restates all three checks in its own body, so the
  * two disagreeing produces an error rather than a silent success.
  *
  * Deliberately narrower than canOverridePriority: a re-grade is a judgement
