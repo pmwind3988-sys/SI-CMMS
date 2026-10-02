@@ -1659,14 +1659,6 @@ export type Database = {
         }
         Returns: undefined
       }
-      si_extend_work_order_sla: {
-        Args: {
-          p_priority?: Database["public"]["Enums"]["si_priority"] | null
-          p_top_up?: boolean
-          p_work_order_id: string
-        }
-        Returns: undefined
-      }
       si_fmt_minutes: { Args: { p_mins: number }; Returns: string }
       si_fmt_minutes_approx: { Args: { p_mins: number }; Returns: string }
       si_has_role: { Args: { p_role: string }; Returns: boolean }

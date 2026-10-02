@@ -964,10 +964,18 @@ should get the amount they chose, not have to subtract the lateness first. What 
 record honest is unchanged — the sticky breach flags are never reset, the timeline remark
 names the overdue time absorbed, and `sla_extension_count` drives the "Nth time" warning — every extension, including the old re-grade mode, not top-ups alone.
 
-**`si_extend_work_order_sla` (0075) is deliberately still on the database.** PostgREST
-resolves an RPC by argument-name set, so altering it would have broken every tab open
-during the release (the 2026-09-19 `PGRST202`). Nothing in the client calls it any more;
-dropping it is a later migration, once no old tab can be open.
+**`si_extend_work_order_sla` (0075) survived 0078 on purpose and was dropped by 0079.**
+PostgREST resolves an RPC by argument-name set, so altering it in 0078 would have broken
+every tab open during that release (the 2026-09-19 `PGRST202`); 0078 left it alone and
+0079 removed it once the new client was live. **Dropping a function removes no data**:
+every extension it made stays on its work order — the `sla_extension` timeline rows, the
+four `priority_override` columns a re-grade set, both counts and the three
+`sla_*_extra_mins` columns — still guarded, still read by the timeline and the export, and
+still added back on by a later Change priority. `scripts/checks/sla0079RetireOldExtend.mjs`
+snapshots all of those, applies 0079 twice inside a rolled-back transaction, and asserts
+they are byte-identical afterwards. **On production, never re-paste 0075 after 0079** — it
+recreates the old function (and, after 0078, the older guard); a full `db push` is safe
+because it runs 0075, 0078 and 0079 in order.
 
 `scripts/checks/sla0078ExtendByPriority.mjs` applies the migration twice on test inside
 one transaction, asserts and rolls back.

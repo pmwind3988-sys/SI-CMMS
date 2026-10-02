@@ -191,11 +191,19 @@ try {
     await c.query(`select si_extend_sla_stage($1, 'P7')`, [wo0.id]);
   }, "permission denied");
 
-  // --- The old RPC still works: the live site is not broken by this migration.
+  // --- The old RPC survives 0078 — the release relied on it. Migration 0079
+  //     drops it afterwards, so on a project that already has 0079 there is
+  //     nothing to call, and that is the expected state rather than a failure.
   await asPostgres();
-  await setClaims(admin.id, admin.roles);
-  await c.query(`select si_extend_work_order_sla($1, null, true)`, [wo0.id]);
-  pass("si_extend_work_order_sla (0075) is untouched and still callable");
+  const { rows: [{ n: oldFns }] } = await c.query(
+    `select count(*)::int n from pg_proc where proname = 'si_extend_work_order_sla'`);
+  if (oldFns > 0) {
+    await setClaims(admin.id, admin.roles);
+    await c.query(`select si_extend_work_order_sla($1, null, true)`, [wo0.id]);
+    pass("si_extend_work_order_sla (0075) is untouched by 0078 and still callable");
+  } else {
+    pass("si_extend_work_order_sla already dropped (0079 applied) — 0078 did not need it");
+  }
 
   // --- A later Change priority preserves the extension (the extras are terms in its arithmetic).
   await asPostgres();
