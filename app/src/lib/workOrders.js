@@ -742,47 +742,21 @@ export async function overrideWorkOrderPriority(woId, priority, reason) {
 }
 
 /**
- * Give a work order's open SLA stage more time (migration 0072, corrected by
- * 0073, second mode added by 0075).
+ * Give a work order's open SLA stage a chosen priority's full total
+ * (migration 0078). The priority never moves — that is Change priority's job.
  *
- * Two modes, and a call picks exactly one:
+ * If the stage is overdue the overdue time is absorbed and the amount counts
+ * from now; otherwise it is added on top of the time left. The server
+ * computes the deadline, writes the timeline remark (no reason is passed) and
+ * notifies the technician and the requester.
  *
- *  - **Top up** — `extendWorkOrderSla(id, null, { topUp: true })`. The stage
- *    gets one more of the work order's OWN window and the priority does not
- *    move. Always available while a stage is running, which is what stops a P7
- *    or a P8 reaching a dead end with no lower priority left to offer.
- *  - **Re-grade** — `extendWorkOrderSla(id, "P8")`. 0072's original meaning:
- *    move to a STRICTLY less urgent priority and take its longer window. The
- *    server refuses anything else, the same priority included — extending can
- *    only grant time.
- *
- * Passing both is refused by the server rather than resolved in its favour: a
- * caller that has not decided which thing it is doing must not have one picked
- * for it.
- *
- * Not `updateWorkOrderFields` and not a transition: the priority is derived
- * from the production impact and a trigger overwrites whatever the client sends
- * (0036), and si_guard_priority_override refuses a direct PATCH of the override
- * columns, of either count or of the three `sla_*_extra_mins` columns from
- * anybody at any rank. The RPC is the only door.
- *
- * Two more things worth knowing at the call site:
- *
- *  - No reason is passed. The server generates the remark — naming the stage,
- *    the time granted and, for a top-up, which time this is — and writes it to
- *    the timeline as `sla_extension`.
- *  - The deadlines are recomputed from the raise time and the recorded stage
- *    moments, never from now, so a top-up adds to the deadline the stage
- *    already had. The countdown on screen can move the moment this returns, and
- *    an overdue badge clearing is the correct outcome — but a stage further past
- *    its deadline than the window being added stays overdue, which is honest
- *    rather than a failure.
+ * The 0072/0075 RPC si_extend_work_order_sla still exists on the database so
+ * tabs opened before this release keep working; nothing here calls it.
  */
-export async function extendWorkOrderSla(woId, priority, { topUp = false } = {}) {
-  const { error } = await supabase.rpc("si_extend_work_order_sla", {
+export async function extendSlaStage(woId, byPriority) {
+  const { error } = await supabase.rpc("si_extend_sla_stage", {
     p_work_order_id: woId,
-    p_priority: topUp ? null : priority,
-    p_top_up: topUp,
+    p_by_priority: byPriority,
   });
   if (error) throw error;
 }
