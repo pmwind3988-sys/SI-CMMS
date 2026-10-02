@@ -8,7 +8,7 @@ import { listenWorkOrder, deleteWorkOrder, overrideWorkOrderPriority, correctWor
 import { fmtDue, canEditWhileOpen, canDeleteWorkOrder, canOverridePriority, canExtendSla, canCorrectWorkOrderTimeline, isFinishedForTimelineFix, canSeeVerification } from "../../lib/constants";
 import { describeError } from "../../lib/errors";
 import { useReferenceData } from "../../lib/referenceData";
-import { slaStages, openSlaStage, openStageRemainMs, STAGE_LABELS } from "../../lib/slaStages";
+import { slaStages, stageVerdict, fmtElapsed, openSlaStage, openStageRemainMs, STAGE_LABELS } from "../../lib/slaStages";
 import { fmtDateTimeMY } from "../../lib/datetime";
 import { PriorityBadge, StatusBadge } from "../ui/Badges";
 import { Card, ErrorBanner, ModalOverlay } from "../ui/Surfaces";
@@ -909,16 +909,14 @@ function OverviewTab({ wo }) {
               stamp byte-identical after overriding to P1, P4, P7 and back. */}
           {stages.map((st) => {
             /* The sticky verdict beside the elapsed time — migrations 0067,
-               0068. `missed` never clears once set (0068's sweep only sets
-               it true), so it is what keeps a cleared Overdue visible on a
-               work order whose stage has since advanced. `isOpen` is the
-               stage currently running, from the same mirror the dashboard's
-               buckets use — a finished work order has no open stage and
-               shows neither chip. */
-            const missed =
-              st.key === "acknowledge" ? wo.sla_ack_breached
-              : st.key === "response" ? wo.sla_response_breached
-              : wo.sla_resolution_breached;
+               0068. `missed` is sticky except that an extension clears it for
+               that stage (0080); the sweep sets it again if the new deadline
+               passes. `extended` says time was granted, so a stage finished
+               inside its new deadline reads Extended rather than Missed. See
+               stageVerdict(). `isOpen` is the stage currently running, from
+               the same mirror the dashboard's buckets use — a finished work
+               order has no open stage and shows no Running chip. */
+            const { missed, extended, extraMs } = stageVerdict(wo, st.key);
             const isOpen = openStage === st.key;
             return (
             <div key={st.key} className="flex items-baseline justify-between gap-3 py-1 text-[12.5px]">
@@ -949,9 +947,17 @@ function OverviewTab({ wo }) {
                     &middot;&middot;&middot;
                   </span>
                 )}
+                {extended && !missed && (
+                  <span
+                    className="ml-1.5 rounded bg-accent-soft px-1.5 py-0.5 text-[10.5px] font-semibold text-[#92400E]"
+                    title="Time added to this stage, including any overdue time absorbed when it was extended."
+                  >
+                    Extended +{fmtElapsed(extraMs)}
+                  </span>
+                )}
                 {missed && (
                   <span className="ml-1.5 rounded bg-danger/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-danger">
-                    Missed
+                    {extended ? "Missed after extension" : "Missed"}
                   </span>
                 )}
                 {isOpen && !missed && (

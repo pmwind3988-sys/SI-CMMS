@@ -12,6 +12,8 @@ import {
   openStageRemainMs,
   isStageOverdue,
   isStageAtRisk,
+  stageVerdict,
+  slaStages,
 } from "../../src/lib/slaStages.js";
 
 const T0 = Date.parse("2026-09-19T00:00:00Z");
@@ -106,5 +108,35 @@ assert.equal(isStageAtRisk(noDeadline, T0 + 999 * MIN), false);
 assert.equal(openSlaStage(null), null);
 assert.equal(openStageDueAt(undefined), null);
 assert.equal(isStageOverdue(null), false);
+
+// stageVerdict: the four rows of the 0080 table.
+const DAY = 1440 * MIN;
+const v = (b, x) => stageVerdict({ sla_ack_breached: b, sla_ack_extra_mins: x }, "acknowledge");
+assert.deepEqual(v(false, 0), { missed: false, extended: false, extraMs: 0 });
+assert.deepEqual(v(false, null), { missed: false, extended: false, extraMs: 0 });
+assert.deepEqual(v(false, 60), { missed: false, extended: true, extraMs: 60 * MIN });
+assert.deepEqual(v(true, 60), { missed: true, extended: true, extraMs: 60 * MIN });
+assert.deepEqual(v(true, 0), { missed: true, extended: false, extraMs: 0 });
+assert.equal(stageVerdict({ sla_resolution_extra_mins: 5 }, "resolution").extended, true);
+assert.equal(stageVerdict(null, "response").missed, false);
+
+// met honours extra minutes: 10 days taken on a 7-day target.
+const sla = {
+  targets_are_sequential: true,
+  ack_target_minutes: 5,
+  response_target_minutes: 5,
+  resolution_target_minutes: 7 * 1440,
+};
+const done = {
+  created_at: iso(T0),
+  acknowledged_at: iso(T0 + MIN),
+  responded_at: iso(T0 + 2 * MIN),
+  closed_at: iso(T0 + 2 * MIN + 10 * DAY),
+};
+const res = (extraDays) =>
+  slaStages({ ...done, sla_resolution_extra_mins: extraDays * 1440 }, sla).find((s) => s.key === "resolution");
+assert.equal(res(7).met, true);
+assert.equal(res(1).met, false);
+assert.equal(res(0).met, false);
 
 console.log("slaStages: all assertions passed");
