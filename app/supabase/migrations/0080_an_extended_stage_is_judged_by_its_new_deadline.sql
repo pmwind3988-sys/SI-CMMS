@@ -206,36 +206,47 @@ grant execute on function si_extend_sla_stage(uuid, si_priority) to authenticate
 -- 2. Backfill: work orders extended before this migration ------------------
 -- CLEAR (never set) a stage's sticky flag when that stage was extended and is
 -- within its current deadline: it is the open stage with a deadline still in
--- the future, or it has finished and its end instant is at or before the
--- deadline. End instants are the ones si_stamp_work_order judges with:
--- acknowledge = acknowledged_at, response = responded_at, resolution =
+-- the future, or it is NOT open any more (si_open_sla_stage says so - a decline
+-- re-opens acknowledge with acknowledged_at still set, a rework re-opens
+-- resolution with resolved_at/closed_at still set) and its end instant is at or
+-- before the deadline. End instants are the ones si_stamp_work_order judges
+-- with: acknowledge = acknowledged_at, response = responded_at, resolution =
 -- resolved_at (stamped at `completed`) else closed_at. The guard does not
 -- protect the sticky flags (only the override/extension columns) and status is
 -- unchanged, so si_stamp_work_order and si_notify_work_order_update return at
--- their first line: no history row, no notification. Re-runnable: a cleared
--- flag no longer matches.
-update work_orders w
-   set sla_ack_breached = case
-         when w.sla_ack_breached and w.sla_ack_extra_mins > 0
+-- their first line: no history row, no notification.
+-- Re-runnable and a no-op the second time: the WHERE matches only rows whose
+-- flag WILL be cleared, so a second run touches zero rows (no updated_at bump,
+-- no Realtime event).
+with decided as (
+  select w.id,
+         (w.sla_ack_breached and w.sla_ack_extra_mins > 0
           and ((si_open_sla_stage(w) = 'acknowledge' and w.sla_ack_due_at > now())
-            or (w.acknowledged_at is not null and w.sla_ack_due_at is not null
-                and w.acknowledged_at <= w.sla_ack_due_at))
-         then false else w.sla_ack_breached end,
-       sla_response_breached = case
-         when w.sla_response_breached and w.sla_response_extra_mins > 0
+            or (si_open_sla_stage(w) is distinct from 'acknowledge'
+                and w.acknowledged_at is not null and w.sla_ack_due_at is not null
+                and w.acknowledged_at <= w.sla_ack_due_at))) as clr_ack,
+         (w.sla_response_breached and w.sla_response_extra_mins > 0
           and ((si_open_sla_stage(w) = 'response' and w.sla_response_due_at > now())
-            or (w.responded_at is not null and w.sla_response_due_at is not null
-                and w.responded_at <= w.sla_response_due_at))
-         then false else w.sla_response_breached end,
-       sla_resolution_breached = case
-         when w.sla_resolution_breached and w.sla_resolution_extra_mins > 0
+            or (si_open_sla_stage(w) is distinct from 'response'
+                and w.responded_at is not null and w.sla_response_due_at is not null
+                and w.responded_at <= w.sla_response_due_at))) as clr_resp,
+         (w.sla_resolution_breached and w.sla_resolution_extra_mins > 0
           and ((si_open_sla_stage(w) = 'resolution' and w.sla_resolution_due_at > now())
-            or (coalesce(w.resolved_at, w.closed_at) is not null and w.sla_resolution_due_at is not null
-                and coalesce(w.resolved_at, w.closed_at) <= w.sla_resolution_due_at))
-         then false else w.sla_resolution_breached end
- where (w.sla_ack_breached        and w.sla_ack_extra_mins        > 0)
-    or (w.sla_response_breached   and w.sla_response_extra_mins   > 0)
-    or (w.sla_resolution_breached and w.sla_resolution_extra_mins > 0);
+            or (si_open_sla_stage(w) is distinct from 'resolution'
+                and coalesce(w.resolved_at, w.closed_at) is not null and w.sla_resolution_due_at is not null
+                and coalesce(w.resolved_at, w.closed_at) <= w.sla_resolution_due_at))) as clr_res
+    from work_orders w
+   where (w.sla_ack_breached        and w.sla_ack_extra_mins        > 0)
+      or (w.sla_response_breached   and w.sla_response_extra_mins   > 0)
+      or (w.sla_resolution_breached and w.sla_resolution_extra_mins > 0)
+)
+update work_orders w
+   set sla_ack_breached        = w.sla_ack_breached        and not coalesce(d.clr_ack, false),
+       sla_response_breached   = w.sla_response_breached   and not coalesce(d.clr_resp, false),
+       sla_resolution_breached = w.sla_resolution_breached and not coalesce(d.clr_res, false)
+  from decided d
+ where d.id = w.id
+   and (coalesce(d.clr_ack, false) or coalesce(d.clr_resp, false) or coalesce(d.clr_res, false));
 
 -- sla_breached is the OR of the three; recompute it for rows still carrying an
 -- extension, only where it disagrees (so a re-run touches nothing).

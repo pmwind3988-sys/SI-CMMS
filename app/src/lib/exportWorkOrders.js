@@ -301,8 +301,9 @@ function workOrderColumns(labels, ctx) {
     { header: "SLA Status", width: 16, cell: (w) => textCell(slaStatus(w)) },
     { header: "SLA Warning Sent", width: 16, cell: (w) => textCell(yesNo(w.sla_warning_sent)) },
     /* Which stages were missed, migration 0067; "Extended" (0080) means the
-       stage was granted time and not missed since, see stageVerdict(). `SLA Status` above keeps its
-       meaning — "was this work order ever late" — and these three say where,
+       stage was granted time and not missed since, see stageVerdict(). `SLA Status` above reads Breached
+       when any stage is currently missed, Extended (0080) when none is but some
+       stage was extended, else within target; these three say where,
        which is the question a monthly review actually asks. The dashboard's
        transient sla_stage_overdue is deliberately NOT exported: a workbook is
        read weeks later and "late right now" would mean "late when the file was

@@ -76,14 +76,14 @@ try {
   const { rows: [plant] } = await c.query(`select id from plants where status = 'active' limit 1`);
   const { rows: [asset] } = await c.query(`select id from assets where plant_id = $1 limit 1`, [plant.id]);
 
-  async function fixture(num, set) {
+  async function fixture(num, set, status = 'testing', assignee = technician.id) {
     await asPostgres();
     const { rows: [ins] } = await c.query(
       `insert into work_orders (wo_number, description, status, priority, impact, department_id, plant_id, asset_id,
                                 requester_id, requester_name, assigned_to_id)
-       values ($1, '0080 fixture', 'testing', 'P7', 'long_term', $2, $3, $4, $5, 'Fixture Requester', $6)
+       values ($1, '0080 fixture', $7, 'P7', 'long_term', $2, $3, $4, $5, 'Fixture Requester', $6)
        returning id`,
-      [num, dept.id, plant.id, asset.id, requester.id, technician.id]
+      [num, dept.id, plant.id, asset.id, requester.id, assignee, status]
     );
     const { rows: [wo] } = await c.query(
       `update work_orders
@@ -108,14 +108,51 @@ try {
   const C = await fixture("WO-CHK0080C", `, sla_resolution_due_at = now() - interval '2 days',
               sla_resolution_breached = true, sla_stage_overdue = true, sla_breached = true`);
 
+  // D: pre-0080 extended, then DECLINED back to open: acknowledged_at still set,
+  //    ack stage is open again and its extended deadline has passed. Must stay breached.
+  const D = await fixture("WO-CHK0080D", `, sla_ack_extra_mins = 1440,
+              sla_extension_count = 1, sla_top_up_count = 1, sla_ack_breached = true, sla_breached = true,
+              sla_stage_overdue = true`, "open", null);
+  assert.equal((await c.query(`select si_open_sla_stage(w) s from work_orders w where id = $1`, [D.id])).rows[0].s, "acknowledge",
+    "fixture D really is back in the acknowledge stage");
+  // E: resolution finished BEFORE its extended due. Flag must be cleared.
+  const E = await fixture("WO-CHK0080E", `, resolved_at = now() - interval '3 days', closed_at = now() - interval '3 days',
+              sla_resolution_due_at = now() - interval '2 days', sla_resolution_extra_mins = 21600,
+              sla_extension_count = 1, sla_top_up_count = 1,
+              sla_resolution_breached = true, sla_breached = true`, "closed");
+  // F: as E but reworked: repairing, resolved_at still set, extended due past. Must stay breached.
+  const F = await fixture("WO-CHK0080F", `, resolved_at = now() - interval '3 days',
+              sla_resolution_due_at = now() - interval '2 days', sla_resolution_extra_mins = 21600,
+              sla_extension_count = 1, sla_top_up_count = 1,
+              sla_resolution_breached = true, sla_breached = true, sla_stage_overdue = true`, "repairing");
+  assert.equal((await c.query(`select si_open_sla_stage(w) s from work_orders w where id = $1`, [F.id])).rows[0].s, "resolution",
+    "fixture F really is back in the resolution stage");
+
+  const all = [A, B, C, D, E, F].map((x) => x.id);
+  const snap = async () =>
+    (await c.query(`select id, ctid::text ct, updated_at from work_orders where id = any($1) order by id`, [all])).rows;
+
   const histCount = async (id) =>
     (await c.query(`select count(*)::int n from work_order_history where work_order_id = $1`, [id])).rows[0].n;
   const hBefore = await histCount(B.id);
   const { rows: [{ n: notesBefore }] } = await c.query(`select count(*)::int n from notifications where entity_id = $1`, [B.id]);
   await c.query(readFileSync(MIG, "utf8"));
   pass("0080 applies cleanly");
+  const snap1 = await snap();
   await c.query(readFileSync(MIG, "utf8"));
   pass("0080 applies a second time (SQL Editor re-run is safe)");
+  const snap2 = await snap();
+  assert.deepEqual(snap2, snap1, "a second application updates zero rows (same row versions, same updated_at)");
+  pass("second application touches no row");
+
+  const D1 = await get(D.id), E1 = await get(E.id), F1 = await get(F.id);
+  assert.equal(D1.sla_ack_breached, true, "declined-back-to-open ack stage stays breached");
+  assert.equal(D1.sla_breached, true);
+  assert.equal(E1.sla_resolution_breached, false, "resolution finished before its extended deadline is cleared");
+  assert.equal(E1.sla_breached, false);
+  assert.equal(F1.sla_resolution_breached, true, "reworked (re-entered) resolution past its deadline stays breached");
+  assert.equal(F1.sla_breached, true);
+  pass("backfill respects whether the stage is closed now (decline, finish, rework)");
 
   const B1 = await get(B.id), C1 = await get(C.id);
   assert.equal(B1.sla_resolution_breached, false, "backfill clears an extended stage still within its deadline");
@@ -157,6 +194,9 @@ try {
   await c.query(`update work_orders set sla_resolution_due_at = now() - interval '1 minute' where id = $1`, [A.id]);
   const { rows: [{ n: before }] } = await c.query(
     `select count(*)::int n from notifications where entity_id = $1 and type = 'sla_breach'`, [A.id]);
+  // The sweep notifies the department's supervisors (and managers for P1 only; this is P7),
+  // so expect exactly that many rows - which may be zero if the department has none.
+  const { rows: [{ n: supervisors }] } = await c.query(`select count(*)::int n from si_department_supervisors($1)`, [A.department_id]);
   await c.query(`select si_sla_breach_sweep()`);
   const t2 = await get(A.id);
   assert.equal(t2.sla_resolution_breached, true, "sweep re-breaches the stage");
@@ -164,7 +204,7 @@ try {
   assert.equal(t2.sla_stage_overdue, true);
   const { rows: [{ n: after }] } = await c.query(
     `select count(*)::int n from notifications where entity_id = $1 and type = 'sla_breach'`, [A.id]);
-  assert.ok(after > before, `breach notification written (${before} -> ${after})`);
+  assert.equal(after - before, supervisors, `breach notification rows match the department's supervisors (${supervisors})`);
   await c.query(`select si_sla_breach_sweep()`);
   const { rows: [{ n: after2 }] } = await c.query(
     `select count(*)::int n from notifications where entity_id = $1 and type = 'sla_breach'`, [A.id]);

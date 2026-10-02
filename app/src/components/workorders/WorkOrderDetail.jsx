@@ -948,7 +948,10 @@ function OverviewTab({ wo }) {
                   </span>
                 )}
                 {extended && !missed && (
-                  <span className="ml-1.5 rounded bg-accent-soft px-1.5 py-0.5 text-[10.5px] font-semibold text-[#92400E]">
+                  <span
+                    className="ml-1.5 rounded bg-accent-soft px-1.5 py-0.5 text-[10.5px] font-semibold text-[#92400E]"
+                    title="Time added to this stage, including any overdue time absorbed when it was extended."
+                  >
                     Extended +{fmtElapsed(extraMs)}
                   </span>
                 )}

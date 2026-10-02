@@ -941,7 +941,7 @@ over the stage's own window, not the work order's. `sla_extension_count` joins t
 of it is refused from anybody at any rank — otherwise the count, the only thing on the row
 saying how many times this has happened, would be the one part of the record anyone could edit
 directly. And, restating 0051's own omission rule: `status` and the assignee are not named in
-the extension's UPDATE, and the three sticky breach flags are **not** reset by an extension — a
+the extension's UPDATE, and the three sticky breach flags are **not** reset by an extension (until 0080: an extension now clears the open stage's flag — see the 0078 section) — a
 stage that was missed was missed, and granting more time afterwards does not un-miss it. Only
 `sla_stage_overdue` moves, because the stage may no longer be late.
 
@@ -961,8 +961,9 @@ preserves it — and the overdue part is also summed into `sla_overdue_absorbed_
 which the export reports as **SLA Overdue Absorbed (hrs)** (already inside "SLA Time
 Added"). That reverses 0075 note 3's "never from now" on purpose: the Administrator
 should get the amount they chose, not have to subtract the lateness first. What keeps the
-record honest is unchanged — the sticky breach flags are never reset except by an extension, for that stage (0080), the timeline remark
-names the overdue time absorbed, and `sla_extension_count` drives the "Nth time" warning — every extension, including the old re-grade mode, not top-ups alone.
+record honest is unchanged — the sticky breach flags are never reset except by an extension, for that stage (0080), the
+timeline remark names the overdue time absorbed, and `sla_extension_count` drives the "Nth
+time" warning — every extension, including the old re-grade mode, not top-ups alone.
 
 **`si_extend_work_order_sla` (0075) survived 0078 on purpose and was dropped by 0079.**
 PostgREST resolves an RPC by argument-name set, so altering it in 0078 would have broken
@@ -1027,7 +1028,7 @@ Five more things worth not undoing:
 - **Uncapped, deliberately.** There is no limit on how many times a stage may be topped up.
   The accepted cost is real and stated plainly: `sla_stage_overdue`, and with it the
   dashboard's Overdue card, can be driven to zero by topping up rather than by fixing
-  anything. What keeps the record honest is that the three sticky flags are not reset (a
+  anything. What keeps the record honest is that the three sticky flags are not reset (until 0080: an extension now clears the open stage's flag — see the 0078 section) (a
   stage that was missed was missed), plus `sla_top_up_count` and the minutes themselves,
   which the export reports as hours. **The friction is the client's job**: from the second
   top-up onward the dialog says which time this is, in red, above the button, and names how
