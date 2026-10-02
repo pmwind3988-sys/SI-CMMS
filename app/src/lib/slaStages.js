@@ -96,6 +96,7 @@ export function slaStages(wo, sla) {
       label: "Acknowledge",
       targetLabel: sla.ack_target_label,
       targetMinutes: sla.ack_target_minutes,
+      extraMinutes: wo.sla_ack_extra_mins,
       // Always from the raise time, on every priority: acknowledging IS the
       // first stage, so there is no previous one for it to follow.
       from: created,
@@ -107,6 +108,7 @@ export function slaStages(wo, sla) {
       label: "Response",
       targetLabel: sla.response_target_label,
       targetMinutes: sla.response_target_minutes,
+      extraMinutes: wo.sla_response_extra_mins,
       from: sequential ? acked : created,
       to: responded,
       endedNote: "work started",
@@ -116,6 +118,7 @@ export function slaStages(wo, sla) {
       label: "Resolution",
       targetLabel: sla.resolution_target_label,
       targetMinutes: sla.resolution_target_minutes,
+      extraMinutes: wo.sla_resolution_extra_mins,
       from: sequential ? responded : created,
       to: closed,
       endedNote: "closed",
@@ -128,7 +131,10 @@ export function slaStages(wo, sla) {
 
   return defs.map((d, i) => {
     const actualMs = d.from != null && d.to != null ? d.to - d.from : null;
-    const targetMs = d.targetMinutes != null ? d.targetMinutes * MIN : null;
+    /* Judged against target PLUS the time granted to this stage (migration
+     * 0080): a stage that finished inside its extended deadline met it, and
+     * reading it against the original target would paint it red. */
+    const targetMs = d.targetMinutes != null ? (d.targetMinutes + (d.extraMinutes || 0)) * MIN : null;
 
     /* Why there is no actual, when there is none — the two reasons need telling
      * apart on screen and only this function knows which applies.
@@ -169,6 +175,23 @@ export function slaStages(wo, sla) {
       sequential,
     };
   });
+}
+
+const VERDICT_COLUMNS = {
+  acknowledge: ["sla_ack_breached", "sla_ack_extra_mins"],
+  response: ["sla_response_breached", "sla_response_extra_mins"],
+  resolution: ["sla_resolution_breached", "sla_resolution_extra_mins"],
+};
+
+/** A stage's verdict for the SLA card and the export (migration 0080).
+ *  `missed` is the sticky flag (an extension clears it; the sweep sets it again
+ *  if the new deadline passes), `extended` means time was granted to this
+ *  stage. One definition so the card and the workbook cannot disagree. */
+export function stageVerdict(wo, stageKey) {
+  const cols = VERDICT_COLUMNS[stageKey];
+  if (!wo || !cols) return { missed: false, extended: false, extraMs: 0 };
+  const extra = Number(wo[cols[1]]) || 0;
+  return { missed: !!wo[cols[0]], extended: extra > 0, extraMs: extra > 0 ? extra * MIN : 0 };
 }
 
 /* ------------------------------------------------------------------

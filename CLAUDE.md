@@ -961,7 +961,7 @@ preserves it — and the overdue part is also summed into `sla_overdue_absorbed_
 which the export reports as **SLA Overdue Absorbed (hrs)** (already inside "SLA Time
 Added"). That reverses 0075 note 3's "never from now" on purpose: the Administrator
 should get the amount they chose, not have to subtract the lateness first. What keeps the
-record honest is unchanged — the sticky breach flags are never reset, the timeline remark
+record honest is unchanged — the sticky breach flags are never reset except by an extension, for that stage (0080), the timeline remark
 names the overdue time absorbed, and `sla_extension_count` drives the "Nth time" warning — every extension, including the old re-grade mode, not top-ups alone.
 
 **`si_extend_work_order_sla` (0075) survived 0078 on purpose and was dropped by 0079.**
@@ -979,6 +979,15 @@ because it runs 0075, 0078 and 0079 in order.
 
 `scripts/checks/sla0078ExtendByPriority.mjs` applies the migration twice on test inside
 one transaction, asserts and rolls back.
+
+**An extended stage is judged by its new deadline (migration 0080).** The extension clears the
+open stage's sticky breach flag and moves its due column. Finishing within the new deadline reads
+"Extended +N" on the SLA card and "Extended" in the export; missing it breaches as usual (the sweep
+sets the flag, notifies, the work order is Overdue again and can be extended again, and the card
+reads "Missed after extension"). The original miss stays on record in the timeline remark and in
+`sla_overdue_absorbed_mins`. 0080 backfilled stages extended before it, and the timeline now reads
+"Extended N by <Admin> ...". `stageVerdict()` in `lib/slaStages.js` is the one definition the card
+and the export share, and `slaStages()` judges `met` against target plus the stage's extra minutes.
 
 ### Extending no longer has to move the priority (migration 0075)
 

@@ -27,7 +27,8 @@
  *   status "on_the_way"                  -> "On The Way"
  *   priority "P1"                        -> "P1 — Critical"
  *   safety_risk {flag: true, severity}   -> "Yes" + "High" in its own column
- *   sla_breached true                    -> "Breached" (not TRUE)
+ *   sla_breached true                    -> "Breached" (not TRUE); else "Extended"
+ *                                           if any stage was granted time (0080)
  *   est_downtime_value 2, unit "days"    -> 2 in a number column, "Days" beside it
  *   null                                 -> "—"
  *
@@ -46,6 +47,7 @@ import {
   MY_TIMEZONE,
 } from "./datetime";
 import { isTransition, historyEventLabel } from "./historyEvents";
+import { stageVerdict } from "./slaStages";
 
 const DASH = "—";
 
@@ -54,6 +56,19 @@ const DASH = "—";
 -------------------------------------------------------------------*/
 
 const yesNo = (v) => (v ? "Yes" : "No");
+
+/* Per-stage and work-order SLA wording, migration 0080. Built on stageVerdict()
+   so the workbook and the SLA card read one definition. */
+const stageCell = (w, key) => {
+  const v = stageVerdict(w, key);
+  return v.missed ? "Yes" : v.extended ? "Extended" : "No";
+};
+const slaStatus = (w) =>
+  w.sla_breached
+    ? "Breached"
+    : ["acknowledge", "response", "resolution"].some((k) => stageVerdict(w, k).extended)
+      ? "Extended"
+      : "Within target";
 const orDash = (v) => (v === null || v === undefined || v === "" ? DASH : v);
 
 /** A real Excel date cell, or an empty one. */
@@ -283,17 +298,18 @@ function workOrderColumns(labels, ctx) {
     { header: "Resolution Due", width: 21, cell: (w) => dateCell(w.sla_resolution_due_at) },
     { header: "Acknowledged At", width: 21, cell: (w) => dateCell(w.acknowledged_at) },
     { header: "Work Started At", width: 21, cell: (w) => dateCell(w.responded_at) },
-    { header: "SLA Status", width: 16, cell: (w) => textCell(w.sla_breached ? "Breached" : "Within target") },
+    { header: "SLA Status", width: 16, cell: (w) => textCell(slaStatus(w)) },
     { header: "SLA Warning Sent", width: 16, cell: (w) => textCell(yesNo(w.sla_warning_sent)) },
-    /* Which stages were missed, migration 0067. `SLA Status` above keeps its
+    /* Which stages were missed, migration 0067; "Extended" (0080) means the
+       stage was granted time and not missed since, see stageVerdict(). `SLA Status` above keeps its
        meaning — "was this work order ever late" — and these three say where,
        which is the question a monthly review actually asks. The dashboard's
        transient sla_stage_overdue is deliberately NOT exported: a workbook is
        read weeks later and "late right now" would mean "late when the file was
        saved", which is a fact about the download rather than about the work. */
-    { header: "Ack Stage Missed", width: 16, cell: (w) => textCell(yesNo(w.sla_ack_breached)) },
-    { header: "Response Stage Missed", width: 20, cell: (w) => textCell(yesNo(w.sla_response_breached)) },
-    { header: "Resolution Stage Missed", width: 22, cell: (w) => textCell(yesNo(w.sla_resolution_breached)) },
+    { header: "Ack Stage Missed", width: 16, cell: (w) => textCell(stageCell(w, "acknowledge")) },
+    { header: "Response Stage Missed", width: 20, cell: (w) => textCell(stageCell(w, "response")) },
+    { header: "Resolution Stage Missed", width: 22, cell: (w) => textCell(stageCell(w, "resolution")) },
     /* Migration 0072, corrected by 0073. Distinct from "Priority Overridden", which records the
        requester overriding a suggestion and has read "No" for everything since
        0036 — folding them together would make one heading mean two things. */
