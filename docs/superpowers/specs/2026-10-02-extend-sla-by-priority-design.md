@@ -79,7 +79,8 @@ the "Nth time" disclaimer keep meaning what they mean.
 - **New RPC `si_extend_sla_stage(p_work_order_id uuid, p_by_priority si_priority)`**,
   SECURITY DEFINER, `search_path` pinned, revoked from `public, anon`, granted to
   `authenticated`. Re-checks Administrator, live status and the at-risk gate in its body
-  (RLS does not apply inside), restates `work_orders_select` visibility, opens the
+  (RLS does not apply inside; Administrators are system-wide on work orders, so there is no
+  narrower visibility to restate — same as 0075), locks the row `for update`, opens the
   `si.allow_priority_override` door with `set_config(..., true)`, updates the stage extra,
   the counts, `sla_overdue_absorbed_mins`, the stage's due column and `sla_stage_overdue`,
   writes one `work_order_history` row (`event_type = 'sla_extension'`) and notifies the same
