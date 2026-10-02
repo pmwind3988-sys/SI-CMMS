@@ -25,6 +25,13 @@
 -- ---------------------------------------------------------------------------
 
 
+-- The ALTER TABLE below briefly takes a lock that blocks every read and write
+-- on work_orders. If a long transaction is open when this runs, give up after
+-- five seconds (nothing is applied; run it again) rather than queue every
+-- user's request behind it.
+set lock_timeout = '5s';
+
+
 -- 1. Where the absorbed overdue time is recorded --------------------------
 alter table work_orders add column if not exists sla_overdue_absorbed_mins int not null default 0;
 
