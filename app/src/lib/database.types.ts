@@ -1348,6 +1348,7 @@ export type Database = {
           sla_ack_extra_mins: number
           sla_response_extra_mins: number
           sla_resolution_extra_mins: number
+          sla_overdue_absorbed_mins: number
           sla_top_up_count: number
           sla_resolution_breached: boolean
           sla_resolution_due_at: string | null
@@ -1415,6 +1416,7 @@ export type Database = {
           sla_ack_extra_mins?: number
           sla_response_extra_mins?: number
           sla_resolution_extra_mins?: number
+          sla_overdue_absorbed_mins?: number
           sla_top_up_count?: number
           sla_resolution_breached?: boolean
           sla_resolution_due_at?: string | null
@@ -1482,6 +1484,7 @@ export type Database = {
           sla_ack_extra_mins?: number
           sla_response_extra_mins?: number
           sla_resolution_extra_mins?: number
+          sla_overdue_absorbed_mins?: number
           sla_top_up_count?: number
           sla_resolution_breached?: boolean
           sla_resolution_due_at?: string | null
@@ -1649,6 +1652,13 @@ export type Database = {
         Args: { p_notification_id: string }
         Returns: undefined
       }
+      si_extend_sla_stage: {
+        Args: {
+          p_by_priority: Database["public"]["Enums"]["si_priority"]
+          p_work_order_id: string
+        }
+        Returns: undefined
+      }
       si_extend_work_order_sla: {
         Args: {
           p_priority?: Database["public"]["Enums"]["si_priority"] | null
@@ -1658,6 +1668,7 @@ export type Database = {
         Returns: undefined
       }
       si_fmt_minutes: { Args: { p_mins: number }; Returns: string }
+      si_fmt_minutes_approx: { Args: { p_mins: number }; Returns: string }
       si_has_role: { Args: { p_role: string }; Returns: boolean }
       si_hods: { Args: never; Returns: string[] }
       si_in_same_department: { Args: { dept: string }; Returns: boolean }

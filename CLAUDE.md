@@ -945,6 +945,33 @@ the extension's UPDATE, and the three sticky breach flags are **not** reset by a
 stage that was missed was missed, and granting more time afterwards does not un-miss it. Only
 `sla_stage_overdue` moves, because the stage may no longer be late.
 
+### Extend SLA adds a priority's time, and never moves the priority (migration 0078)
+
+**Two buttons, one job each.** Change priority (0051) is "this job was graded wrong";
+Extend SLA is "the grading is right, this stage needs more time". The dialog is one
+list — one row per active priority labelled with its **full total** (P7 · 15 days,
+P8 · 30 days), the work order's own pre-selected — and `si_extend_sla_stage` adds that
+amount to the open stage. 0072's re-grade mode and 0075's own-window top-up are no
+longer offered: re-grading is Change priority's job, and choosing your own priority
+from the list is what the top-up was.
+
+**Overdue time is absorbed.** `due' = max(now, due) + amount`, stored the 0075 way — the
+whole addition goes into the stage's `sla_*_extra_mins`, so a later Change priority
+preserves it — and the overdue part is also summed into `sla_overdue_absorbed_mins`,
+which the export reports as **SLA Overdue Absorbed (hrs)** (already inside "SLA Time
+Added"). That reverses 0075 note 3's "never from now" on purpose: the Administrator
+should get the amount they chose, not have to subtract the lateness first. What keeps the
+record honest is unchanged — the sticky breach flags are never reset, the timeline remark
+names the overdue time absorbed, and `sla_top_up_count` drives the "Nth time" warning.
+
+**`si_extend_work_order_sla` (0075) is deliberately still on the database.** PostgREST
+resolves an RPC by argument-name set, so altering it would have broken every tab open
+during the release (the 2026-09-19 `PGRST202`). Nothing in the client calls it any more;
+dropping it is a later migration, once no old tab can be open.
+
+`scripts/checks/sla0078ExtendByPriority.mjs` applies the migration twice on test inside
+one transaction, asserts and rolls back.
+
 ### Extending no longer has to move the priority (migration 0075)
 
 **0072's extension has a second mode: a TOP-UP adds one more of the work order's own

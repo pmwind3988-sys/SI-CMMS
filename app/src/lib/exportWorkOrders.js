@@ -320,6 +320,14 @@ function workOrderColumns(labels, ctx) {
           ) / 100
         ),
     },
+    /* Migration 0078. Included in "SLA Time Added (hrs)" above, reported on its
+       own so a report can tell an extension that was mostly lateness from one
+       that was planned time. */
+    {
+      header: "SLA Overdue Absorbed (hrs)",
+      width: 24,
+      cell: (w) => numCell(Math.round(((w.sla_overdue_absorbed_mins ?? 0) / 60) * 100) / 100),
+    },
   ];
 
   // ---- Lifecycle, from the audit trail ----
