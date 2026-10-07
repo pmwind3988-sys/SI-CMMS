@@ -466,6 +466,12 @@ export function listenAttachments(woId, cb, onError) {
  * else the inner join would return nothing and read as "no technicians exist".
  *
  * Both tables are watched: revoking a role writes `users`, not `technicians`.
+ *
+ * The name comes from `users`, never from `technicians.name`. That column is a
+ * copy taken once, when the technician role is first granted, and nothing
+ * updates it on a rename — so on production an account renamed "Dausy" still
+ * appeared as a second "Firdaus" beside the real one. Email and employee id
+ * come along so two people with the same name can still be told apart.
  */
 export function listenTechnicians(cb, onError) {
   return liveQuery({
@@ -473,11 +479,22 @@ export function listenTechnicians(cb, onError) {
     run: () =>
       supabase
         .from("technicians")
-        .select("user_id, name, skills, current_load, availability_status, users!inner(roles, status)")
+        .select(
+          "user_id, skills, current_load, availability_status, users!inner(name, email, employee_id, roles, status)"
+        )
         .contains("users.roles", ["technician"])
-        .eq("users.status", "active")
-        .order("name", { ascending: true }),
-    cb,
+        .eq("users.status", "active"),
+    cb: (rows) =>
+      cb(
+        (rows || [])
+          .map(({ users, ...t }) => ({
+            ...t,
+            name: users.name,
+            email: users.email,
+            employee_id: users.employee_id,
+          }))
+          .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }))
+      ),
     onError,
   });
 }

@@ -182,6 +182,11 @@ export default function AssignPanel({ wo }) {
                       </span>
                     )}
                   </div>
+                  {/* Who exactly this is — two technicians can share a first name. */}
+                  <div className="text-[11.5px] text-ink-soft break-all">
+                    {t.email}
+                    {t.employee_id && <span> · #{t.employee_id}</span>}
+                  </div>
                   <div className="text-[11.5px] text-ink-soft">
                     {(t.skills || []).join(" · ")} — {t.current_load ?? 0} open jobs
                   </div>
