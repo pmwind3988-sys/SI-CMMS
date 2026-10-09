@@ -285,7 +285,7 @@ function WorkflowActions({ wo, onGotoAssign }) {
     if (assignee)
       return (
         <div>
-          <InfoBox>Accepted. Start work once you're at the equipment.</InfoBox>
+          <InfoBox>Accepted. Tap Start Work when you actually begin the repair — not on arrival, and not after it's done.</InfoBox>
           <ErrorLine />
           <Button variant="amber" icon={Wrench} disabled={busy} onClick={() => run(startRepair)}>Start Work</Button>
         </div>
