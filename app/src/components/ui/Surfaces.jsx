@@ -30,6 +30,14 @@ export function Card({ children, className = "", ...rest }) {
 export function ModalOverlay({ children, onClose, label, className = "" }) {
   const [mounted, setMounted] = useState(false);
   const panelRef = useRef(null);
+  /* Read through a ref so the effect below depends on mounting alone. Every
+     caller passes an inline arrow, so with `onClose` in its deps the effect
+     re-ran on each render of the parent — and its cleanup refocused the
+     opener and its body refocused the panel. A dialog with a text field (the
+     HOD's verification note, a decline or priority reason) lost focus after
+     every keystroke: measured on push-test, a typed note arrived as "C". */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => setMounted(true), []);
 
   /**
@@ -51,7 +59,7 @@ export function ModalOverlay({ children, onClose, label, className = "" }) {
     const onKey = (e) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose?.();
+        onCloseRef.current?.();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -72,7 +80,7 @@ export function ModalOverlay({ children, onClose, label, className = "" }) {
       document.removeEventListener("keydown", onKey);
       if (returnTo instanceof HTMLElement && document.contains(returnTo)) returnTo.focus();
     };
-  }, [mounted, onClose]);
+  }, [mounted]);
 
   if (!mounted) return null;
 
